@@ -56,3 +56,5 @@ export const IconPlaylistAdd = icon(<><path d="M4 6h12M4 11h12M4 16h7" /><path d
 export const IconNextUp = icon(<><path d="M4 6h10M4 11h10M4 16h6" /><path d="m16 13 4 3-4 3z" fill="currentColor" stroke="none" /></>);
 export const IconCheck = icon(<path d="m5 12.5 4.5 4.5L19 7.5" />);
 export const IconWave = icon(<path d="M3 12h2M7 8v8M11 5v14M15 9v6M19 11v2M21 12h0" />);
+export const IconEye = icon(<><path d="M2.8 12s3.3-6 9.2-6 9.2 6 9.2 6-3.3 6-9.2 6-9.2-6-9.2-6z" /><circle cx="12" cy="12" r="2.7" /></>);
+export const IconEyeOff = icon(<><path d="m4 4 16 16" /><path d="M10.3 6.2A9.8 9.8 0 0 1 12 6c5.9 0 9.2 6 9.2 6a13.5 13.5 0 0 1-2.2 3.1M6.8 7.1A14.1 14.1 0 0 0 2.8 12s3.3 6 9.2 6a9.7 9.7 0 0 0 3.1-.5M9.9 9.9a3 3 0 0 0 4.2 4.2" /></>);

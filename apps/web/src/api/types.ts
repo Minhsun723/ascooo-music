@@ -28,6 +28,16 @@ export interface Track {
   entryId?: number;
 }
 
+export interface ManagedTrack extends Track {
+  visible: boolean;
+}
+
+export interface ManagedTrackStats {
+  total: number;
+  visible: number;
+  hidden: number;
+}
+
 export interface Album {
   id: number;
   title: string;
@@ -38,6 +48,8 @@ export interface Album {
   trackCount: number;
   duration: number;
   addedAt: number;
+  genre: string | null;
+  recordLabel: string | null;
   lossless: boolean;
   atmos: boolean;
 }

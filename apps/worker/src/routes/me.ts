@@ -11,7 +11,7 @@ me.get('/favorites', async (c) => {
   const uid = c.get('user').id;
   const { results } = await c.env.DB.prepare(
     `SELECT ${TRACK_SELECT} FROM favorites fv JOIN tracks t ON t.id = fv.track_id ${TRACK_JOINS}
-     WHERE fv.user_id = ? AND t.status = 'ready' ORDER BY fv.created_at DESC`,
+     WHERE fv.user_id = ? AND t.status = 'ready' AND t.visible = 1 ORDER BY fv.created_at DESC`,
   )
     .bind(uid, uid)
     .all<TrackRow>();
@@ -19,8 +19,10 @@ me.get('/favorites', async (c) => {
 });
 
 me.put('/favorites/:trackId', async (c) => {
-  await c.env.DB.prepare('INSERT OR IGNORE INTO favorites (user_id, track_id, created_at) VALUES (?, ?, ?)')
-    .bind(c.get('user').id, Number(c.req.param('trackId')), Date.now())
+  await c.env.DB.prepare(
+    "INSERT OR IGNORE INTO favorites (user_id, track_id, created_at) SELECT ?, id, ? FROM tracks WHERE id = ? AND status = 'ready' AND visible = 1",
+  )
+    .bind(c.get('user').id, Date.now(), Number(c.req.param('trackId')))
     .run();
   return c.json({ liked: true });
 });
@@ -36,8 +38,10 @@ me.delete('/favorites/:trackId', async (c) => {
 
 me.post('/history', async (c) => {
   const { trackId } = await c.req.json<{ trackId: number }>();
-  await c.env.DB.prepare('INSERT INTO play_history (user_id, track_id, played_at) VALUES (?, ?, ?)')
-    .bind(c.get('user').id, Number(trackId), Date.now())
+  await c.env.DB.prepare(
+    "INSERT INTO play_history (user_id, track_id, played_at) SELECT ?, id, ? FROM tracks WHERE id = ? AND status = 'ready' AND visible = 1",
+  )
+    .bind(c.get('user').id, Date.now(), Number(trackId))
     .run();
   return c.json({ ok: true });
 });
@@ -58,14 +62,14 @@ async function ownPlaylist(c: { env: AppEnv['Bindings'] }, id: number, uid: numb
 
 me.get('/playlists', async (c) => {
   const { results } = await c.env.DB.prepare(
-    `SELECT p.id, p.name, p.description, p.updated_at, COUNT(pt.id) AS track_count,
+    `SELECT p.id, p.name, p.description, p.updated_at, COUNT(t.id) AS track_count,
        COALESCE(SUM(t.duration), 0) AS duration,
        (SELECT COALESCE(t2.artwork_id, al2.artwork_id) FROM playlist_tracks pt2
           JOIN tracks t2 ON t2.id = pt2.track_id LEFT JOIN albums al2 ON al2.id = t2.album_id
-          WHERE pt2.playlist_id = p.id ORDER BY pt2.position LIMIT 4) AS artwork_id
+          WHERE pt2.playlist_id = p.id AND t2.status = 'ready' AND t2.visible = 1 ORDER BY pt2.position LIMIT 4) AS artwork_id
      FROM playlists p
      LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id
-     LEFT JOIN tracks t ON t.id = pt.track_id
+     LEFT JOIN tracks t ON t.id = pt.track_id AND t.status = 'ready' AND t.visible = 1
      WHERE p.user_id = ? GROUP BY p.id ORDER BY p.updated_at DESC`,
   )
     .bind(c.get('user').id)
@@ -102,9 +106,11 @@ async function appendTracks(db: D1Database, playlistId: number, trackIds: number
     .first<{ m: number }>();
   let pos = max?.m ?? 0;
   const now = Date.now();
-  const stmt = db.prepare('INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) VALUES (?, ?, ?, ?)');
+  const stmt = db.prepare(
+    "INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) SELECT ?, id, ?, ? FROM tracks WHERE id = ? AND status = 'ready' AND visible = 1",
+  );
   await db.batch([
-    ...trackIds.slice(0, 500).map((id) => stmt.bind(playlistId, Number(id), ++pos, now)),
+    ...trackIds.slice(0, 500).map((id) => stmt.bind(playlistId, ++pos, now, Number(id))),
     db.prepare('UPDATE playlists SET updated_at = ? WHERE id = ?').bind(now, playlistId),
   ]);
 }
@@ -114,7 +120,7 @@ me.get('/playlists/:id', async (c) => {
   const p = await ownPlaylist(c, Number(c.req.param('id')), uid);
   const { results } = await c.env.DB.prepare(
     `SELECT ${TRACK_SELECT}, pt.id AS entry_id FROM playlist_tracks pt JOIN tracks t ON t.id = pt.track_id ${TRACK_JOINS}
-     WHERE pt.playlist_id = ? ORDER BY pt.position`,
+     WHERE pt.playlist_id = ? AND t.status = 'ready' AND t.visible = 1 ORDER BY pt.position`,
   )
     .bind(uid, p.id)
     .all<TrackRow & { entry_id: number }>();

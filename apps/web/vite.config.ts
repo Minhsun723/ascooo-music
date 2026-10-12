@@ -6,7 +6,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // Same-origin /api in dev → wrangler dev; in production a Pages Function forwards to the Worker.
+      // Same-origin /api in dev → the Worker; production serves both from one Worker deployment.
       '/api': { target: 'http://127.0.0.1:8787', changeOrigin: false },
     },
   },

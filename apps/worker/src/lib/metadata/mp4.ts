@@ -60,6 +60,12 @@ function parseIlst(b: Uint8Array, ilst: Atom, meta: AudioMetadata, fileOffset: n
       case '\u00a9alb': meta.album ??= text(); break;
       case '\u00a9day': meta.year ??= parseYear(text()); break;
       case '\u00a9gen': meta.genre ??= text(); break;
+      case '\u00a9pub':
+      case '----:LABEL':
+      case '----:RECORDLABEL':
+      case '----:RECORD LABEL':
+      case '----:PUBLISHER':
+      case '----:ORGANIZATION': meta.recordLabel ??= text(); break;
       case 'gnre': if (val.length >= 2) meta.genre ??= GENRES_START[u16be(val, 0) - 1]; break;
       case 'trkn': if (val.length >= 4) meta.trackNo ??= u16be(val, 2) || undefined; break;
       case 'disk': if (val.length >= 4) meta.discNo ??= u16be(val, 2) || undefined; break;

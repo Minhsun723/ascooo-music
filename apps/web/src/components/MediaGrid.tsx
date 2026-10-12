@@ -43,7 +43,7 @@ export function MediaCard({ item }: { item: MediaItem }) {
         <Artwork artworkId={album.artworkId} title={album.title} artist={album.artist} />
         {album.atmos
           ? <span className="media-card__badge media-card__badge--dolby"><DolbyLogo /></span>
-          : album.lossless ? <span className="media-card__badge">LOSSLESS</span> : null}
+          : album.lossless ? <span className="media-card__badge quality-badge">LOSSLESS</span> : null}
       </div>
       <span className="media-card__title">{album.title}</span>
       <span className="media-card__meta">{album.artist}{album.year ? ` · ${album.year}` : ''}</span>

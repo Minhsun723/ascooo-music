@@ -1,4 +1,4 @@
-import type { Album, Artist, HomeData, Lyrics, Playlist, SyncStatus, Track, User } from './types';
+import type { Album, Artist, HomeData, Lyrics, ManagedTrack, ManagedTrackStats, Playlist, SyncStatus, Track, User } from './types';
 
 export class ApiError extends Error {
   constructor(
@@ -62,6 +62,12 @@ export const api = {
   search: (q: string, signal?: AbortSignal) =>
     request<{ tracks: Track[]; albums: Album[]; artists: Artist[] }>(`/search?q=${encodeURIComponent(q)}`, { signal }),
   lyrics: (id: number) => get<{ lyrics: Lyrics | null }>(`/tracks/${id}/lyrics`),
+  managedTracks: (visibility: 'all' | 'visible' | 'hidden', q = '', limit = 100, offset = 0) =>
+    get<{ tracks: ManagedTrack[]; total: number; stats: ManagedTrackStats }>(
+      `/admin/tracks?visibility=${visibility}&q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`,
+    ),
+  setTrackVisibility: (id: number, visible: boolean) =>
+    request<{ id: number; visible: boolean }>(`/admin/tracks/${id}/visibility`, { method: 'PATCH', json: { visible } }),
 
   favorites: () => get<{ tracks: Track[] }>('/me/favorites'),
   like: (id: number) => request<{ liked: boolean }>(`/me/favorites/${id}`, { method: 'PUT' }),

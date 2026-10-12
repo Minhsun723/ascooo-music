@@ -6,12 +6,13 @@
     "apps/*"
   ],
   "scripts": {
-    "dev:api": "npm run dev -w apps/worker",
+    "dev:api": "npm run build && npm run dev -w apps/worker",
     "dev:web": "npm run dev -w apps/web",
-    "db:migrate:local": "npm run db:migrate:local -w apps/worker",
-    "db:migrate:remote": "npm run db:migrate:remote -w apps/worker",
-    "deploy:api": "npm run deploy -w apps/worker",
-    "deploy:web": "npm run deploy -w apps/web",
+    "dev:integrated": "npm run build && wrangler dev --port 8787",
+    "build": "npm run build -w apps/web",
+    "db:migrate:local": "wrangler d1 migrations apply ascooo-music --local",
+    "db:migrate:remote": "wrangler d1 migrations apply ascooo-music --remote",
+    "deploy": "npm run build && wrangler deploy",
     "typecheck": "npm run typecheck -w apps/worker && npm run typecheck -w apps/web"
   }
 }

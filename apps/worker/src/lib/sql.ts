@@ -67,6 +67,8 @@ export const ALBUM_SELECT = `
   al.id, al.title, al.year, al.artwork_id, al.artist_id, ar.name AS artist,
   COUNT(t.id) AS track_count, COALESCE(SUM(t.duration), 0) AS duration,
   MAX(t.added_at) AS added_at,
+  MAX(NULLIF(t.genre, '')) AS genre,
+  MAX(NULLIF(t.record_label, '')) AS record_label,
   MAX(CASE WHEN t.codec IN ('flac','alac','wav') THEN 1 ELSE 0 END) AS lossless,
   MAX(CASE WHEN LOWER(t.codec) IN ('ec-3','eac3','e-ac-3') THEN 1 ELSE 0 END) AS atmos
 `;
@@ -74,7 +76,7 @@ export const ALBUM_SELECT = `
 export const ALBUM_FROM = `
   FROM albums al
   JOIN artists ar ON ar.id = al.artist_id
-  JOIN tracks t ON t.album_id = al.id AND t.status = 'ready'
+  JOIN tracks t ON t.album_id = al.id AND t.status = 'ready' AND t.visible = 1
 `;
 
 export interface AlbumRow {
@@ -87,6 +89,8 @@ export interface AlbumRow {
   track_count: number;
   duration: number;
   added_at: number;
+  genre: string | null;
+  record_label: string | null;
   lossless: number;
   atmos: number;
 }
@@ -102,6 +106,8 @@ export function toAlbum(r: AlbumRow) {
     trackCount: r.track_count,
     duration: r.duration,
     addedAt: r.added_at,
+    genre: r.genre,
+    recordLabel: r.record_label,
     lossless: !!r.lossless,
     atmos: !!r.atmos,
   };

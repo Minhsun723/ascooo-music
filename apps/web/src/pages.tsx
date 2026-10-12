@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useState, type DependencyList, type FormEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api } from './api/client';
-import type { Album, Artist, HomeData, SyncStatus, Track } from './api/types';
-import { formatBytes, formatLongDuration, greeting } from './lib/format';
+import type { Album, Artist, HomeData, ManagedTrack, ManagedTrackStats, Track } from './api/types';
+import { formatLongDuration } from './lib/format';
 import { usePlayer } from './store/player';
 import { useSession } from './store/session';
+import { useLibrarySync } from './store/sync';
 import { toast } from './store/toast';
 import { Artwork } from './components/Artwork';
 import { DolbyLogo } from './components/DolbyLogo';
 import { AlbumGrid, ArtistGrid, PlaylistGrid } from './components/MediaGrid';
 import { TrackList } from './components/TrackList';
-import { IconDisc, IconHeart, IconMusic, IconPlay, IconSearch, IconShuffle, IconSync, IconWave } from './components/Icons';
+import { IconDisc, IconEye, IconEyeOff, IconHeart, IconMusic, IconPlay, IconSearch, IconShuffle, IconSync, IconWave } from './components/Icons';
 
 interface RequestState<T> {
   data: T | null;
@@ -50,36 +51,12 @@ function SectionHeading({ title, link }: { title: string; link?: string }) {
 
 export function HomePage() {
   const request = useRequest<HomeData>(() => api.home(), []);
-  const playList = usePlayer((s) => s.playList);
-  if (request.loading && !request.data) return <PageIntro title={`${greeting()}，今天想聽什麼？`}><LoadingBlock rows={7} /></PageIntro>;
+  if (request.loading && !request.data) return <LoadingBlock rows={7} />;
   if (request.error || !request.data) return <RequestError message={request.error} retry={request.reload} />;
   const data = request.data;
-  const feature = data.recentAlbums[0];
-  const featureTracks = data.quickPicks.slice(0, 8);
 
   return (
     <>
-      <section className="home-hero">
-        <div className="home-hero__copy">
-          <h1>把今天交給<br /><em>一首好歌。</em></h1>
-          <p>{feature ? `從最近加入的《${feature.title}》開始，` : ''}以原始音質串流你的私人收藏。</p>
-          <div className="home-hero__actions"><button type="button" className="primary-button" disabled={!featureTracks.length} onClick={() => playList(featureTracks, 0)}><IconPlay size={17} />開始播放</button><button type="button" className="secondary-button" disabled={!featureTracks.length} onClick={() => playList(featureTracks, 0, { shuffle: true })}><IconShuffle size={17} />隨機播放</button></div>
-        </div>
-        <div className="home-hero__record" aria-hidden={!feature}>
-          {feature ? <Artwork artworkId={feature.artworkId} title={feature.title} artist={feature.artist} loading="eager" /> : <Artwork title="Ascooo Music" />}
-          <span className="home-hero__disc" aria-hidden="true" />
-          {feature ? <Link to={`/album/${feature.id}`} className="home-hero__caption"><strong>{feature.title}</strong><span>{feature.artist}</span></Link> : null}
-        </div>
-        <div className="home-hero__meter" aria-hidden="true">{Array.from({ length: 32 }, (_, index) => <i key={index} style={{ height: `${20 + ((index * 17) % 74)}%` }} />)}</div>
-      </section>
-
-      <section className="stat-strip" aria-label="音樂庫統計">
-        <div><strong>{data.stats.tracks.toLocaleString()}</strong><span>TRACKS</span></div>
-        <div><strong>{data.stats.albums.toLocaleString()}</strong><span>ALBUMS</span></div>
-        <div><strong>{formatBytes(data.stats.bytes)}</strong><span>LIBRARY</span></div>
-        <div><strong>{(data.stats.lossless ?? 0).toLocaleString()}</strong><span>LOSSLESS</span></div>
-      </section>
-
       {data.quickPicks.length ? <section className="page-section"><SectionHeading title="現在就播放" link="/library?tab=tracks" /><TrackList tracks={data.quickPicks.slice(0, 10)} compact numbered={false} /></section> : null}
       {data.recentAlbums.length ? <section className="page-section"><SectionHeading title="新進唱片櫃" link="/library?tab=albums" /><AlbumGrid albums={data.recentAlbums.slice(0, 6)} /></section> : null}
       {data.recentPlays.length ? <section className="page-section"><SectionHeading title="最近聽過" /><TrackList tracks={data.recentPlays.slice(0, 8)} compact numbered={false} /></section> : null}
@@ -129,9 +106,10 @@ export function LibraryPage() {
   return <><PageIntro title="音樂庫" copy={request.data ? `${request.data.total.toLocaleString()} 首歌曲，依你的方式整理。` : '所有收藏都在這裡。'} /><div className="segmented-tabs" role="tablist" aria-label="音樂庫分類">{tabs.map((item) => <button type="button" role="tab" aria-selected={tab === item.id} className={tab === item.id ? 'is-active' : ''} key={item.id} onClick={() => setParams({ tab: item.id })}>{item.label}</button>)}</div>{request.loading ? <LoadingBlock rows={7} /> : null}{request.error ? <RequestError message={request.error} retry={request.reload} /> : null}{request.data && tab === 'albums' ? request.data.albums.length ? <AlbumGrid albums={request.data.albums} /> : <EmptyState title="還沒有專輯" copy="同步歌曲後，系統會依照內嵌資訊整理專輯。" /> : null}{request.data && tab === 'tracks' ? request.data.tracks.length ? <TrackList tracks={request.data.tracks} /> : <EmptyState title="還沒有歌曲" copy="前往設定頁執行 PikPak 同步。" /> : null}{request.data && tab === 'artists' ? request.data.artists.length ? <ArtistGrid artists={request.data.artists} /> : <EmptyState title="還沒有藝人" copy="同步歌曲後，藝人會自動出現在這裡。" /> : null}{tab === 'playlists' ? playlists.length ? <PlaylistGrid playlists={playlists} /> : <EmptyState icon={<IconDisc />} title="還沒有播放清單" copy="從歌曲選單加入現有清單，或從左側建立新清單。" /> : null}</>;
 }
 
-function CollectionHero({ artworkId, title, subtitle, meta, badge, tracks }: { artworkId?: string | null; title: string; subtitle?: string; meta: string; badge?: React.ReactNode; tracks: Track[] }) {
+function CollectionHero({ artworkId, title, subtitle, meta = '', badge, tracks, compactTitle = false, albumLayout = false }: { artworkId?: string | null; title: string; subtitle?: string; meta?: string; badge?: React.ReactNode; tracks: Track[]; compactTitle?: boolean; albumLayout?: boolean }) {
   const playList = usePlayer((s) => s.playList);
-  return <header className="collection-hero"><Artwork artworkId={artworkId} title={title} artist={subtitle} className="collection-hero__art" loading="eager" /><div className="collection-hero__copy"><h1>{title}</h1>{subtitle ? <p>{subtitle}</p> : null}<small className="collection-hero__meta"><span>{meta}</span>{badge}</small><div className="collection-hero__actions"><button type="button" className="primary-button" disabled={!tracks.length} onClick={() => playList(tracks)}><IconPlay size={18} />播放</button><button type="button" className="round-button round-button--outline" disabled={!tracks.length} aria-label="隨機播放" onClick={() => playList(tracks, 0, { shuffle: true })}><IconShuffle size={19} /></button></div></div></header>;
+  const hasMeta = !!(meta || badge);
+  return <header className={`collection-hero${compactTitle ? ' collection-hero--compact-title' : ''}${albumLayout ? ' collection-hero--album' : ''}`}><Artwork artworkId={artworkId} title={title} artist={subtitle} className="collection-hero__art" loading="eager" /><div className="collection-hero__copy"><div className="collection-hero__details"><h1>{title}</h1>{subtitle ? <p>{subtitle}</p> : null}{hasMeta ? <small className="collection-hero__meta">{meta ? <span>{meta}</span> : null}{badge ? <>{meta ? <i aria-hidden="true">·</i> : null}{badge}</> : null}</small> : null}</div><div className="collection-hero__actions"><button type="button" className="primary-button" disabled={!tracks.length} onClick={() => playList(tracks)}><IconPlay size={18} />播放</button><button type="button" className="round-button round-button--outline" disabled={!tracks.length} aria-label="隨機播放" onClick={() => playList(tracks, 0, { shuffle: true })}><IconShuffle size={19} /></button></div></div></header>;
 }
 
 export function AlbumPage() {
@@ -140,7 +118,8 @@ export function AlbumPage() {
   if (request.loading) return <LoadingBlock rows={8} />;
   if (request.error || !request.data) return <RequestError message={request.error} retry={request.reload} />;
   const { album, tracks, moreByArtist } = request.data;
-  return <><CollectionHero artworkId={album.artworkId} title={album.title} subtitle={album.artist} meta={`${album.year ? `${album.year} · ` : ''}${album.trackCount} 首歌 · ${formatLongDuration(album.duration)}${album.lossless && !album.atmos ? ' · Lossless' : ''}`} badge={album.atmos ? <DolbyLogo variant="atmos" /> : undefined} tracks={tracks} /><section className="page-section page-section--tight"><TrackList tracks={tracks} /></section>{moreByArtist.length ? <section className="page-section"><SectionHeading title={`更多 ${album.artist}`} /><AlbumGrid albums={moreByArtist} /></section> : null}</>;
+  const heroMeta = [album.genre, album.year ? `${album.year} 年` : null].filter(Boolean).join(' · ');
+  return <><CollectionHero artworkId={album.artworkId} title={album.title} subtitle={album.artist} meta={heroMeta} badge={album.atmos ? <DolbyLogo variant="atmos" /> : album.lossless ? <span className="quality-badge">LOSSLESS</span> : undefined} tracks={tracks} compactTitle albumLayout /><section className="page-section page-section--tight"><TrackList tracks={tracks} /><footer className="album-summary">{album.year ? <span>{album.year} 年</span> : null}<span>{album.trackCount} 首歌曲 · {formatLongDuration(album.duration)}</span>{album.recordLabel ? <span>℗ {album.year ? `${album.year} ` : ''}{album.recordLabel}</span> : null}</footer></section>{moreByArtist.length ? <section className="page-section"><SectionHeading title={`更多 ${album.artist}`} /><AlbumGrid albums={moreByArtist} /></section> : null}</>;
 }
 
 export function ArtistPage() {
@@ -172,55 +151,171 @@ export function PlaylistPage() {
   return <><CollectionHero artworkId={tracks[0]?.artworkId} title={playlist.name} subtitle={playlist.description ?? undefined} meta={`${tracks.length} 首歌 · 更新於 ${new Date(playlist.updatedAt).toLocaleDateString('zh-TW')}`} tracks={tracks} />{tracks.length ? <section className="page-section page-section--tight"><TrackList tracks={tracks} onRemove={(track) => void remove(track)} /></section> : <EmptyState icon={<IconDisc />} title="這個播放清單是空的" copy="從任一首歌的更多選單，把歌曲加進來。" />}</>;
 }
 
+type VisibilityFilter = 'all' | 'visible' | 'hidden';
+const MANAGE_PAGE_SIZE = 100;
+
+function MusicVisibilityManager() {
+  const [filter, setFilter] = useState<VisibilityFilter>('all');
+  const [searchInput, setSearchInput] = useState('');
+  const [query, setQuery] = useState('');
+  const [tracks, setTracks] = useState<ManagedTrack[]>([]);
+  const [stats, setStats] = useState<ManagedTrackStats>({ total: 0, visible: 0, hidden: 0 });
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState('');
+  const [updating, setUpdating] = useState<Set<number>>(() => new Set());
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setQuery(searchInput.trim()), 220);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError('');
+    api.managedTracks(filter, query, MANAGE_PAGE_SIZE)
+      .then((result) => {
+        if (!active) return;
+        setTracks(result.tracks);
+        setTotal(result.total);
+        setStats(result.stats);
+      })
+      .catch((requestError) => { if (active) setError((requestError as Error).message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [filter, query]);
+
+  async function loadMore() {
+    setLoadingMore(true);
+    try {
+      const result = await api.managedTracks(filter, query, MANAGE_PAGE_SIZE, tracks.length);
+      setTracks((current) => [...current, ...result.tracks]);
+      setTotal(result.total);
+      setStats(result.stats);
+    } catch (requestError) {
+      toast((requestError as Error).message, 'error');
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  async function toggleVisibility(track: ManagedTrack) {
+    const nextVisible = !track.visible;
+    setUpdating((current) => new Set(current).add(track.id));
+    try {
+      await api.setTrackVisibility(track.id, nextVisible);
+      setStats((current) => ({
+        ...current,
+        visible: current.visible + (nextVisible ? 1 : -1),
+        hidden: current.hidden + (nextVisible ? -1 : 1),
+      }));
+      setTotal((current) => filter === 'all' ? current : Math.max(0, current - 1));
+      setTracks((current) => filter === 'all'
+        ? current.map((item) => item.id === track.id ? { ...item, visible: nextVisible } : item)
+        : current.filter((item) => item.id !== track.id));
+      toast(nextVisible ? `已顯示「${track.title}」` : `已隱藏「${track.title}」`);
+    } catch (requestError) {
+      toast((requestError as Error).message, 'error');
+    } finally {
+      setUpdating((current) => {
+        const next = new Set(current);
+        next.delete(track.id);
+        return next;
+      });
+    }
+  }
+
+  const filters: { id: VisibilityFilter; label: string; count: number }[] = [
+    { id: 'all', label: '全部', count: stats.total },
+    { id: 'visible', label: '顯示中', count: stats.visible },
+    { id: 'hidden', label: '已隱藏', count: stats.hidden },
+  ];
+
+  return (
+    <section className="settings-card settings-card--wide music-manager">
+      <div className="music-manager__heading">
+        <div>
+          <h2>管理音樂</h2>
+        </div>
+        <div className="music-manager__stats" aria-live="polite">
+          <strong>{stats.visible.toLocaleString()}</strong>
+          <span>首正在顯示</span>
+        </div>
+      </div>
+
+      <div className="music-manager__toolbar">
+        <div className="visibility-filters" role="group" aria-label="篩選歌曲顯示狀態">
+          {filters.map((item) => (
+            <button type="button" className={filter === item.id ? 'is-active' : ''} aria-pressed={filter === item.id} key={item.id} onClick={() => setFilter(item.id)}>
+              {item.label}<span>{item.count.toLocaleString()}</span>
+            </button>
+          ))}
+        </div>
+        <label className="music-manager__search">
+          <span className="sr-only">搜尋歌曲、藝人或專輯</span>
+          <IconSearch size={17} />
+          <input type="search" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} placeholder="搜尋歌曲、藝人或專輯" />
+        </label>
+      </div>
+
+      {loading ? <LoadingBlock rows={4} /> : null}
+      {!loading && error ? <div className="music-manager__message" role="alert"><p>{error}</p></div> : null}
+      {!loading && !error && !tracks.length ? (
+        <div className="music-manager__message"><IconMusic size={22} /><p>{query ? '找不到符合搜尋的歌曲。' : filter === 'hidden' ? '目前沒有隱藏的歌曲。' : '目前沒有可管理的歌曲。'}</p></div>
+      ) : null}
+      {!loading && !error && tracks.length ? (
+        <div className="managed-track-list" role="region" aria-label="音樂清單，可捲動" tabIndex={0}>
+          {tracks.map((track) => {
+            const isUpdating = updating.has(track.id);
+            return (
+              <div className={`managed-track${track.visible ? '' : ' is-hidden'}`} key={track.id}>
+                <Artwork artworkId={track.artworkId} title={track.title} artist={track.artist} className="managed-track__art" />
+                <div className="managed-track__copy">
+                  <strong>{track.title}</strong>
+                  <span>{[track.artist, track.album].filter(Boolean).join(' · ')}</span>
+                </div>
+                <span className={`managed-track__state ${track.visible ? 'is-visible' : ''}`}>
+                  {track.visible ? <IconEye size={15} /> : <IconEyeOff size={15} />}
+                  {track.visible ? '顯示中' : '已隱藏'}
+                </span>
+                <button
+                  type="button"
+                  className={`visibility-switch ${track.visible ? 'is-on' : ''}`}
+                  role="switch"
+                  aria-checked={track.visible}
+                  aria-label={`${track.visible ? '隱藏' : '顯示'}歌曲「${track.title}」`}
+                  disabled={isUpdating}
+                  onClick={() => void toggleVisibility(track)}
+                >
+                  <span aria-hidden="true" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+      {!loading && !error && tracks.length < total ? (
+        <button type="button" className="secondary-button music-manager__more" disabled={loadingMore} onClick={() => void loadMore()}>
+          {loadingMore ? '載入中…' : `載入更多（尚有 ${(total - tracks.length).toLocaleString()} 首）`}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
 export function SettingsPage() {
   const user = useSession((s) => s.user)!;
-  const [status, setStatus] = useState<SyncStatus | null>(null);
-  const [syncing, setSyncing] = useState(false);
-  const [progress, setProgress] = useState('');
+  const status = useLibrarySync((s) => s.status);
+  const syncing = useLibrarySync((s) => s.syncing);
+  const progress = useLibrarySync((s) => s.progress);
+  const loadStatus = useLibrarySync((s) => s.loadStatus);
+  const runSync = useLibrarySync((s) => s.run);
   const [passwords, setPasswords] = useState({ current: '', next: '' });
   const [savingPassword, setSavingPassword] = useState(false);
 
-  const loadStatus = useCallback(async () => { if (user.role === 'admin') setStatus(await api.sync.status()); }, [user.role]);
-  useEffect(() => { void loadStatus().catch(() => {}); }, [loadStatus]);
-
-  async function runSync() {
-    setSyncing(true);
-    try {
-      const connection = await api.sync.ping();
-      const scanId = crypto.randomUUID();
-      const folders: (string | undefined)[] = [undefined];
-      let scanned = 0;
-      let found = 0;
-      let oversizedCovers = 0;
-      while (folders.length) {
-        const folder = folders.shift();
-        const result = await api.sync.list(folder, scanId);
-        folders.push(...result.dirs);
-        scanned += 1;
-        found += result.audioFiles;
-        if (result.skippedOversizedCover) oversizedCovers += 1;
-        setProgress(`掃描 ${scanned} 個資料夾 · 找到 ${found} 個音訊檔${oversizedCovers ? ` · ${oversizedCovers} 張封面超過 1.9 MB` : ''}`);
-      }
-      let remaining = 1;
-      let processed = 0;
-      while (remaining > 0) {
-        const result = await api.sync.process(4);
-        processed += result.processed.length;
-        remaining = result.remaining;
-        setProgress(`正在讀取音樂資訊 · 已完成 ${processed} 首 · 剩下 ${remaining} 首`);
-      }
-      setProgress('整理已移除的檔案…');
-      await api.sync.finalize(scanId, connection.root);
-      await loadStatus();
-      toast(oversizedCovers ? `同步完成；${oversizedCovers} 張封面超過 1.9 MB，請縮小後再同步` : '音樂庫同步完成');
-      setProgress(oversizedCovers ? `同步完成 · ${oversizedCovers} 張封面需要縮小` : '同步完成');
-    } catch (error) {
-      toast((error as Error).message, 'error');
-      setProgress(`同步中斷：${(error as Error).message}`);
-    } finally {
-      setSyncing(false);
-    }
-  }
+  useEffect(() => { if (user.role === 'admin') void loadStatus().catch(() => {}); }, [loadStatus, user.role]);
 
   async function changePassword(event: FormEvent) {
     event.preventDefault();
@@ -228,7 +323,42 @@ export function SettingsPage() {
     try { await api.auth.changePassword(passwords.current, passwords.next); setPasswords({ current: '', next: '' }); toast('密碼已更新'); } catch (error) { toast((error as Error).message, 'error'); } finally { setSavingPassword(false); }
   }
 
-  return <><PageIntro title="設定" copy="管理音樂來源、同步狀態與帳號安全。" /><div className="settings-grid"><section className="settings-card settings-card--wide"><div className="settings-card__heading"><div><h2>PikPak 音樂庫</h2></div><span className={`status-dot ${status ? 'is-online' : ''}`}>{status ? '已連線' : '等待檢查'}</span></div>{user.role === 'admin' ? <><div className="sync-summary"><div><strong>{status?.ready.toLocaleString() ?? '—'}</strong><span>可播放歌曲</span></div><div><strong>{status?.pending.toLocaleString() ?? '—'}</strong><span>等待處理</span></div><div><strong>{status?.errorCount.toLocaleString() ?? '—'}</strong><span>需留意</span></div></div><div className="sync-root"><span>同步根目錄</span><code>{status?.root ?? '從 Worker 設定讀取'}</code></div>{progress ? <div className="sync-progress" role="status"><span className={syncing ? 'is-spinning' : ''}><IconSync size={17} /></span>{progress}</div> : null}<button type="button" className="primary-button" disabled={syncing} onClick={() => void runSync()}><IconSync size={18} />{syncing ? '同步進行中…' : '立即同步音樂庫'}</button></> : <p className="settings-note">只有管理員可以執行音樂庫同步。</p>}</section><section className="settings-card"><h2>變更密碼</h2><form className="settings-form" onSubmit={changePassword}><label><span>目前密碼</span><input type="password" autoComplete="current-password" value={passwords.current} onChange={(event) => setPasswords((value) => ({ ...value, current: event.target.value }))} required /></label><label><span>新密碼</span><input type="password" autoComplete="new-password" minLength={8} value={passwords.next} onChange={(event) => setPasswords((value) => ({ ...value, next: event.target.value }))} required /></label><button type="submit" className="secondary-button" disabled={savingPassword}>{savingPassword ? '更新中…' : '更新密碼'}</button></form></section><section className="settings-card"><h2>播放資訊</h2><p className="settings-note">原始 M4A、MP3 與 FLAC 由 Worker 串流。實際支援格式與 Atmos 呈現仍取決於瀏覽器、作業系統和輸出裝置。</p><div className="architecture"><span>Pages</span><i>→</i><span>Workers</span><i>→</i><span>D1</span><i>+</i><span>PikPak</span></div></section></div></>;
+  return (
+    <>
+      <PageIntro title="設定" copy="管理音樂來源、顯示內容與帳號安全。" />
+      <div className="settings-grid">
+        <section className="settings-card settings-card--wide">
+          <div className="settings-card__heading">
+            <div><h2>PikPak 音樂庫</h2></div>
+            <span className={`status-dot ${status ? 'is-online' : ''}`}>{status ? '已連線' : '等待檢查'}</span>
+          </div>
+          {user.role === 'admin' ? (
+            <>
+              <div className="sync-summary">
+                <div><strong>{status?.ready.toLocaleString() ?? '—'}</strong><span>可播放歌曲</span></div>
+                <div><strong>{status?.pending.toLocaleString() ?? '—'}</strong><span>等待處理</span></div>
+                <div><strong>{status?.errorCount.toLocaleString() ?? '—'}</strong><span>需留意</span></div>
+              </div>
+              <div className="sync-root"><span>同步根目錄</span><code>{status?.root ?? '從 Worker 設定讀取'}</code></div>
+              {progress ? <div className="sync-progress" role="status"><span className={syncing ? 'is-spinning' : ''}><IconSync size={17} /></span>{progress}</div> : null}
+              <button type="button" className="primary-button" disabled={syncing} onClick={() => void runSync()}><IconSync size={18} />{syncing ? '同步進行中…' : '立即同步音樂庫'}</button>
+            </>
+          ) : <p className="settings-note">只有管理員可以執行音樂庫同步。</p>}
+        </section>
+
+        {user.role === 'admin' ? <MusicVisibilityManager /> : null}
+
+        <section className="settings-card">
+          <h2>變更密碼</h2>
+          <form className="settings-form" onSubmit={changePassword}>
+            <label><span>目前密碼</span><input type="password" autoComplete="current-password" value={passwords.current} onChange={(event) => setPasswords((value) => ({ ...value, current: event.target.value }))} required /></label>
+            <label><span>新密碼</span><input type="password" autoComplete="new-password" minLength={8} value={passwords.next} onChange={(event) => setPasswords((value) => ({ ...value, next: event.target.value }))} required /></label>
+            <button type="submit" className="secondary-button" disabled={savingPassword}>{savingPassword ? '更新中…' : '更新密碼'}</button>
+          </form>
+        </section>
+      </div>
+    </>
+  );
 }
 
 export function NotFoundPage() {

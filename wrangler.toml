@@ -1,0 +1,27 @@
+name = "ascooo-music"
+main = "apps/worker/src/index.ts"
+compatibility_date = "2026-10-12"
+routes = [{ pattern = "music.ascooo.com", custom_domain = true }]
+
+# React and the Hono API are deployed together as one Worker. Static files are
+# served directly from the asset store; API requests always run the Worker.
+[assets]
+directory = "apps/web/dist"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+[vars]
+# Folder inside the PikPak WebDAV endpoint that holds your music.
+# Keep account-specific connection values in Worker secrets.
+MUSIC_ROOT = "/Music"
+WEBDAV_AUTH_MODE = "auto"
+
+# Replace this ID after running: npx wrangler d1 create ascooo-music
+[[d1_databases]]
+binding = "DB"
+database_name = "ascooo-music"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+migrations_dir = "apps/worker/migrations"
+
+[observability]
+enabled = true

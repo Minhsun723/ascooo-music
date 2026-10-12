@@ -132,6 +132,7 @@ sync.post('/list', async (c) => {
            OR COALESCE(tracks.lrc_path, '') != COALESCE(excluded.lrc_path, '')
            OR COALESCE(tracks.cover_path, '') != COALESCE(excluded.cover_path, '')
            OR COALESCE(tracks.cover_signature, '') != COALESCE(excluded.cover_signature, '')
+          OR tracks.metadata_version < 1
          THEN 'pending' ELSE tracks.status END,
        lrc_path = excluded.lrc_path,
        cover_path = excluded.cover_path,
@@ -305,8 +306,8 @@ async function saveTrack(
   const stmts = [
     db.prepare(
       `UPDATE tracks SET status = 'ready', error = ?, title = ?, artist = ?, artist_id = ?, album_id = ?,
-         track_no = ?, disc_no = ?, year = ?, genre = ?, duration = ?, codec = ?, bitrate = ?,
-         sample_rate = ?, bit_depth = ?, channels = ?, artwork_id = ?, has_lyrics = ?, updated_at = ?
+         track_no = ?, disc_no = ?, year = ?, genre = ?, record_label = ?, duration = ?, codec = ?, bitrate = ?,
+         sample_rate = ?, bit_depth = ?, channels = ?, artwork_id = ?, has_lyrics = ?, metadata_version = 1, updated_at = ?
        WHERE id = ?`,
     ).bind(
       error,
@@ -318,6 +319,7 @@ async function saveTrack(
       meta.discNo ?? null,
       meta.year ?? null,
       meta.genre ?? null,
+      meta.recordLabel ?? null,
       meta.duration ?? null,
       meta.codec ?? extOf(t.path),
       meta.bitrate ?? null,

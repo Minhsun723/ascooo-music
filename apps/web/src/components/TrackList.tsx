@@ -1,7 +1,7 @@
 import type { MouseEvent } from 'react';
 import { api } from '../api/client';
 import type { Track } from '../api/types';
-import { formatTime, isDolbyAtmos, isHiRes, isLossless } from '../lib/format';
+import { formatTime, isDolbyAtmos, qualityLabel } from '../lib/format';
 import { useIsLiked, useLikes } from '../store/likes';
 import { useCurrentTrack, usePlayer } from '../store/player';
 import { useSession } from '../store/session';
@@ -100,6 +100,7 @@ export function TrackList({ tracks, numbered = true, compact = false, onRemove }
     <div className={`track-list ${compact ? 'track-list--compact' : ''}`} role="list">
       {tracks.map((track, index) => {
         const active = current?.id === track.id;
+        const quality = qualityLabel(track);
         return (
           <div className={`track-row ${active ? 'is-current' : ''}`} role="listitem" key={track.entryId ?? track.id}>
             <button
@@ -120,7 +121,7 @@ export function TrackList({ tracks, numbered = true, compact = false, onRemove }
             <span className="track-row__quality">
               {isDolbyAtmos(track)
                 ? <span className="quality-badge quality-badge--dolby"><DolbyLogo /></span>
-                : isHiRes(track) ? <span className="quality-badge">HI-RES</span> : isLossless(track) ? <span className="quality-badge">LOSSLESS</span> : null}
+                : quality ? <span className="quality-badge">{quality}</span> : null}
             </span>
             <span className="track-row__duration">{formatTime(track.duration)}</span>
             <LikeButton track={track} />

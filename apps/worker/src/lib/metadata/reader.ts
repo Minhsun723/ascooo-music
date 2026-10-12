@@ -76,6 +76,7 @@ export interface AudioMetadata {
   discNo?: number;
   year?: number;
   genre?: string;
+  recordLabel?: string;
   lyrics?: string;
   duration?: number;
   codec?: string;

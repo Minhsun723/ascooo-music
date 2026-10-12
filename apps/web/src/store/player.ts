@@ -186,7 +186,7 @@ export const usePlayer = create<PlayerState>()(
           set({ repeat: order[(order.indexOf(get().repeat) + 1) % 3] });
         },
 
-        setNowPlaying: (open) => set({ nowPlayingOpen: open }),
+        setNowPlaying: (open) => set({ nowPlayingOpen: open, queueOpen: false }),
         setQueueOpen: (open) => set({ queueOpen: open }),
       };
     },

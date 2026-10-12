@@ -18,7 +18,7 @@ const MIME: Record<string, string> = {
 
 /** Stream the original file from PikPak, passing Range through so seeking works. */
 media.get('/stream/:id', async (c) => {
-  const row = await c.env.DB.prepare('SELECT path, size FROM tracks WHERE id = ?')
+  const row = await c.env.DB.prepare("SELECT path, size FROM tracks WHERE id = ? AND status = 'ready' AND visible = 1")
     .bind(Number(c.req.param('id')))
     .first<{ path: string; size: number }>();
   if (!row) throw new HTTPException(404, { message: '找不到這首歌' });

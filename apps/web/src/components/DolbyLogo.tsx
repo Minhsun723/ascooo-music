@@ -12,7 +12,10 @@ export function DolbyLogo({ variant = 'compact', className = '' }: DolbyLogoProp
       aria-label="Dolby Atmos"
       title="Dolby Atmos"
     >
-      <img src={atmos ? '/dolby-atmos-logo.png' : '/dolby-logo.png'} alt="" aria-hidden="true" draggable={false} />
+      <picture>
+        {atmos ? <source media="(max-width: 1220px)" srcSet="/dolby-logo.png" /> : null}
+        <img src={atmos ? '/dolby-atmos-logo.png' : '/dolby-logo.png'} alt="" aria-hidden="true" draggable={false} />
+      </picture>
     </span>
   );
 }

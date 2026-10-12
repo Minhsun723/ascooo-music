@@ -52,7 +52,7 @@ const termSize = (enc: number) => (enc === 1 || enc === 2 ? 2 : 1);
 
 const V22_MAP: Record<string, string> = {
   TT2: 'TIT2', TP1: 'TPE1', TP2: 'TPE2', TAL: 'TALB', TRK: 'TRCK', TPA: 'TPOS',
-  TYE: 'TYER', TCO: 'TCON', ULT: 'USLT', SLT: 'SYLT', PIC: 'APIC', TXX: 'TXXX',
+  TYE: 'TYER', TCO: 'TCON', TPB: 'TPUB', ULT: 'USLT', SLT: 'SYLT', PIC: 'APIC', TXX: 'TXXX',
 };
 
 function fmtLrcTime(ms: number): string {
@@ -138,12 +138,14 @@ export function parseID3v2(tag: Uint8Array, meta: AudioMetadata): void {
         case 'TDRC':
         case 'TDOR': meta.year ??= parseYear(text); break;
         case 'TCON': if (text) meta.genre ??= genreName(text); break;
+        case 'TPUB': meta.recordLabel ??= text; break;
       }
     } else if (id === 'TXXX') {
       const dEnd = termEnd(data, 1, enc);
       const desc = decodeText(enc, data.subarray(1, dEnd)).toUpperCase();
       const value = clean(decodeText(enc, data.subarray(dEnd + termSize(enc))));
       if ((desc === 'LYRICS' || desc === 'UNSYNCEDLYRICS') && value) plainLyrics ??= value;
+      if (['LABEL', 'RECORDLABEL', 'RECORD LABEL', 'PUBLISHER', 'ORGANIZATION'].includes(desc)) meta.recordLabel ??= value;
     } else if (id === 'USLT') {
       const dEnd = termEnd(data, 4, enc);
       const text = decodeText(enc, data.subarray(dEnd + termSize(enc))).trim();
