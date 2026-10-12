@@ -20,7 +20,7 @@ WEBDAV_AUTH_MODE = "auto"
 [[d1_databases]]
 binding = "DB"
 database_name = "ascooo-music"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "137cc4f1-99de-46f7-ae64-d83c9b0f80ae"
 migrations_dir = "apps/worker/migrations"
 
 [observability]
