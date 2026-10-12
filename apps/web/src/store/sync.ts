@@ -46,7 +46,7 @@ export const useLibrarySync = create<SyncState>((set, get) => ({
       let remaining = 1;
       let processed = 0;
       while (remaining > 0) {
-        const result = await api.sync.process(4);
+        const result = await api.sync.process(2);
         processed += result.processed.length;
         remaining = result.remaining;
         set({ progress: `正在讀取音樂資訊 · 已完成 ${processed} 首 · 剩下 ${remaining} 首` });
