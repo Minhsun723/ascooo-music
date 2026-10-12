@@ -1,0 +1,14 @@
+# Paste the exact unified endpoint shown by PikPak for Client-1.
+WEBDAV_URL=https://your-account-specific-webdav-endpoint.example
+MUSIC_ROOT=/Music
+
+# PikPak-generated WebDAV credentials (not the normal account password).
+WEBDAV_USERNAME=generated-client-username
+WEBDAV_PASSWORD=generated-client-password
+
+# Optional. In auto mode the Worker tries Basic first, then Bearer after a 401.
+WEBDAV_BEARER_TOKEN=generated-bearer-token
+WEBDAV_AUTH_MODE=auto
+
+# Used only by Ascooo Music login sessions.
+JWT_SECRET=change-me-to-a-long-random-string

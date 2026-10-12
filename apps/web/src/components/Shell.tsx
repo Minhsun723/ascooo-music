@@ -1,0 +1,139 @@
+import { useEffect, useState, type FormEvent } from 'react';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { api } from '../api/client';
+import { useSession } from '../store/session';
+import { toast } from '../store/toast';
+import {
+  IconChevronLeft,
+  IconChevronRight,
+  IconDisc,
+  IconHeart,
+  IconHome,
+  IconLibrary,
+  IconLogout,
+  IconMusic,
+  IconPlus,
+  IconSearch,
+  IconSettings,
+  IconUser,
+} from './Icons';
+import { NowPlaying, PlayerBar, QueuePanel } from './Player';
+
+const mainNav = [
+  { to: '/', label: '首頁', icon: IconHome, end: true },
+  { to: '/search', label: '搜尋', icon: IconSearch },
+  { to: '/library', label: '音樂庫', icon: IconLibrary },
+  { to: '/favorites', label: '喜愛的歌曲', icon: IconHeart },
+];
+
+function Brand() {
+  return <NavLink to="/" className="brand" aria-label="Ascooo Music 首頁"><span className="brand__mark"><IconMusic size={18} /></span><span>ascooo</span><b>music</b></NavLink>;
+}
+
+function CreatePlaylistDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [name, setName] = useState('');
+  const [pending, setPending] = useState(false);
+  const refresh = useSession((s) => s.refreshPlaylists);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [onClose, open]);
+
+  if (!open) return null;
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!name.trim()) return;
+    setPending(true);
+    try {
+      const playlist = await api.createPlaylist(name.trim());
+      await refresh();
+      onClose();
+      setName('');
+      navigate(`/playlist/${playlist.id}`);
+      toast('播放清單已建立');
+    } catch (error) {
+      toast((error as Error).message, 'error');
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="dialog" role="dialog" aria-modal="true" aria-labelledby="playlist-dialog-title">
+        <span className="eyebrow">NEW PLAYLIST</span><h2 id="playlist-dialog-title">建立播放清單</h2>
+        <form onSubmit={submit}><label><span>名稱</span><input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：週日午後" maxLength={100} /></label><div className="dialog__actions"><button type="button" className="text-button" onClick={onClose}>取消</button><button type="submit" className="primary-button" disabled={!name.trim() || pending}>{pending ? '建立中…' : '建立'}</button></div></form>
+      </section>
+    </div>
+  );
+}
+
+export function Shell() {
+  const user = useSession((s) => s.user)!;
+  const playlists = useSession((s) => s.playlists);
+  const logout = useSession((s) => s.logout);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [query, setQuery] = useState(new URLSearchParams(location.search).get('q') ?? '');
+  const [createOpen, setCreateOpen] = useState(false);
+
+  useEffect(() => {
+    if (location.pathname === '/search') setQuery(new URLSearchParams(location.search).get('q') ?? '');
+  }, [location.pathname, location.search]);
+
+  useEffect(() => {
+    const focusSearch = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        document.querySelector<HTMLInputElement>('.global-search input')?.focus();
+      }
+    };
+    window.addEventListener('keydown', focusSearch);
+    return () => window.removeEventListener('keydown', focusSearch);
+  }, []);
+
+  function search(event: FormEvent) {
+    event.preventDefault();
+    navigate(`/search${query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ''}`);
+  }
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <Brand />
+        <nav className="sidebar__nav" aria-label="主要導覽">
+          {mainNav.map(({ to, label, icon: Icon, end }) => <NavLink key={to} to={to} end={end} className={({ isActive }) => isActive ? 'is-active' : ''}><Icon size={20} /><span>{label}</span></NavLink>)}
+        </nav>
+        <div className="sidebar__section">
+          <div className="sidebar__section-title"><span>YOUR PLAYLISTS</span><button type="button" className="icon-button" aria-label="建立播放清單" onClick={() => setCreateOpen(true)}><IconPlus size={18} /></button></div>
+          <div className="sidebar__playlists">
+            {playlists.length ? playlists.map((playlist) => <NavLink key={playlist.id} to={`/playlist/${playlist.id}`}><IconDisc size={17} /><span>{playlist.name}</span></NavLink>) : <button type="button" className="sidebar__empty" onClick={() => setCreateOpen(true)}>還沒有播放清單<br /><strong>建立第一個</strong></button>}
+          </div>
+        </div>
+        <div className="sidebar__account">
+          <span className="avatar"><IconUser size={17} /></span><span><strong>{user.username}</strong><small>{user.role === 'admin' ? '管理員' : '使用者'}</small></span>
+          <NavLink to="/settings" className="icon-button" aria-label="設定"><IconSettings size={18} /></NavLink>
+          <button type="button" className="icon-button" aria-label="登出" onClick={() => void logout()}><IconLogout size={18} /></button>
+        </div>
+      </aside>
+      <div className="app-shell__body">
+        <header className="topbar">
+          <div className="history-controls"><button type="button" className="round-button" aria-label="上一頁" onClick={() => navigate(-1)}><IconChevronLeft size={19} /></button><button type="button" className="round-button" aria-label="下一頁" onClick={() => navigate(1)}><IconChevronRight size={19} /></button></div>
+          <form className="global-search" role="search" onSubmit={search}><IconSearch size={19} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋歌曲、專輯或藝人" aria-label="搜尋音樂庫" /><kbd>⌘ K</kbd></form>
+          <NavLink to="/settings" className="topbar__profile"><span>{user.username.slice(0, 1).toUpperCase()}</span><b>{user.username}</b></NavLink>
+        </header>
+        <main className="page" key={location.pathname}><Outlet /></main>
+      </div>
+      <nav className="mobile-nav" aria-label="行動版主要導覽">{mainNav.slice(0, 3).map(({ to, label, icon: Icon, end }) => <NavLink key={to} to={to} end={end} className={({ isActive }) => isActive ? 'is-active' : ''}><Icon size={21} /><span>{label}</span></NavLink>)}<NavLink to="/settings" className={({ isActive }) => isActive ? 'is-active' : ''}><IconSettings size={21} /><span>設定</span></NavLink></nav>
+      <QueuePanel />
+      <PlayerBar />
+      <NowPlaying />
+      <CreatePlaylistDialog open={createOpen} onClose={() => setCreateOpen(false)} />
+    </div>
+  );
+}

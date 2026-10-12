@@ -1,0 +1,8 @@
+name = "ascooo-music"
+pages_build_output_dir = "./dist"
+compatibility_date = "2025-01-01"
+
+# /api/* is forwarded to the Hono Worker (see functions/api/[[path]].ts).
+[[services]]
+binding = "API"
+service = "ascooo-music-api"

@@ -1,0 +1,17 @@
+{
+  "name": "ascooo-music",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w apps/worker",
+    "dev:web": "npm run dev -w apps/web",
+    "db:migrate:local": "npm run db:migrate:local -w apps/worker",
+    "db:migrate:remote": "npm run db:migrate:remote -w apps/worker",
+    "deploy:api": "npm run deploy -w apps/worker",
+    "deploy:web": "npm run deploy -w apps/web",
+    "typecheck": "npm run typecheck -w apps/worker && npm run typecheck -w apps/web"
+  }
+}
