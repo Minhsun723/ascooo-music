@@ -71,7 +71,7 @@ export const api = {
     request<{ tracks: Track[]; albums: Album[]; artists: Artist[] }>(`/search?q=${encodeURIComponent(q)}`, { signal }),
   lyrics: (id: number) => get<{ lyrics: Lyrics | null }>(`/tracks/${id}/lyrics`),
   managedTracks: (visibility: 'all' | 'visible' | 'hidden', q = '', limit = 100, offset = 0) =>
-    get<{ tracks: ManagedTrack[]; total: number; stats: ManagedTrackStats }>(
+    get<{ tracks: ManagedTrack[]; hasMore: boolean; stats: ManagedTrackStats | null }>(
       `/admin/tracks?visibility=${visibility}&q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`,
     ),
   setTrackVisibility: (id: number, visible: boolean) =>
@@ -96,7 +96,7 @@ export const api = {
     ping: () => get<{ ok: boolean; root: string; entries: number }>('/sync/ping'),
     list: (dir: string | undefined, scanId: string) => post<{ dir: string; dirs: string[]; audioFiles: number; skippedOversizedCover: string | null }>('/sync/list', { dir, scanId }),
     process: (limit = 4) =>
-      post<{ processed: { id: number; title: string; error?: string }[]; remaining: number }>('/sync/process', { limit }),
+      post<{ processed: { id: number; title: string; error?: string }[]; hasMore: boolean }>('/sync/process', { limit }),
     finalize: (scanId: string, dir?: string) => post<{ removed: number }>('/sync/finalize', { scanId, dir }),
     reset: (scope: 'errors' | 'all') => post<{ reset: number }>('/sync/reset', { scope }),
   },

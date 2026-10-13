@@ -160,7 +160,7 @@ function MusicVisibilityManager() {
   const [query, setQuery] = useState('');
   const [tracks, setTracks] = useState<ManagedTrack[]>([]);
   const [stats, setStats] = useState<ManagedTrackStats>({ total: 0, visible: 0, hidden: 0 });
-  const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [paginationError, setPaginationError] = useState('');
@@ -186,8 +186,8 @@ function MusicVisibilityManager() {
       .then((result) => {
         if (!active) return;
         setTracks(result.tracks);
-        setTotal(result.total);
-        setStats(result.stats);
+        setHasMore(result.hasMore);
+        if (result.stats) setStats(result.stats);
       })
       .catch((requestError) => { if (active) setError((requestError as Error).message); })
       .finally(() => { if (active) setLoading(false); });
@@ -195,7 +195,7 @@ function MusicVisibilityManager() {
   }, [filter, query]);
 
   const loadMore = useCallback(async () => {
-    if (loadingMoreRef.current || loading || tracks.length >= total) return;
+    if (loadingMoreRef.current || loading || !hasMore) return;
     const requestContext = { filter, query };
     const offset = tracks.length;
     loadingMoreRef.current = true;
@@ -206,8 +206,8 @@ function MusicVisibilityManager() {
       const currentContext = paginationContextRef.current;
       if (currentContext.filter !== requestContext.filter || currentContext.query !== requestContext.query) return;
       setTracks((current) => [...current, ...result.tracks]);
-      setTotal(result.total);
-      setStats(result.stats);
+      setHasMore(result.hasMore);
+      if (result.stats) setStats(result.stats);
     } catch (requestError) {
       const currentContext = paginationContextRef.current;
       if (currentContext.filter === requestContext.filter && currentContext.query === requestContext.query) {
@@ -217,18 +217,18 @@ function MusicVisibilityManager() {
       loadingMoreRef.current = false;
       setLoadingMore(false);
     }
-  }, [filter, loading, query, total, tracks.length]);
+  }, [filter, hasMore, loading, query, tracks.length]);
 
   useEffect(() => {
     const root = listRef.current;
     const target = sentinelRef.current;
-    if (!root || !target || loading || loadingMore || paginationError || tracks.length >= total) return;
+    if (!root || !target || loading || loadingMore || paginationError || !hasMore) return;
     const observer = new IntersectionObserver(([entry]) => {
       if (entry.isIntersecting) void loadMore();
     }, { root, rootMargin: '0px 0px 180px 0px' });
     observer.observe(target);
     return () => observer.disconnect();
-  }, [loadMore, loading, loadingMore, paginationError, total, tracks.length]);
+  }, [hasMore, loadMore, loading, loadingMore, paginationError, tracks.length]);
 
   async function toggleVisibility(track: ManagedTrack) {
     const nextVisible = !track.visible;
@@ -240,7 +240,6 @@ function MusicVisibilityManager() {
         visible: current.visible + (nextVisible ? 1 : -1),
         hidden: current.hidden + (nextVisible ? -1 : 1),
       }));
-      setTotal((current) => filter === 'all' ? current : Math.max(0, current - 1));
       setTracks((current) => filter === 'all'
         ? current.map((item) => item.id === track.id ? { ...item, visible: nextVisible } : item)
         : current.filter((item) => item.id !== track.id));
@@ -323,7 +322,7 @@ function MusicVisibilityManager() {
               </div>
             );
           })}
-          {tracks.length < total ? (
+          {hasMore ? (
             <div className="music-manager__sentinel" ref={sentinelRef} role="status" aria-live="polite">
               {loadingMore ? <><IconSync className="is-spinning" size={16} /><span>正在載入更多歌曲…</span></> : null}
               {!loadingMore && paginationError ? <><span>載入失敗：{paginationError}</span><button type="button" onClick={() => void loadMore()}>再試一次</button></> : null}

@@ -169,13 +169,14 @@ sync.post('/process', async (c) => {
   const db = c.env.DB;
   const { results } = await db
     .prepare(`SELECT id, path, size, lrc_path, cover_path FROM tracks WHERE status = 'pending' ORDER BY id LIMIT ?`)
-    .bind(limit)
+    .bind(limit + 1)
     .all<{ id: number; path: string; size: number; lrc_path: string | null; cover_path: string | null }>();
+  const hasMore = results.length > limit;
 
   const dav = new WebDAV(c.env);
   const processed: { id: number; title: string; error?: string }[] = [];
 
-  for (const t of results) {
+  for (const t of results.slice(0, limit)) {
     let meta: AudioMetadata = {};
     let error: string | null = null;
     try {
@@ -193,8 +194,7 @@ sync.post('/process', async (c) => {
     }
   }
 
-  const remaining = await db.prepare(`SELECT COUNT(*) AS n FROM tracks WHERE status = 'pending'`).first<{ n: number }>();
-  return c.json({ processed, remaining: remaining?.n ?? 0 });
+  return c.json({ processed, hasMore });
 });
 
 async function sha1(data: Uint8Array): Promise<string> {

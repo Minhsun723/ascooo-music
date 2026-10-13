@@ -55,12 +55,7 @@ export async function readSession(c: Context<AppEnv>): Promise<SessionUser | nul
   if (!token) return null;
   try {
     const p = await verify(token, c.env.JWT_SECRET, 'HS256');
-    const id = Number(p.sub);
-    if (!Number.isSafeInteger(id)) return null;
-    const user = await c.env.DB.prepare('SELECT id, username, role FROM users WHERE id = ?')
-      .bind(id)
-      .first<{ id: number; username: string; role: 'admin' | 'user' }>();
-    return user ? { id: user.id, username: user.username, role: user.role } : null;
+    return { id: Number(p.sub), username: String(p.name), role: p.role === 'admin' ? 'admin' : 'user' };
   } catch {
     return null;
   }
@@ -74,6 +69,11 @@ export const requireUser: MiddlewareHandler<AppEnv> = async (c, next) => {
 };
 
 export const requireAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
-  if (c.get('user')?.role !== 'admin') throw new HTTPException(403, { message: '需要管理員權限' });
+  const sessionUser = c.get('user');
+  if (sessionUser?.role !== 'admin') throw new HTTPException(403, { message: '需要管理員權限' });
+  const admin = await c.env.DB.prepare("SELECT id FROM users WHERE id = ? AND role = 'admin'")
+    .bind(sessionUser.id)
+    .first<{ id: number }>();
+  if (!admin) throw new HTTPException(403, { message: '管理員權限已失效，請重新登入' });
   await next();
 };

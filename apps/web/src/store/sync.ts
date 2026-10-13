@@ -43,13 +43,13 @@ export const useLibrarySync = create<SyncState>((set, get) => ({
         set({ progress: `掃描 ${scanned} 個資料夾 · 找到 ${found} 個音訊檔${oversizedCovers ? ` · ${oversizedCovers} 張封面超過 1.9 MB` : ''}` });
       }
 
-      let remaining = 1;
+      let hasMore = true;
       let processed = 0;
-      while (remaining > 0) {
+      while (hasMore) {
         const result = await api.sync.process(1);
         processed += result.processed.length;
-        remaining = result.remaining;
-        set({ progress: `正在讀取音樂資訊 · 已完成 ${processed} 首 · 剩下 ${remaining} 首` });
+        hasMore = result.hasMore;
+        set({ progress: `正在讀取音樂資訊 · 已完成 ${processed} 首${hasMore ? ' · 繼續處理中' : ''}` });
       }
 
       set({ progress: '整理已移除的檔案…' });

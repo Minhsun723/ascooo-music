@@ -208,7 +208,6 @@ library.get('/admin/tracks', requireAdmin, async (c) => {
   const offset = int(c.req.query('offset'), 0, 1e9);
   const conditions = ["t.status = 'ready'"];
   const trackBindings: (string | number)[] = [uid];
-  const countBindings: string[] = [];
 
   if (visibility === 'visible') conditions.push('t.visible = 1');
   else if (visibility === 'hidden') conditions.push('t.visible = 0');
@@ -218,29 +217,26 @@ library.get('/admin/tracks', requireAdmin, async (c) => {
     const like = likePattern(q);
     conditions.push("(t.title LIKE ? ESCAPE '\\' OR t.artist LIKE ? ESCAPE '\\' OR al.title LIKE ? ESCAPE '\\')");
     trackBindings.push(like, like, like);
-    countBindings.push(like, like, like);
   }
 
   const where = conditions.join(' AND ');
   const tracksStatement = c.env.DB.prepare(
     `SELECT ${TRACK_SELECT}, t.visible FROM tracks t ${TRACK_JOINS}
      WHERE ${where} ORDER BY t.title COLLATE NOCASE, t.id LIMIT ? OFFSET ?`,
-  ).bind(...trackBindings, limit, offset);
-  const countStatement = c.env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM tracks t LEFT JOIN albums al ON al.id = t.album_id WHERE ${where}`,
-  ).bind(...countBindings);
+  ).bind(...trackBindings, limit + 1, offset);
   const statsStatement = c.env.DB.prepare(
     `SELECT COUNT(*) AS total,
        COALESCE(SUM(CASE WHEN visible = 1 THEN 1 ELSE 0 END), 0) AS visible,
        COALESCE(SUM(CASE WHEN visible = 0 THEN 1 ELSE 0 END), 0) AS hidden
      FROM tracks WHERE status = 'ready'`,
   );
-  const [tracks, count, stats] = await c.env.DB.batch([tracksStatement, countStatement, statsStatement]);
+  const [tracks, stats] = await c.env.DB.batch(offset === 0 ? [tracksStatement, statsStatement] : [tracksStatement]);
+  const rows = tracks.results as (TrackRow & { visible: number })[];
 
   return c.json({
-    tracks: (tracks.results as (TrackRow & { visible: number })[]).map((row) => ({ ...toTrack(row), visible: !!row.visible })),
-    total: (count.results[0] as { n: number } | undefined)?.n ?? 0,
-    stats: (stats.results[0] as { total: number; visible: number; hidden: number } | undefined) ?? { total: 0, visible: 0, hidden: 0 },
+    tracks: rows.slice(0, limit).map((row) => ({ ...toTrack(row), visible: !!row.visible })),
+    hasMore: rows.length > limit,
+    stats: stats ? (stats.results[0] as { total: number; visible: number; hidden: number } | undefined) ?? null : null,
   });
 });
 
