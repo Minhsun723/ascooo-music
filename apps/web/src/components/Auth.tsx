@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useSession } from '../store/session';
-import { IconMusic, IconWave } from './Icons';
+import { IconWave } from './Icons';
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const location = useLocation();
@@ -60,7 +60,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     <main className="auth-page">
       <div className="auth-page__wash" aria-hidden="true" />
       <section className="auth-intro">
-        <div className="brand brand--large"><span className="brand__mark"><IconMusic size={22} /></span><span>ascooo</span><b>music</b></div>
+        <div className="brand brand--large"><img className="brand__image" src="/brand-logo/ascooo-musis.png" width="750" height="320" alt="Ascooo Music" draggable={false} /></div>
         <div className="auth-intro__copy">
           <h1>歡迎<br /><em>登入後收聽</em></h1>
         </div>

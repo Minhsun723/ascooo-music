@@ -12,7 +12,6 @@ import {
   IconHome,
   IconLibrary,
   IconLogout,
-  IconMusic,
   IconPlus,
   IconSearch,
   IconSettings,
@@ -32,7 +31,7 @@ function isInteractiveTarget(target: EventTarget | null) {
 }
 
 function Brand() {
-  return <NavLink to="/" className="brand" aria-label="Ascooo Music 首頁"><span className="brand__mark"><IconMusic size={18} /></span><span>ascooo</span><b>music</b></NavLink>;
+  return <NavLink to="/" className="brand" aria-label="Ascooo Music 首頁"><img className="brand__image" src="/brand-logo/ascooo-music_light.png" width="750" height="320" alt="" aria-hidden="true" draggable={false} /></NavLink>;
 }
 
 function restoreScrollPosition(top: number) {
@@ -134,6 +133,7 @@ export function Shell() {
   const previousPathname = useRef<string | null>(null);
   const [query, setQuery] = useState(new URLSearchParams(location.search).get('q') ?? '');
   const [createOpen, setCreateOpen] = useState(false);
+  const isSearchPage = location.pathname === '/search';
   const isRestoringHistory = navigationType === 'POP' && scrollPositions.current.has(location.key);
 
   useEffect(() => {
@@ -228,8 +228,9 @@ export function Shell() {
         </div>
       </aside>
       <div className="app-shell__body">
-        <header className="topbar">
+        <header className={`topbar${isSearchPage ? ' topbar--search' : ''}`}>
           <div className="history-controls"><button type="button" className="round-button" aria-label="上一頁" onClick={() => navigate(-1)}><IconChevronLeft size={19} /></button><button type="button" className="round-button" aria-label="下一頁" onClick={() => navigate(1)}><IconChevronRight size={19} /></button></div>
+          <NavLink to="/" className="topbar__mobile-brand" aria-label="Ascooo Music 首頁"><img src="/brand-logo/music-logo.png" width="1000" height="1000" alt="" aria-hidden="true" draggable={false} /></NavLink>
           <form className="global-search" role="search" onSubmit={search}><IconSearch size={19} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋歌曲、專輯或藝人" aria-label="搜尋音樂庫" /><kbd>⌘ K</kbd></form>
           <NavLink to="/settings" className="topbar__profile"><span>{user.username.slice(0, 1).toUpperCase()}</span><b>{user.username}</b></NavLink>
         </header>

@@ -10,6 +10,7 @@ import { toast } from './store/toast';
 import { Artwork } from './components/Artwork';
 import { DolbyLogo } from './components/DolbyLogo';
 import { AlbumGrid, ArtistGrid, PlaylistGrid } from './components/MediaGrid';
+import { RubberSegment } from './components/RubberSegment';
 import { TrackList } from './components/TrackList';
 import { IconDisc, IconEye, IconEyeOff, IconHeart, IconMusic, IconPlay, IconPlus, IconSearch, IconShuffle, IconSync, IconTrash, IconUser, IconWave } from './components/Icons';
 
@@ -41,8 +42,8 @@ function RequestError({ message, retry }: { message: string; retry?: () => void 
   return <div className="request-error" role="alert"><IconWave size={26} /><h2>暫時讀不到音樂庫</h2><p>{message}</p>{retry ? <button type="button" className="secondary-button" onClick={retry}>再試一次</button> : null}</div>;
 }
 
-function EmptyState({ icon = <IconMusic />, title, copy, action }: { icon?: React.ReactNode; title: string; copy: string; action?: React.ReactNode }) {
-  return <div className="empty-state"><span>{icon}</span><h2>{title}</h2><p>{copy}</p>{action}</div>;
+function EmptyState({ icon = <IconMusic />, title, copy, action }: { icon?: React.ReactNode; title: string; copy?: string; action?: React.ReactNode }) {
+  return <div className="empty-state"><span>{icon}</span><h2>{title}</h2>{copy ? <p>{copy}</p> : null}{action}</div>;
 }
 
 function SectionHeading({ title, link }: { title: string; link?: string }) {
@@ -92,7 +93,7 @@ export function SearchPage() {
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [query]);
 
-  if (!query) return <PageIntro title="找一段熟悉的聲音"><EmptyState icon={<IconSearch />} title="搜尋你的所有收藏" copy="輸入歌曲、專輯或藝人名稱，結果會從 D1 索引即時找出來。" /></PageIntro>;
+  if (!query) return <PageIntro title="找一段熟悉的聲音"><EmptyState icon={<IconSearch />} title="搜尋音樂" /></PageIntro>;
   if (state.error) return <RequestError message={state.error} />;
   const resultCount = (state.data?.tracks.length ?? 0) + (state.data?.albums.length ?? 0) + (state.data?.artists.length ?? 0);
 
@@ -113,8 +114,8 @@ export function LibraryPage() {
     libraryCache = { userId, data };
     return data;
   }, [], libraryCache?.userId === userId ? libraryCache.data : null);
-  const tabs = [{ id: 'albums', label: '專輯' }, { id: 'tracks', label: '歌曲' }, { id: 'artists', label: '藝人' }, { id: 'playlists', label: '播放清單' }];
-  return <><PageIntro title="音樂庫" copy={request.data ? `${request.data.total.toLocaleString()} 首歌曲，依你的方式整理。` : '所有收藏都在這裡。'} /><div className="segmented-tabs" role="tablist" aria-label="音樂庫分類">{tabs.map((item) => <button type="button" role="tab" aria-selected={tab === item.id} className={tab === item.id ? 'is-active' : ''} key={item.id} onClick={() => setParams({ tab: item.id })}>{item.label}</button>)}</div>{request.loading && !request.data ? <LoadingBlock rows={7} /> : null}{request.error ? <RequestError message={request.error} retry={request.reload} /> : null}{request.data && tab === 'albums' ? request.data.albums.length ? <AlbumGrid albums={request.data.albums} /> : <EmptyState title="還沒有專輯" copy="同步歌曲後，系統會依照內嵌資訊整理專輯。" /> : null}{request.data && tab === 'tracks' ? request.data.tracks.length ? <TrackList tracks={request.data.tracks} /> : <EmptyState title="還沒有歌曲" copy="前往設定頁執行 PikPak 同步。" /> : null}{request.data && tab === 'artists' ? request.data.artists.length ? <ArtistGrid artists={request.data.artists} /> : <EmptyState title="還沒有藝人" copy="同步歌曲後，藝人會自動出現在這裡。" /> : null}{tab === 'playlists' ? playlists.length ? <PlaylistGrid playlists={playlists} /> : <EmptyState icon={<IconDisc />} title="還沒有播放清單" copy="從歌曲選單加入現有清單，或從左側建立新清單。" /> : null}</>;
+  const tabs = [{ value: 'albums', label: '專輯' }, { value: 'tracks', label: '歌曲' }, { value: 'artists', label: '藝人' }, { value: 'playlists', label: '播放清單' }];
+  return <><PageIntro title="音樂庫" /><div className="segmented-tabs"><RubberSegment items={tabs} value={tab} onChange={(nextTab) => setParams({ tab: nextTab })} trackColor="transparent" thumbColor="#fff" textColor="var(--text-soft)" activeTextColor="#090909" radius={999} inset={0} equalSlots stretch={100} squash={3} speed={1} glide={75} draggable className="library-segment" aria-label="音樂庫分類" /></div>{request.loading && !request.data ? <LoadingBlock rows={7} /> : null}{request.error ? <RequestError message={request.error} retry={request.reload} /> : null}{request.data && tab === 'albums' ? request.data.albums.length ? <AlbumGrid albums={request.data.albums} /> : <EmptyState title="還沒有專輯" copy="同步歌曲後，系統會依照內嵌資訊整理專輯。" /> : null}{request.data && tab === 'tracks' ? request.data.tracks.length ? <TrackList tracks={request.data.tracks} /> : <EmptyState title="還沒有歌曲" copy="前往設定頁執行 PikPak 同步。" /> : null}{request.data && tab === 'artists' ? request.data.artists.length ? <ArtistGrid artists={request.data.artists} /> : <EmptyState title="還沒有藝人" copy="同步歌曲後，藝人會自動出現在這裡。" /> : null}{tab === 'playlists' ? playlists.length ? <PlaylistGrid playlists={playlists} /> : <EmptyState icon={<IconDisc />} title="還沒有播放清單" copy="從歌曲選單加入現有清單，或從左側建立新清單。" /> : null}</>;
 }
 
 function CollectionHero({ artworkId, title, subtitle, meta = '', badge, tracks, compactTitle = false, albumLayout = false }: { artworkId?: string | null; title: string; subtitle?: string; meta?: string; badge?: React.ReactNode; tracks: Track[]; compactTitle?: boolean; albumLayout?: boolean }) {
@@ -145,7 +146,7 @@ export function ArtistPage() {
 export function FavoritesPage() {
   const request = useRequest(() => api.favorites(), []);
   const tracks = request.data?.tracks ?? [];
-  return <><PageIntro title="喜愛的歌曲" copy={tracks.length ? `${tracks.length} 首你不想錯過的歌。` : '把想一聽再聽的歌放在這裡。'} />{request.loading ? <LoadingBlock rows={6} /> : request.error ? <RequestError message={request.error} retry={request.reload} /> : tracks.length ? <TrackList tracks={tracks} /> : <EmptyState icon={<IconHeart />} title="還沒有喜愛的歌曲" copy="點一下歌曲旁的愛心，它就會收藏在這裡。" />}</>;
+  return <><PageIntro title="喜愛的歌曲" copy={tracks.length ? `${tracks.length} 首你不想錯過的歌。` : undefined} />{request.loading ? <LoadingBlock rows={6} /> : request.error ? <RequestError message={request.error} retry={request.reload} /> : tracks.length ? <TrackList tracks={tracks} /> : <EmptyState icon={<IconHeart />} title="還沒有喜愛的歌曲" copy="點一下歌曲旁的愛心，它就會收藏在這裡。" />}</>;
 }
 
 export function PlaylistPage() {
