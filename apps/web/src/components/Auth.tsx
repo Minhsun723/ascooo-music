@@ -41,23 +41,18 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       <section className="auth-intro">
         <div className="brand brand--large"><span className="brand__mark"><IconMusic size={22} /></span><span>ascooo</span><b>music</b></div>
         <div className="auth-intro__copy">
-          <span className="eyebrow">YOUR MUSIC · YOUR SPACE</span>
-          <h1>讓收藏回到<br /><em>聆聽本身。</em></h1>
-          <p>從 PikPak 串流原始音訊，保留你整理的專輯、音質與歌詞。沒有推薦演算法干擾，只有你的音樂。</p>
+          <h1>歡迎<br /><em>登入後收聽</em></h1>
         </div>
         <div className="signal-line signal-line--wide" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /><i /><i /><i /><i /></div>
       </section>
-      <section className="auth-card" aria-labelledby="auth-title">
-        <span className="auth-card__number">{needsSetup ? '00 / SETUP' : '01 / SIGN IN'}</span>
-        <h2 id="auth-title">{needsSetup ? '建立管理員帳號' : '歡迎回來'}</h2>
-        <p>{needsSetup ? '第一次使用，只需要完成這個步驟。' : '登入後繼續播放你的收藏。'}</p>
+      <section className="auth-card" aria-labelledby={needsSetup ? 'auth-title' : undefined} aria-label={needsSetup ? undefined : '登入'}>
+        {needsSetup ? <><span className="auth-card__number">00 / SETUP</span><h2 id="auth-title">建立管理員帳號</h2><p>第一次使用，只需要完成這個步驟。</p></> : null}
         <form onSubmit={submit}>
           <label><span>帳號</span><input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="輸入帳號" minLength={2} required /></label>
           <label><span>密碼</span><input type="password" autoComplete={needsSetup ? 'new-password' : 'current-password'} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="至少 8 個字元" minLength={8} required /></label>
           {error ? <div className="form-error" role="alert">{error}</div> : null}
           <button className="primary-button" type="submit" disabled={pending}>{pending ? '處理中…' : needsSetup ? '建立並開始使用' : '登入'}</button>
         </form>
-        <small>連線與密碼驗證由你的 Cloudflare Worker 處理。</small>
       </section>
     </main>
   );

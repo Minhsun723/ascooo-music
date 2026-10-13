@@ -91,7 +91,7 @@ h1, h2, h3 { font-family: var(--font-display); letter-spacing: -.035em; }
 .auth-intro { position: relative; z-index: 1; min-height: 100dvh; padding: clamp(28px, 5vw, 74px); display: flex; flex-direction: column; justify-content: space-between; overflow: hidden; }
 .auth-intro .brand b { color: #64748b; }
 .auth-intro__copy { max-width: 700px; padding: 12vh 0 8vh; }
-.auth-intro__copy h1 { margin: 18px 0 24px; font-size: clamp(3.25rem, 7vw, 7.4rem); line-height: .92; letter-spacing: -.07em; }
+.auth-intro__copy h1 { margin: 18px 0 24px; font-size: clamp(3.25rem, 7vw, 7.4rem); line-height: 1.12; letter-spacing: .01em; }
 .auth-intro__copy h1 em { font-style: normal; color: transparent; background: var(--gradient); background-clip: text; -webkit-background-clip: text; }
 .auth-intro__copy p { max-width: 540px; color: #526176; font-size: clamp(1rem, 1.5vw, 1.2rem); line-height: 1.8; }
 .signal-line { height: 54px; display: flex; align-items: center; gap: clamp(6px, 1vw, 15px); opacity: .75; }

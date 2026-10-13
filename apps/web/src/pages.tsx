@@ -49,8 +49,15 @@ function SectionHeading({ title, link }: { title: string; link?: string }) {
   return <div className="section-heading"><div><h2>{title}</h2></div>{link ? <Link to={link}>查看全部 <span aria-hidden="true">↗</span></Link> : null}</div>;
 }
 
+let homeCache: { userId: number; data: HomeData } | null = null;
+
 export function HomePage() {
-  const request = useRequest<HomeData>(() => api.home(), []);
+  const userId = useSession((s) => s.user!.id);
+  const request = useRequest<HomeData>(async () => {
+    const data = await api.home();
+    homeCache = { userId, data };
+    return data;
+  }, [], homeCache?.userId === userId ? homeCache.data : null);
   if (request.loading && !request.data) return <LoadingBlock rows={7} />;
   if (request.error || !request.data) return <RequestError message={request.error} retry={request.reload} />;
   const data = request.data;
