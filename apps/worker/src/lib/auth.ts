@@ -68,6 +68,12 @@ export const requireUser: MiddlewareHandler<AppEnv> = async (c, next) => {
   await next();
 };
 
+/** Trust the admin role in the signed session without performing a D1 lookup. */
+export const requireSessionAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
+  if (c.get('user')?.role !== 'admin') throw new HTTPException(403, { message: '需要管理員權限' });
+  await next();
+};
+
 export const requireAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
   const sessionUser = c.get('user');
   if (sessionUser?.role !== 'admin') throw new HTTPException(403, { message: '需要管理員權限' });

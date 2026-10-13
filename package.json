@@ -6,7 +6,8 @@
     "apps/*"
   ],
   "devDependencies": {
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.25.0",
+    "sharp": "^0.35.5"
   },
   "scripts": {
     "dev:api": "npm run build && npm run dev -w apps/worker",

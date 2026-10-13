@@ -39,7 +39,9 @@ const get = <T>(p: string) => request<T>(p);
 const post = <T>(p: string, json?: unknown) => request<T>(p, { method: 'POST', json: json ?? {} });
 
 export const streamUrl = (id: number) => `/api/stream/${id}`;
-export const artUrl = (id: string | null | undefined) => (id ? `/api/art/${id}` : null);
+export type ArtworkSize = 512 | 2000;
+export const artUrl = (id: string | null | undefined, size: ArtworkSize = 512) =>
+  (id ? `/api/art/${id}/${size}?v=1` : null);
 
 export const api = {
   auth: {

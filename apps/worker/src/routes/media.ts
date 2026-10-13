@@ -1,6 +1,7 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import type { AppEnv } from '../env';
+import { ARTWORK_ASSET_VERSION, artworkObjectKey, isArtworkSize } from '../lib/artwork';
 import { WebDAV } from '../lib/webdav';
 
 const media = new Hono<AppEnv>();
@@ -47,10 +48,12 @@ media.get('/stream/:id', async (c) => {
   return new Response(upstream.body, { status: upstream.status, headers });
 });
 
-/** Album art stored in D1; ids are content hashes so they can be cached forever. */
-media.get('/art/:id', async (c) => {
-  const id = c.req.param('id');
-  if (c.req.header('if-none-match') === `"${id}"`) return new Response(null, { status: 304 });
+function etagMatches(requestValue: string | undefined, etag: string): boolean {
+  if (!requestValue) return false;
+  return requestValue.split(',').some((value) => value.trim() === etag || value.trim() === '*');
+}
+
+async function legacyArtwork(c: Context<AppEnv>, id: string): Promise<Response> {
   const row = await c.env.DB.prepare('SELECT mime, data FROM artworks WHERE id = ?').bind(id).first<{ mime: string; data: ArrayBuffer | number[] }>();
   let mime: string;
   let data: ArrayBuffer | Uint8Array;
@@ -66,13 +69,62 @@ media.get('/art/:id', async (c) => {
     data = await new WebDAV(c.env).readRange(source.path, source.byte_start, source.byte_start + source.byte_length - 1);
     if (data.byteLength !== source.byte_length) throw new HTTPException(502, { message: 'PikPak 封面資料不完整' });
   }
+  const etag = `"legacy-${id}"`;
+  const cacheControl = 'private, max-age=3600';
+  if (etagMatches(c.req.header('if-none-match'), etag)) {
+    return new Response(null, { status: 304, headers: { ETag: etag, 'Cache-Control': cacheControl } });
+  }
   return new Response(data, {
     headers: {
       'Content-Type': mime,
-      'Cache-Control': 'public, max-age=31536000, immutable',
-      ETag: `"${id}"`,
+      'Cache-Control': cacheControl,
+      'X-Content-Type-Options': 'nosniff',
+      ETag: etag,
     },
   });
-});
+}
+
+/** Optimized album art lives in R2; legacy D1/PikPak data remains a migration fallback. */
+async function serveArtwork(c: Context<AppEnv>): Promise<Response> {
+  const id = c.req.param('id');
+  if (!id || !/^[a-f0-9]{40}$/.test(id)) throw new HTTPException(404, { message: '找不到封面' });
+  const rawSize = c.req.param('size');
+  const size = rawSize === undefined ? 512 : Number(rawSize);
+  if (!isArtworkSize(size)) throw new HTTPException(400, { message: '封面尺寸只支援 512 或 2000' });
+
+  const cacheUrl = new URL(c.req.url);
+  cacheUrl.search = `v=${ARTWORK_ASSET_VERSION}`;
+  const cacheKey = new Request(cacheUrl.toString(), { method: 'GET' });
+  const cache = caches.default;
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    const etag = cached.headers.get('etag');
+    if (etag && etagMatches(c.req.header('if-none-match'), etag)) {
+      return new Response(null, { status: 304, headers: cached.headers });
+    }
+    return cached;
+  }
+
+  const object = await c.env.ARTWORK.get(artworkObjectKey(id, size));
+  if (!object) return legacyArtwork(c, id);
+
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  const etag = `"${ARTWORK_ASSET_VERSION}-${id}-${size}"`;
+  headers.set('Content-Type', 'image/webp');
+  headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+  headers.set('ETag', etag);
+  headers.set('X-Content-Type-Options', 'nosniff');
+  if (etagMatches(c.req.header('if-none-match'), etag)) {
+    return new Response(null, { status: 304, headers });
+  }
+
+  const response = new Response(object.body, { headers });
+  c.executionCtx.waitUntil(cache.put(cacheKey, response.clone()));
+  return response;
+}
+
+media.get('/art/:id', serveArtwork);
+media.get('/art/:id/:size', serveArtwork);
 
 export default media;

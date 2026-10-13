@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import type { AppEnv, Env } from '../env';
-import { requireAdmin } from '../lib/auth';
+import { requireAdmin, requireSessionAdmin } from '../lib/auth';
+import { ARTWORK_SIZES, artworkObjectKey, isArtworkSize, type ArtworkSize } from '../lib/artwork';
 import { AUDIO_EXTENSIONS, type AudioMetadata, extOf, extractMetadata, guessFromFilename } from '../lib/metadata';
 import { type DavEntry, WebDAV, normalizePath, parentDir } from '../lib/webdav';
 
@@ -13,7 +14,12 @@ import { type DavEntry, WebDAV, normalizePath, parentDir } from '../lib/webdav';
  *   3. POST /finalize  — drop rows for files that no longer exist on PikPak
  */
 const sync = new Hono<AppEnv>();
-sync.use('*', requireAdmin);
+sync.use('*', (c, next) => {
+  // Artwork imports are content-addressed R2 writes. Trusting the signed admin
+  // session here avoids one D1 read per cover during a large local sync.
+  const guard = c.req.path.endsWith('/import/artwork') ? requireSessionAdmin : requireAdmin;
+  return guard(c, next);
+});
 
 const MAX_ART_BYTES = 1_900_000; // D1 BLOB limit is 2 MB
 const COVER_NAMES = ['cover', 'folder', 'front', 'album', 'albumart', 'albumcover', 'artwork', 'jacket', '封面', '專輯封面', '专辑封面'];
@@ -207,15 +213,17 @@ interface ArtworkSource {
   offset: number;
 }
 
+interface ImportedArtworkVariant {
+  size: ArtworkSize;
+  width: number;
+  height: number;
+  checksum: string;
+  data: string;
+}
+
 interface ImportedArtwork {
   id: string;
-  mime: string;
-  data?: string;
-  source?: {
-    path: string;
-    offset: number;
-    length: number;
-  };
+  variants: ImportedArtworkVariant[];
 }
 
 interface ImportedTrack {
@@ -239,6 +247,17 @@ function decodeBase64(value: string): Uint8Array {
   const data = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) data[i] = raw.charCodeAt(i);
   return data;
+}
+
+async function sha256(data: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function isWebp(data: Uint8Array): boolean {
+  return data.length >= 12 &&
+    data[0] === 0x52 && data[1] === 0x49 && data[2] === 0x46 && data[3] === 0x46 &&
+    data[8] === 0x57 && data[9] === 0x45 && data[10] === 0x42 && data[11] === 0x50;
 }
 
 async function storeArtwork(
@@ -272,41 +291,58 @@ async function storeArtwork(
  */
 sync.post('/import/artwork', async (c) => {
   const artwork = await c.req.json<ImportedArtwork>();
-  if (!/^[a-f0-9]{40}$/.test(artwork.id)) throw new HTTPException(400, { message: '封面 ID 格式錯誤' });
-  if (!artwork.mime?.startsWith('image/')) throw new HTTPException(400, { message: '封面 MIME 格式錯誤' });
-
-  const existing = await c.env.DB.prepare(
-    `SELECT 1 AS found FROM artworks WHERE id = ?
-     UNION ALL SELECT 1 AS found FROM artwork_sources WHERE id = ? LIMIT 1`,
-  ).bind(artwork.id, artwork.id).first<{ found: number }>();
-  if (existing) return c.json({ id: artwork.id, existing: true });
-
-  if (artwork.data) {
-    const data = decodeBase64(artwork.data);
-    if (!data.length || data.length > MAX_ART_BYTES) {
-      throw new HTTPException(400, { message: `封面必須小於 ${MAX_ART_BYTES} bytes` });
-    }
-    const actualId = await sha1(data);
-    if (actualId !== artwork.id) throw new HTTPException(400, { message: '封面內容校驗失敗' });
-    await c.env.DB.prepare('INSERT OR IGNORE INTO artworks (id, mime, data) VALUES (?, ?, ?)')
-      .bind(artwork.id, artworkMime('', data, artwork.mime), data)
-      .run();
-  } else if (artwork.source) {
-    const path = assertInRoot(c.env, artwork.source.path);
-    const offset = Math.floor(artwork.source.offset);
-    const length = Math.floor(artwork.source.length);
-    if (offset < 0 || length < 1) throw new HTTPException(400, { message: '封面來源範圍錯誤' });
-    await c.env.DB.prepare(
-      `INSERT INTO artwork_sources (id, mime, path, byte_start, byte_length)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET mime = excluded.mime, path = excluded.path,
-         byte_start = excluded.byte_start, byte_length = excluded.byte_length`,
-    ).bind(artwork.id, artwork.mime, path, offset, length).run();
-  } else {
-    throw new HTTPException(400, { message: '缺少封面內容或來源' });
+  if (!artwork || typeof artwork.id !== 'string' || !/^[a-f0-9]{40}$/.test(artwork.id)) {
+    throw new HTTPException(400, { message: '封面 ID 格式錯誤' });
+  }
+  if (!Array.isArray(artwork.variants)) throw new HTTPException(400, { message: '缺少封面尺寸' });
+  if (artwork.variants.length !== ARTWORK_SIZES.length || artwork.variants.some((variant) => !variant || !isArtworkSize(variant.size))) {
+    throw new HTTPException(400, { message: `封面必須包含 ${ARTWORK_SIZES.join('、')} px 尺寸` });
   }
 
-  return c.json({ id: artwork.id });
+  const variants = new Map(artwork.variants.map((variant) => [variant.size, variant]));
+  if (variants.size !== ARTWORK_SIZES.length || ARTWORK_SIZES.some((size) => !variants.has(size))) {
+    throw new HTTPException(400, { message: `封面必須包含 ${ARTWORK_SIZES.join('、')} px 尺寸` });
+  }
+
+  const existing = await Promise.all(ARTWORK_SIZES.map((size) => c.env.ARTWORK.head(artworkObjectKey(artwork.id, size))));
+  const uploaded: ArtworkSize[] = [];
+  for (let index = 0; index < ARTWORK_SIZES.length; index++) {
+    if (existing[index]) continue;
+    const size = ARTWORK_SIZES[index];
+    const variant = variants.get(size)!;
+    if (!Number.isInteger(variant.width) || !Number.isInteger(variant.height) ||
+        variant.width < 1 || variant.height < 1 || variant.width > size || variant.height > size) {
+      throw new HTTPException(400, { message: `${size} px 封面尺寸錯誤` });
+    }
+    if (!/^[a-f0-9]{64}$/.test(variant.checksum)) {
+      throw new HTTPException(400, { message: `${size} px 封面校驗碼錯誤` });
+    }
+    if (typeof variant.data !== 'string') {
+      throw new HTTPException(400, { message: `${size} px 封面內容格式錯誤` });
+    }
+    const data = decodeBase64(variant.data);
+    if (!data.length || data.length > 20_000_000 || !isWebp(data)) {
+      throw new HTTPException(400, { message: `${size} px 封面不是有效的 WebP` });
+    }
+    if (await sha256(data) !== variant.checksum) {
+      throw new HTTPException(400, { message: `${size} px 封面內容校驗失敗` });
+    }
+    await c.env.ARTWORK.put(artworkObjectKey(artwork.id, size), data, {
+      httpMetadata: {
+        contentType: 'image/webp',
+        cacheControl: 'public, max-age=31536000, immutable',
+      },
+      customMetadata: {
+        artworkId: artwork.id,
+        checksum: variant.checksum,
+        width: String(variant.width),
+        height: String(variant.height),
+      },
+    });
+    uploaded.push(size);
+  }
+
+  return c.json({ id: artwork.id, existing: uploaded.length === 0, uploaded });
 });
 
 /** Persist one track already parsed by the local sync command. */
@@ -524,11 +560,19 @@ async function saveTrack(
 }
 
 sync.post('/finalize', async (c) => {
-  const { scanId, dir } = await c.req.json<{ scanId: string; dir?: string }>();
+  const { scanId, dir, artworkIds: rawArtworkIds } = await c.req.json<{
+    scanId: string;
+    dir?: string;
+    artworkIds?: string[];
+  }>();
   const root = normalizePath(c.env.MUSIC_ROOT || '/');
   const scanned = assertInRoot(c.env, dir || root);
   const prefix = scanned === '/' ? '/%' : `${scanned}/%`;
   const db = c.env.DB;
+  const artworkIds = [...new Set((rawArtworkIds ?? []).filter((id) => /^[a-f0-9]{40}$/.test(id)))];
+  if (artworkIds.length !== (rawArtworkIds?.length ?? 0) || artworkIds.length > 20_000) {
+    throw new HTTPException(400, { message: '封面清理清單格式錯誤' });
+  }
   const removed = await db
     .prepare(`DELETE FROM tracks WHERE path LIKE ? AND (scan_id IS NULL OR scan_id != ?) RETURNING id`)
     .bind(prefix, scanId)
@@ -547,6 +591,10 @@ sync.post('/finalize', async (c) => {
       `DELETE FROM artwork_sources WHERE id NOT IN (SELECT artwork_id FROM tracks WHERE artwork_id IS NOT NULL)
          AND id NOT IN (SELECT artwork_id FROM albums WHERE artwork_id IS NOT NULL)`,
     ),
+    ...(artworkIds.length ? [
+      db.prepare('DELETE FROM artworks WHERE id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(artworkIds)),
+      db.prepare('DELETE FROM artwork_sources WHERE id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(artworkIds)),
+    ] : []),
   ]);
   return c.json({ removed: removed.results.length });
 });

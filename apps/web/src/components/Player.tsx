@@ -480,7 +480,7 @@ export function NowPlaying() {
       </header>
       <div className="now-playing__layout">
         <div className="now-playing__visual">
-          <Artwork artworkId={track.artworkId} title={track.title} artist={track.artist} className="now-playing__art" loading="eager" />
+          <Artwork artworkId={track.artworkId} title={track.title} artist={track.artist} className="now-playing__art" loading="eager" size={2000} />
           <div className="now-playing__meta">
             <h1><OverflowMarquee key={track.id} text={track.title} /></h1>
             <div className="now-playing__artist-row">

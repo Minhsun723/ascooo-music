@@ -6,6 +6,7 @@ Ascooo Music 是一個以 Cloudflare 與 PikPak 組成的私人音樂平台。
 - `apps/worker`：Hono API，處理同一網域下的 `/api/*`
 - `wrangler.toml`：單一 Worker 的 Static Assets、D1 與自訂網域設定
 - D1：歌曲索引、歌詞、收藏、播放紀錄與播放清單
+- R2：本機壓縮後的 512 px／2000 px WebP 封面
 - PikPak WebDAV：原始 M4A、MP3、FLAC 與同名 LRC 檔案
 
 生產環境只有一個 Cloudflare Worker 專案：靜態檔案由 Worker Static Assets 直接傳送，API 則由同一個 Worker 執行。不需要 Pages 專案或 Pages Function 轉發層。
@@ -29,6 +30,12 @@ npx wrangler d1 create ascooo-music
 
 ```bash
 npm run db:migrate:remote
+```
+
+建立封面使用的 R2 bucket（名稱已對應 `wrangler.toml`）：
+
+```bash
+npx wrangler r2 bucket create ascooo-music-artwork
 ```
 
 `wrangler.toml` 已將自訂網域設為 `music.ascooo.com`。該網域必須在同一個 Cloudflare 帳戶中。
@@ -122,9 +129,10 @@ npm run sync:local
 這個指令會依序：
 
 1. 在本機並行掃描 PikPak WebDAV，解析新增或變動的音訊標籤、歌詞與封面。
-2. 將完整結果寫到被 Git 忽略的 `.sync-cache/library.json`。
-3. 登入部署站台，逐張上傳封面、逐首寫入中繼資料。
-4. 所有歌曲上傳完成後，才清理由 PikPak 移除的遠端索引。
+2. 使用 Sharp 將每張封面壓成最長邊 512 px（品質 80）與 2000 px（品質 84）的 WebP；不放大較小的原圖，也不修改 PikPak 原始音訊。
+3. 將完整結果寫到被 Git 忽略的 `.sync-cache/library.json`。
+4. 登入部署站台，將兩種封面上傳到 R2、逐首寫入 D1 中繼資料。
+5. 所有歌曲上傳完成後，才清理由 PikPak 移除的遠端索引。
 
 本機準備或上傳中斷都不會先清空線上音樂庫；重跑上傳具有冪等性。也可以分兩段執行：
 
@@ -135,5 +143,7 @@ npm run sync:local -- --upload-only
 
 上傳遇到 `429` 或 `5xx` 會自動退避重試最多五次。同步會保留既有歌曲 ID、顯示／隱藏狀態、收藏、播放紀錄及播放清單。
 解析預設同時處理 4 首，`SYNC_PARSE_CONCURRENCY` 可設為 `1` 到 `8`；網路穩定時可提高到 `6` 或 `8`，若 PikPak 開始回應 `429`／`503` 則調低。第二次以後會依音訊、LRC 與資料夾封面的簽章沿用未變動歌曲，不再重讀其音訊內容。
+
+封面網址帶有轉檔版本，Worker 會先讀 Cloudflare Edge Cache，再讀 R2；清單、播放列與網格共用 512 px，專輯主視覺與全螢幕播放使用 2000 px。內容雜湊相同的封面只會保存一組。從舊版同步快取第一次升級時會重新解析一次，之後恢復增量同步。
 
 > Dolby Atmos 是否能呈現取決於音訊檔、瀏覽器、作業系統與實際播放裝置；平台會串流原始檔案，不宣稱對瀏覽器端做 Atmos 解碼。

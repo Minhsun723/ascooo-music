@@ -1,22 +1,30 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+import sharp from 'sharp';
+import { ARTWORK_SIZES, type ArtworkSize } from '../apps/worker/src/lib/artwork';
 import { AUDIO_EXTENSIONS, type AudioMetadata, extOf, extractMetadata } from '../apps/worker/src/lib/metadata';
 import { type DavEntry, WebDAV, normalizePath } from '../apps/worker/src/lib/webdav';
 
-const MAX_ART_BYTES = 1_900_000;
 const COVER_NAMES = ['cover', 'folder', 'front', 'album', 'albumart', 'albumcover', 'artwork', 'jacket', '封面', '專輯封面', '专辑封面'];
 const IMAGE_EXT = ['jpg', 'jpeg', 'png', 'webp', 'avif', 'gif'];
 const projectRoot = process.cwd();
 const cacheFile = resolve(projectRoot, '.sync-cache/library.json');
 const uploadStateFile = resolve(projectRoot, '.sync-cache/upload-state.json');
 const transientHttpError = /HTTP (?:429|500|502|503|504)\b/;
+const dailyD1LimitError = /exceeded D1's free tier daily/i;
+
+interface PreparedArtworkVariant {
+  size: ArtworkSize;
+  width: number;
+  height: number;
+  checksum: string;
+  data: string;
+}
 
 interface PreparedArtwork {
   id: string;
-  mime: string;
-  data?: string;
-  source?: { path: string; offset: number; length: number };
+  variants: PreparedArtworkVariant[];
 }
 
 interface PreparedTrack {
@@ -37,7 +45,7 @@ interface PreparedTrack {
 }
 
 interface SyncManifest {
-  version: 2;
+  version: 3;
   createdAt: string;
   root: string;
   scanId: string;
@@ -49,7 +57,6 @@ interface UploadState {
   scanId: string;
   artworkIndex: number;
   trackIndex: number;
-  artworkSources: Record<string, NonNullable<PreparedArtwork['source']>>;
 }
 
 function concurrencyFromEnvironment(): number {
@@ -87,7 +94,7 @@ async function mapConcurrent<T, R>(items: T[], concurrency: number, operation: (
 async function previousManifest(root: string): Promise<SyncManifest | null> {
   try {
     const manifest = JSON.parse(await readFile(cacheFile, 'utf8')) as SyncManifest;
-    return manifest.version === 2 && manifest.root === root ? manifest : null;
+    return manifest.version === 3 && manifest.root === root ? manifest : null;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT' || error instanceof SyntaxError) return null;
     throw error;
@@ -109,7 +116,7 @@ async function loadUploadState(scanId: string): Promise<UploadState> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
   }
-  return { scanId, artworkIndex: 0, trackIndex: 0, artworkSources: {} };
+  return { scanId, artworkIndex: 0, trackIndex: 0 };
 }
 
 async function persistUploadState(state: UploadState): Promise<void> {
@@ -175,31 +182,48 @@ function folderCover(files: DavEntry[]): DavEntry | null {
     .filter((candidate): candidate is { file: DavEntry; rank: number } => candidate.rank !== null)
     .sort((a, b) => a.rank - b.rank || a.file.size - b.file.size);
   const candidates = named.length ? named.map((candidate) => candidate.file) : images.length === 1 ? images : [];
-  return candidates.find((candidate) => candidate.size <= MAX_ART_BYTES) ?? null;
-}
-
-function artworkMime(path: string, data: Uint8Array, hint = ''): string {
-  if (data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) return 'image/jpeg';
-  if (data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47) return 'image/png';
-  if (data[0] === 0x47 && data[1] === 0x49 && data[2] === 0x46 && data[3] === 0x38) return 'image/gif';
-  if (data[0] === 0x52 && data[1] === 0x49 && data[2] === 0x46 && data[3] === 0x46 &&
-      data[8] === 0x57 && data[9] === 0x45 && data[10] === 0x42 && data[11] === 0x50) return 'image/webp';
-  if (data.length >= 12 && String.fromCharCode(...data.subarray(4, 12)).startsWith('ftypavif')) return 'image/avif';
-  const normalizedHint = hint.toLowerCase() === 'image/jpg' ? 'image/jpeg' : hint.toLowerCase();
-  if (normalizedHint.startsWith('image/')) return normalizedHint;
-  const extension = extOf(path);
-  return extension === 'png' ? 'image/png'
-    : extension === 'webp' ? 'image/webp'
-      : extension === 'avif' ? 'image/avif'
-        : extension === 'gif' ? 'image/gif'
-          : 'image/jpeg';
+  return candidates[0] ?? null;
 }
 
 const sha1 = (data: Uint8Array) => createHash('sha1').update(data).digest('hex');
+const sha256 = (data: Uint8Array) => createHash('sha256').update(data).digest('hex');
 
-function addArtwork(artworks: Map<string, PreparedArtwork>, artwork: PreparedArtwork): string {
-  if (!artworks.has(artwork.id)) artworks.set(artwork.id, artwork);
-  return artwork.id;
+async function addArtwork(
+  artworks: Map<string, PreparedArtwork>,
+  artworkJobs: Map<string, Promise<string>>,
+  data: Uint8Array,
+): Promise<string> {
+  const id = sha1(data);
+  if (artworks.has(id)) return id;
+  const inFlight = artworkJobs.get(id);
+  if (inFlight) return inFlight;
+
+  const job = (async () => {
+    const input = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+    const variants = await Promise.all(ARTWORK_SIZES.map(async (size): Promise<PreparedArtworkVariant> => {
+      const quality = size === 512 ? 80 : 84;
+      const result = await sharp(input, { failOn: 'none' })
+        .autoOrient()
+        .resize(size, size, { fit: 'inside', withoutEnlargement: true })
+        .webp({ quality, effort: 4, smartSubsample: true })
+        .toBuffer({ resolveWithObject: true });
+      return {
+        size,
+        width: result.info.width,
+        height: result.info.height,
+        checksum: sha256(result.data),
+        data: result.data.toString('base64'),
+      };
+    }));
+    artworks.set(id, { id, variants });
+    return id;
+  })();
+  artworkJobs.set(id, job);
+  try {
+    return await job;
+  } finally {
+    artworkJobs.delete(id);
+  }
 }
 
 async function withReadRetry<T>(label: string, operation: () => Promise<T>): Promise<T> {
@@ -258,6 +282,7 @@ async function prepare(): Promise<SyncManifest> {
   const previous = await previousManifest(root);
   const previousByPath = new Map(previous?.tracks.map((track) => [track.path, track]) ?? []);
   const artworks = new Map(previous?.artworks.map((artwork) => [artwork.id, artwork]) ?? []);
+  const artworkJobs = new Map<string, Promise<string>>();
   const tracks: PreparedTrack[] = [];
   const audioCount = contents.reduce(
     (count, folder) => count + folder.files.filter((file) => AUDIO_EXTENSIONS.includes(extOf(file.name))).length,
@@ -283,22 +308,13 @@ async function prepare(): Promise<SyncManifest> {
       if (!cover) return Promise.resolve(null);
       folderArtworkPromise ??= (async () => {
         try {
-          const { data, contentType } = await withReadRetry(`讀取封面 ${cover.path}`, async () => {
+          const data = await withReadRetry(`讀取封面 ${cover.path}`, async () => {
             const response = await dav.fetchFile(cover.path);
             if (!response.ok) throw new Error(`讀取 ${cover.path} 失敗：HTTP ${response.status}`);
-            return {
-              data: new Uint8Array(await response.arrayBuffer()),
-              contentType: response.headers.get('content-type') ?? '',
-            };
+            return new Uint8Array(await response.arrayBuffer());
           });
-          if (!data.length || data.length > MAX_ART_BYTES) return null;
-          const id = sha1(data);
-          return addArtwork(artworks, {
-            id,
-            mime: artworkMime(cover.path, data, contentType),
-            data: Buffer.from(data).toString('base64'),
-            source: { path: cover.path, offset: 0, length: data.length },
-          });
+          if (!data.length) return null;
+          return await addArtwork(artworks, artworkJobs, data);
         } catch (error) {
           console.warn(`  略過封面 ${cover.path}：${error instanceof Error ? error.message : String(error)}`);
           return null;
@@ -344,23 +360,10 @@ async function prepare(): Promise<SyncManifest> {
       const { picture, lyrics: embeddedLyrics, ...preparedMetadata } = metadata;
       let trackArtworkId: string | null = null;
       if (picture?.data.length) {
-        const id = sha1(picture.data);
-        const source = picture.offset === undefined
-          ? undefined
-          : { path: file.path, offset: picture.offset, length: picture.data.length };
-        if (picture.data.length <= MAX_ART_BYTES) {
-          trackArtworkId = addArtwork(artworks, {
-            id,
-            mime: artworkMime(file.path, picture.data, picture.mime),
-            data: Buffer.from(picture.data).toString('base64'),
-            source,
-          });
-        } else if (source) {
-          trackArtworkId = addArtwork(artworks, {
-            id,
-            mime: artworkMime(file.path, picture.data, picture.mime),
-            source,
-          });
+        try {
+          trackArtworkId = await addArtwork(artworks, artworkJobs, picture.data);
+        } catch (error) {
+          console.warn(`  略過內嵌封面 ${file.path}：${error instanceof Error ? error.message : String(error)}`);
         }
       }
 
@@ -401,7 +404,7 @@ async function prepare(): Promise<SyncManifest> {
   console.log(`本機解析完成：${audioCount} 首；沿用 ${reused} 首，重新解析 ${audioCount - reused} 首`);
 
   return {
-    version: 2,
+    version: 3,
     createdAt: new Date().toISOString(),
     root,
     scanId,
@@ -435,6 +438,7 @@ async function login(baseUrl: string): Promise<string> {
         return cookie;
       }
       lastError = await responseError(response);
+      if (dailyD1LimitError.test(lastError)) break;
       if (![429, 500, 502, 503, 504].includes(response.status)) break;
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
@@ -455,6 +459,7 @@ async function post(baseUrl: string, cookie: string, path: string, body: unknown
       });
       if (response.ok) return response.json();
       lastError = await responseError(response);
+      if (dailyD1LimitError.test(lastError)) break;
       if (![429, 500, 502, 503, 504].includes(response.status) || attempt === maxAttempts - 1) break;
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
@@ -462,28 +467,6 @@ async function post(baseUrl: string, cookie: string, path: string, body: unknown
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 750 * 2 ** attempt));
   }
   throw new Error(`${path} 上傳失敗：${lastError}`);
-}
-
-async function findArtworkSource(manifest: SyncManifest, artwork: PreparedArtwork): Promise<PreparedArtwork['source']> {
-  const folderTrack = manifest.tracks.find((track) => track.folderArtworkId === artwork.id && track.coverPath);
-  if (folderTrack?.coverPath) {
-    return { path: folderTrack.coverPath, offset: 0, length: Buffer.byteLength(artwork.data ?? '', 'base64') };
-  }
-
-  const track = manifest.tracks.find((candidate) => candidate.trackArtworkId === artwork.id);
-  if (!track) return undefined;
-  const dav = new WebDAV({
-    WEBDAV_URL: required('WEBDAV_URL'),
-    MUSIC_ROOT: process.env.MUSIC_ROOT?.trim() || '/',
-    WEBDAV_USERNAME: process.env.WEBDAV_USERNAME,
-    WEBDAV_PASSWORD: process.env.WEBDAV_PASSWORD,
-    WEBDAV_BEARER_TOKEN: process.env.WEBDAV_BEARER_TOKEN,
-    WEBDAV_AUTH_MODE: process.env.WEBDAV_AUTH_MODE as 'auto' | 'basic' | 'bearer' | undefined,
-  } as never);
-  const metadata = await withReadRetry(`定位封面 ${track.path}`, () => extractMetadata(dav, track.path, track.size));
-  const picture = metadata.picture;
-  if (!picture?.data.length || picture.offset === undefined || sha1(picture.data) !== artwork.id) return undefined;
-  return { path: track.path, offset: picture.offset, length: picture.data.length };
 }
 
 async function upload(manifest: SyncManifest) {
@@ -504,28 +487,7 @@ async function upload(manifest: SyncManifest) {
 
   for (let index = state.artworkIndex; index < manifest.artworks.length; index++) {
     const artwork = manifest.artworks[index];
-    const source = state.artworkSources[artwork.id];
-    try {
-      await post(
-        baseUrl,
-        cookie,
-        '/sync/import/artwork',
-        source ? { id: artwork.id, mime: artwork.mime, source } : artwork,
-        source || !artwork.data ? 5 : 1,
-      );
-    } catch (error) {
-      if (!artwork.data || source) throw error;
-      const fallbackSource = artwork.source ?? await findArtworkSource(manifest, artwork);
-      if (!fallbackSource) throw error;
-      state.artworkSources[artwork.id] = fallbackSource;
-      await persistUploadState(state);
-      console.warn(`  封面 ${index + 1} 改用原檔 byte range 上傳`);
-      await post(baseUrl, cookie, '/sync/import/artwork', {
-        id: artwork.id,
-        mime: artwork.mime,
-        source: fallbackSource,
-      });
-    }
+    await post(baseUrl, cookie, '/sync/import/artwork', artwork);
     state.artworkIndex = index + 1;
     await persistUploadState(state);
     console.log(`  上傳封面 ${index + 1}/${manifest.artworks.length}`);
@@ -538,7 +500,11 @@ async function upload(manifest: SyncManifest) {
     console.log(`  上傳歌曲 ${index + 1}/${manifest.tracks.length}：${track.path.slice(track.path.lastIndexOf('/') + 1)}`);
   }
 
-  await post(baseUrl, cookie, '/sync/finalize', { scanId: manifest.scanId, dir: manifest.root });
+  await post(baseUrl, cookie, '/sync/finalize', {
+    scanId: manifest.scanId,
+    dir: manifest.root,
+    artworkIds: manifest.artworks.map((artwork) => artwork.id),
+  });
   await clearUploadState();
   console.log(`同步完成：${manifest.tracks.length} 首歌曲、${manifest.artworks.length} 張封面`);
 }
@@ -552,7 +518,7 @@ async function main() {
   let manifest: SyncManifest;
   if (uploadOnly) {
     const cached = JSON.parse(await readFile(cacheFile, 'utf8')) as SyncManifest & { version: number };
-    if (![1, 2].includes(cached.version)) throw new Error('本機同步快取版本不支援，請重新執行準備');
+    if (cached.version !== 3) throw new Error('本機同步快取版本不支援，請重新執行準備');
     manifest = cached;
     console.log(`載入本機快取：${manifest.tracks.length} 首歌曲`);
   } else {

@@ -1,5 +1,5 @@
 import { useMemo, useState, type CSSProperties } from 'react';
-import { artUrl } from '../api/client';
+import { artUrl, type ArtworkSize } from '../api/client';
 import { IconMusic } from './Icons';
 
 interface ArtworkProps {
@@ -9,6 +9,7 @@ interface ArtworkProps {
   className?: string;
   rounded?: 'soft' | 'circle';
   loading?: 'eager' | 'lazy';
+  size?: ArtworkSize;
 }
 
 function hueFor(value: string) {
@@ -17,8 +18,8 @@ function hueFor(value: string) {
   return Math.abs(hash) % 360;
 }
 
-export function Artwork({ artworkId, title, artist, className = '', rounded = 'soft', loading = 'lazy' }: ArtworkProps) {
-  const requestedSrc = artUrl(artworkId);
+export function Artwork({ artworkId, title, artist, className = '', rounded = 'soft', loading = 'lazy', size = 512 }: ArtworkProps) {
+  const requestedSrc = artUrl(artworkId, size);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const src = requestedSrc !== failedSrc ? requestedSrc : null;
   const hue = useMemo(() => hueFor(`${title}${artist ?? ''}`), [artist, title]);
@@ -27,7 +28,15 @@ export function Artwork({ artworkId, title, artist, className = '', rounded = 's
   return (
     <div className={`artwork artwork--${rounded} ${className}`} style={style}>
       {src ? (
-        <img src={src} alt={`${title}${artist ? `，${artist}` : ''} 封面`} loading={loading} draggable={false} onError={() => setFailedSrc(src)} />
+        <img
+          src={src}
+          alt={`${title}${artist ? `，${artist}` : ''} 封面`}
+          loading={loading}
+          decoding="async"
+          fetchPriority={loading === 'eager' ? 'high' : 'auto'}
+          draggable={false}
+          onError={() => setFailedSrc(src)}
+        />
       ) : (
         <div className="artwork__fallback" role="img" aria-label={`${title} 的預設封面`}>
           <span className="artwork__orbit" aria-hidden="true" />
