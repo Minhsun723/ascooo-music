@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { api, artUrl } from '../api/client';
 import { DEFAULT_PALETTE, extractPalette, type Palette } from '../lib/color';
 import { activeIndex, parseLrc, plainLines } from '../lib/lrc';
@@ -28,6 +28,17 @@ import { LikeButton } from './TrackList';
 
 const MARQUEE_GAP = 32;
 const MARQUEE_SPEED = 28;
+const PLAYER_DRAG_DISMISS_MAX = 96;
+const PLAYER_DRAG_DISMISS_RATIO = 0.12;
+const PLAYER_FLICK_VELOCITY = 0.2;
+const PLAYER_FLICK_MIN_DISTANCE = 24;
+
+function transformTranslateY(transform: string) {
+  if (!transform || transform === 'none') return 0;
+  const values = transform.slice(transform.indexOf('(') + 1, -1).split(',').map(Number);
+  const y = transform.startsWith('matrix3d') ? values[13] : values[5];
+  return Number.isFinite(y) ? y : 0;
+}
 
 function OverflowMarquee({ text, play = true }: { text: string; play?: boolean }) {
   const viewportRef = useRef<HTMLSpanElement | null>(null);
@@ -187,10 +198,31 @@ export function QueuePanel() {
   const open = usePlayer((s) => s.queueOpen);
   const nowPlayingOpen = usePlayer((s) => s.nowPlayingOpen);
   const setOpen = usePlayer((s) => s.setQueueOpen);
+  const panelRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!open || nowPlayingOpen) return;
+
+    const dismissOnOutsidePress = (event: PointerEvent) => {
+      const panel = panelRef.current;
+      if (panel && event.target instanceof Node && !panel.contains(event.target)) setOpen(false);
+    };
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+
+    document.addEventListener('pointerdown', dismissOnOutsidePress);
+    window.addEventListener('keydown', dismissOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', dismissOnOutsidePress);
+      window.removeEventListener('keydown', dismissOnEscape);
+    };
+  }, [nowPlayingOpen, open, setOpen]);
+
   if (!open || nowPlayingOpen) return null;
 
   return (
-    <aside className="queue-panel" aria-label="播放佇列">
+    <aside ref={panelRef} className="queue-panel" aria-label="播放佇列">
       <div className="panel-heading"><h2>播放佇列</h2><button type="button" className="icon-button" aria-label="關閉播放佇列" onClick={() => setOpen(false)}><IconClose /></button></div>
       <QueueList className="queue-panel__list" />
     </aside>
@@ -202,11 +234,25 @@ function QueueList({ className }: { className: string }) {
   const index = usePlayer((s) => s.index);
   const jumpTo = usePlayer((s) => s.jumpTo);
   const removeFromQueue = usePlayer((s) => s.removeFromQueue);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const currentItemRef = useRef<HTMLDivElement | null>(null);
+  const currentTrack = queue[index];
+
+  useLayoutEffect(() => {
+    const container = listRef.current;
+    const item = currentItemRef.current;
+    if (!container || !item) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const itemRect = item.getBoundingClientRect();
+    const top = container.scrollTop + itemRect.top - containerRect.top - (container.clientHeight - itemRect.height) / 2;
+    container.scrollTo({ top: Math.max(0, top), behavior: 'instant' });
+  }, [currentTrack?.id, index]);
 
   return (
-    <div className={className}>
+    <div ref={listRef} className={className}>
       {queue.map((track, queueIndex) => (
-        <div className={`queue-item ${queueIndex === index ? 'is-current' : ''}`} key={`${track.id}-${queueIndex}`}>
+        <div ref={queueIndex === index ? currentItemRef : undefined} className={`queue-item ${queueIndex === index ? 'is-current' : ''}`} key={`${track.id}-${queueIndex}`}>
           <button type="button" className="queue-item__main" onClick={() => jumpTo(queueIndex)}>
             <Artwork artworkId={track.artworkId} title={track.title} className="queue-item__art" />
             <span><strong>{track.title}</strong><small>{track.artist}</small></span>
@@ -246,26 +292,52 @@ export function NowPlaying() {
   const [loading, setLoading] = useState(false);
   const [palette, setPalette] = useState<Palette>(DEFAULT_PALETTE);
   const [shouldRender, setShouldRender] = useState(open);
+  const nowPlayingRef = useRef<HTMLElement | null>(null);
   const lyricsPanelRef = useRef<HTMLDivElement | null>(null);
   const lineRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const settleAnimationRef = useRef<Animation | null>(null);
+  const dragRef = useRef<{
+    pointerId: number;
+    startY: number;
+    baseY: number;
+    currentY: number;
+    startTime: number;
+  } | null>(null);
 
   useEffect(() => {
     if (open) setShouldRender(true);
   }, [open]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!shouldRender || !track) return;
-    document.body.classList.add('overlay-open');
-    return () => document.body.classList.remove('overlay-open');
+    const body = document.body;
+    const scrollbarWidth = Math.max(0, window.innerWidth - document.documentElement.clientWidth);
+    body.style.setProperty('--scrollbar-compensation', `${scrollbarWidth}px`);
+    body.classList.add('overlay-open');
+    return () => {
+      body.classList.remove('overlay-open');
+      body.style.removeProperty('--scrollbar-compensation');
+    };
   }, [shouldRender, track]);
+
+  useLayoutEffect(() => {
+    lineRefs.current = [];
+    lyricsPanelRef.current?.scrollTo({ top: 0, behavior: 'instant' });
+  }, [track?.id]);
 
   useEffect(() => {
     if (!open || !track) return;
+    let cancelled = false;
+    setLyrics(null);
     setLoading(true);
-    api.lyrics(track.id).then((result) => setLyrics(result.lyrics)).catch(() => setLyrics(null)).finally(() => setLoading(false));
+    api.lyrics(track.id)
+      .then((result) => { if (!cancelled) setLyrics(result.lyrics); })
+      .catch(() => { if (!cancelled) setLyrics(null); })
+      .finally(() => { if (!cancelled) setLoading(false); });
     const art = artUrl(track.artworkId);
-    if (art) void extractPalette(art).then(setPalette);
+    if (art) void extractPalette(art).then((nextPalette) => { if (!cancelled) setPalette(nextPalette); });
     else setPalette(DEFAULT_PALETTE);
+    return () => { cancelled = true; };
   }, [open, track]);
 
   const timed = useMemo(() => lyrics?.synced ? parseLrc(lyrics.content) : [], [lyrics]);
@@ -291,12 +363,97 @@ export function NowPlaying() {
     return () => window.removeEventListener('keydown', close);
   }, [open, setOpen]);
 
+  useEffect(() => () => settleAnimationRef.current?.cancel(), []);
+
+  const startPlayerDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    if (!event.isPrimary || event.button !== 0 || dragRef.current) return;
+    if ((event.target as HTMLElement).closest('button, a, input')) return;
+    const player = nowPlayingRef.current;
+    if (!player) return;
+
+    const currentY = transformTranslateY(getComputedStyle(player).transform);
+    settleAnimationRef.current?.cancel();
+    settleAnimationRef.current = null;
+    for (const animation of player.getAnimations({ subtree: false })) {
+      if (animation.playState === 'running') animation.finish();
+    }
+
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      baseY: currentY,
+      currentY,
+      startTime: event.timeStamp,
+    };
+    player.dataset.dragging = 'true';
+    player.style.transform = `translate3d(0, ${currentY}px, 0)`;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const movePlayerDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    const drag = dragRef.current;
+    const player = nowPlayingRef.current;
+    if (!drag || !player || drag.pointerId !== event.pointerId) return;
+
+    const rawDistance = drag.baseY + event.clientY - drag.startY;
+    const distance = rawDistance >= 0 ? rawDistance : rawDistance * 0.18;
+    drag.currentY = distance;
+    player.style.transform = `translate3d(0, ${distance}px, 0)`;
+  };
+
+  const finishPlayerDrag = (event: ReactPointerEvent<HTMLElement>, cancelled = false) => {
+    const drag = dragRef.current;
+    const player = nowPlayingRef.current;
+    if (!drag || !player || drag.pointerId !== event.pointerId) return;
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+
+    const rawDistance = drag.baseY + event.clientY - drag.startY;
+    drag.currentY = rawDistance >= 0 ? rawDistance : rawDistance * 0.18;
+    player.style.transform = `translate3d(0, ${drag.currentY}px, 0)`;
+    const gestureDistance = Math.max(0, event.clientY - drag.startY);
+    const gestureDuration = Math.max(1, event.timeStamp - drag.startTime);
+    const gestureVelocity = gestureDistance / gestureDuration;
+    const dismissDistance = Math.min(window.innerHeight * PLAYER_DRAG_DISMISS_RATIO, PLAYER_DRAG_DISMISS_MAX);
+    const shouldDismiss = !cancelled && drag.currentY > 0 && (
+      drag.currentY >= dismissDistance
+      || (gestureVelocity >= PLAYER_FLICK_VELOCITY && gestureDistance >= PLAYER_FLICK_MIN_DISTANCE)
+    );
+
+    if (shouldDismiss) {
+      player.style.setProperty('--now-exit-y', `${drag.currentY}px`);
+      player.style.setProperty('--now-exit-duration', '400ms');
+      player.removeAttribute('data-dragging');
+      setOpen(false);
+      return;
+    }
+
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const easing = getComputedStyle(document.documentElement).getPropertyValue('--ease-drawer').trim();
+    const animation = player.animate(
+      [
+        { transform: `translate3d(0, ${drag.currentY}px, 0)` },
+        { transform: 'translate3d(0, 0, 0)' },
+      ],
+      { duration: reduceMotion ? 160 : 300, easing: reduceMotion ? 'ease' : easing, fill: 'forwards' },
+    );
+    settleAnimationRef.current = animation;
+    animation.onfinish = () => {
+      if (settleAnimationRef.current !== animation) return;
+      player.style.transform = '';
+      player.removeAttribute('data-dragging');
+      animation.cancel();
+      settleAnimationRef.current = null;
+    };
+  };
+
   if (!shouldRender || !track) return null;
   const style = { '--now-accent': palette.accent, '--now-deep': palette.deep, '--now-glow': palette.glow } as CSSProperties;
   const quality = qualityLabel(track);
 
   return (
     <section
+      ref={nowPlayingRef}
       className="now-playing"
       data-state={open ? 'open' : 'closed'}
       style={style}
@@ -307,8 +464,15 @@ export function NowPlaying() {
       }}
     >
       <div className="now-playing__ambient" aria-hidden="true" />
-      <header className="now-playing__header">
-        <button type="button" className="round-button" aria-label="關閉正在播放" onClick={() => setOpen(false)}><IconChevronDown /></button>
+      <header
+        className="now-playing__header"
+        onPointerDown={startPlayerDrag}
+        onPointerMove={movePlayerDrag}
+        onPointerUp={finishPlayerDrag}
+        onPointerCancel={(event) => finishPlayerDrag(event, true)}
+        onLostPointerCapture={(event) => finishPlayerDrag(event, true)}
+      >
+        <button type="button" className="icon-button now-playing__close" aria-label="關閉正在播放" onClick={() => setOpen(false)}><IconChevronDown /></button>
         <span className="now-playing__label">
           <span>NOW PLAYING</span>
           {isDolbyAtmos(track) ? <DolbyLogo variant="atmos" className="now-playing__dolby" /> : quality ? <span className="quality-badge">{quality}</span> : null}

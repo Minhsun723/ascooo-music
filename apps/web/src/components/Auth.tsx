@@ -1,9 +1,12 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useSession } from '../store/session';
 import { IconMusic, IconWave } from './Icons';
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  const navigate = useNavigate();
   const ready = useSession((s) => s.ready);
   const needsSetup = useSession((s) => s.needsSetup);
   const user = useSession((s) => s.user);
@@ -16,12 +19,30 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => { void init(); }, [init]);
 
+  useEffect(() => {
+    if (user) return;
+    setUsername('');
+    setPassword('');
+    setPending(false);
+    setError('');
+  }, [user]);
+
+  useEffect(() => {
+    if (!ready || user) return;
+    document.title = 'Ascooo Music';
+    if (location.pathname !== '/' || location.search || location.hash) {
+      navigate('/', { replace: true });
+    }
+  }, [location.hash, location.pathname, location.search, navigate, ready, user]);
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     setPending(true);
     setError('');
     try {
       const result = needsSetup ? await api.auth.setup(username, password) : await api.auth.login(username, password);
+      setUsername('');
+      setPassword('');
       setUser(result.user);
     } catch (caught) {
       setError((caught as Error).message);

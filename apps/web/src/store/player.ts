@@ -7,6 +7,7 @@ import { shuffleArray } from '../lib/format';
 export type RepeatMode = 'off' | 'all' | 'one';
 
 interface PlayerState {
+  sessionOwnerId: number | null;
   queue: Track[];
   index: number;
   originalQueue: Track[] | null;
@@ -38,6 +39,7 @@ interface PlayerState {
   cycleRepeat: () => void;
   setNowPlaying: (open: boolean) => void;
   setQueueOpen: (open: boolean) => void;
+  resetForSession: (userId: number | null) => void;
 }
 
 /** One audio element for the whole app lives outside React. */
@@ -71,6 +73,7 @@ export const usePlayer = create<PlayerState>()(
       }
 
       return {
+        sessionOwnerId: null,
         queue: [],
         index: 0,
         originalQueue: null,
@@ -188,11 +191,38 @@ export const usePlayer = create<PlayerState>()(
 
         setNowPlaying: (open) => set({ nowPlayingOpen: open, queueOpen: false }),
         setQueueOpen: (open) => set({ queueOpen: open }),
+        resetForSession(userId) {
+          const state = get();
+          if (state.sessionOwnerId === userId && !(userId === null && state.queue.length)) return;
+
+          reportedFor = null;
+          pendingSeek = null;
+          audio.pause();
+          audio.removeAttribute('src');
+          audio.load();
+          if ('mediaSession' in navigator) navigator.mediaSession.metadata = null;
+          document.title = 'Ascooo Music';
+          set({
+            sessionOwnerId: userId,
+            queue: [],
+            index: 0,
+            originalQueue: null,
+            isPlaying: false,
+            isBuffering: false,
+            currentTime: 0,
+            duration: 0,
+            bufferedEnd: 0,
+            error: null,
+            nowPlayingOpen: false,
+            queueOpen: false,
+          });
+        },
       };
     },
     {
       name: 'ascooo-player',
       partialize: (s) => ({
+        sessionOwnerId: s.sessionOwnerId,
         queue: s.queue.slice(0, 500),
         index: s.index,
         originalQueue: s.originalQueue?.slice(0, 500) ?? null,
@@ -200,17 +230,15 @@ export const usePlayer = create<PlayerState>()(
         muted: s.muted,
         shuffle: s.shuffle,
         repeat: s.repeat,
-        currentTime: s.currentTime,
       }),
       onRehydrateStorage: () => (state) => {
         if (!state || !audio) return;
         audio.volume = state.volume;
         audio.muted = state.muted;
-        // Resume where we left off, but only start loading when the user presses play.
-        if (state.currentTime > 0) pendingSeek = state.currentTime;
         const t = state.queue[state.index];
         if (t) {
-          usePlayer.setState({ duration: t.duration, isPlaying: false });
+          // Keep the queue between visits, but always start the track from the beginning.
+          usePlayer.setState({ currentTime: 0, duration: t.duration, isPlaying: false });
           updateMediaSession(t);
         }
       },
@@ -288,7 +316,6 @@ if (audio) {
     ms.setActionHandler('seekto', (d) => d.seekTime != null && g().seek(d.seekTime));
   }
 
-  window.addEventListener('pagehide', () => usePlayer.setState({ currentTime: audio.currentTime }));
 }
 
 function updateMediaSession(t: Track) {

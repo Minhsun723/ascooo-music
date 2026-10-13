@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { api } from '../api/client';
+import { usePlayer } from '../store/player';
 import { useSession } from '../store/session';
 import { toast } from '../store/toast';
 import {
@@ -25,6 +26,10 @@ const mainNav = [
   { to: '/library', label: '音樂庫', icon: IconLibrary },
   { to: '/favorites', label: '喜愛的歌曲', icon: IconHeart },
 ];
+
+function isInteractiveTarget(target: EventTarget | null) {
+  return target instanceof Element && Boolean(target.closest('input, textarea, select, button, a, [contenteditable="true"], [role="button"], [role="textbox"]'));
+}
 
 function Brand() {
   return <NavLink to="/" className="brand" aria-label="Ascooo Music 首頁"><span className="brand__mark"><IconMusic size={18} /></span><span>ascooo</span><b>music</b></NavLink>;
@@ -173,6 +178,29 @@ export function Shell() {
     };
     window.addEventListener('keydown', focusSearch);
     return () => window.removeEventListener('keydown', focusSearch);
+  }, []);
+
+  useEffect(() => {
+    const togglePlayback = (event: KeyboardEvent) => {
+      if (
+        event.code !== 'Space'
+        || event.repeat
+        || event.metaKey
+        || event.ctrlKey
+        || event.altKey
+        || event.shiftKey
+        || event.defaultPrevented
+        || isInteractiveTarget(event.target)
+      ) return;
+
+      const player = usePlayer.getState();
+      if (!player.queue[player.index]) return;
+      event.preventDefault();
+      player.toggle();
+    };
+
+    window.addEventListener('keydown', togglePlayback);
+    return () => window.removeEventListener('keydown', togglePlayback);
   }, []);
 
   function search(event: FormEvent) {
