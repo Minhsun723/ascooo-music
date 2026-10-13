@@ -88,7 +88,8 @@ export function parseID3v2(tag: Uint8Array, meta: AudioMetadata): void {
   const ver = tag[3];
   const flags = tag[5];
   let body = tag.subarray(10);
-  if (ver < 4 && flags & 0x80) body = removeUnsync(body);
+  const tagUnsynced = ver < 4 && !!(flags & 0x80);
+  if (tagUnsynced) body = removeUnsync(body);
 
   let pos = 0;
   if (flags & 0x40) {
@@ -114,13 +115,21 @@ export function parseID3v2(tag: Uint8Array, meta: AudioMetadata): void {
     pos += hdrLen;
     if (size <= 0 || pos + size > body.length) break;
 
+    let dataOffset = 10 + pos;
+    let sourceOffsetReliable = !tagUnsynced;
     let data = body.subarray(pos, pos + size);
     pos += size;
     if (ver === 2) id = V22_MAP[id] ?? id;
 
     if (ver === 4) {
-      if (fflags & 0x0001) data = data.subarray(4); // data length indicator
-      if (fflags & 0x0002) data = removeUnsync(data);
+      if (fflags & 0x0001) {
+        data = data.subarray(4); // data length indicator
+        dataOffset += 4;
+      }
+      if (fflags & 0x0002) {
+        data = removeUnsync(data);
+        sourceOffsetReliable = false;
+      }
     }
     if (ver >= 3 && fflags & (ver === 4 ? 0x000c : 0x00c0)) continue; // compressed / encrypted
 
@@ -185,7 +194,7 @@ export function parseID3v2(tag: Uint8Array, meta: AudioMetadata): void {
       p = termEnd(data, p, enc) + termSize(enc);
       // Prefer the front cover (3) but take whatever exists.
       if (picType === 3 || picType === 0 || !meta.picture) {
-        meta.picture = { mime, data: data.slice(p) };
+        meta.picture = { mime, data: data.slice(p), ...(sourceOffsetReliable ? { offset: dataOffset + p } : {}) };
       }
     }
   }

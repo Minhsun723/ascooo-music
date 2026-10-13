@@ -80,7 +80,7 @@ npm run dev:api
 npm run dev:web
 ```
 
-前端開發伺服器位於 `http://localhost:5173`，並會把 `/api` 代理到 `http://127.0.0.1:8787`。登入管理員帳號後，可在「設定」先檢查 PikPak 連線，再開始同步。
+前端開發伺服器位於 `http://localhost:5173`，並會把 `/api` 代理到 `http://127.0.0.1:8787`。
 `dev:api` 會先產生 Static Assets 需要的 `apps/web/dist`；之後前端修改由 Vite 即時更新。
 
 若要在本機以單一 Worker 模式檢查建置後的前後端：
@@ -102,6 +102,38 @@ npm run deploy
 
 `npm run deploy` 會先建置 React，再將 `apps/web/dist`、Hono Worker 與 bindings 一次部署到 `music.ascooo.com`。
 
-同步流程會掃描 WebDAV、讀取音訊標籤與歌詞、寫入 D1，最後清理已不存在的索引。
+## 本機優先同步
+
+同步不再要求線上 Worker 從 PikPak 讀取及解析整首音訊。先在 `.dev.vars` 填入本機 WebDAV 設定與部署站台的管理員登入資料：
+
+```dotenv
+SYNC_TARGET_URL=https://music.ascooo.com
+SYNC_ADMIN_USERNAME=管理員帳號
+SYNC_ADMIN_PASSWORD=管理員密碼
+SYNC_PARSE_CONCURRENCY=4
+```
+
+部署含匯入 API 的最新版 Worker 後，在專案根目錄執行：
+
+```bash
+npm run sync:local
+```
+
+這個指令會依序：
+
+1. 在本機並行掃描 PikPak WebDAV，解析新增或變動的音訊標籤、歌詞與封面。
+2. 將完整結果寫到被 Git 忽略的 `.sync-cache/library.json`。
+3. 登入部署站台，逐張上傳封面、逐首寫入中繼資料。
+4. 所有歌曲上傳完成後，才清理由 PikPak 移除的遠端索引。
+
+本機準備或上傳中斷都不會先清空線上音樂庫；重跑上傳具有冪等性。也可以分兩段執行：
+
+```bash
+npm run sync:local -- --prepare-only
+npm run sync:local -- --upload-only
+```
+
+上傳遇到 `429` 或 `5xx` 會自動退避重試最多五次。同步會保留既有歌曲 ID、顯示／隱藏狀態、收藏、播放紀錄及播放清單。
+解析預設同時處理 4 首，`SYNC_PARSE_CONCURRENCY` 可設為 `1` 到 `8`；網路穩定時可提高到 `6` 或 `8`，若 PikPak 開始回應 `429`／`503` 則調低。第二次以後會依音訊、LRC 與資料夾封面的簽章沿用未變動歌曲，不再重讀其音訊內容。
 
 > Dolby Atmos 是否能呈現取決於音訊檔、瀏覽器、作業系統與實際播放裝置；平台會串流原始檔案，不宣稱對瀏覽器端做 Atmos 解碼。

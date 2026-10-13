@@ -29,7 +29,7 @@ import { LikeButton } from './TrackList';
 const MARQUEE_GAP = 32;
 const MARQUEE_SPEED = 28;
 
-function OverflowMarquee({ text }: { text: string }) {
+function OverflowMarquee({ text, play = true }: { text: string; play?: boolean }) {
   const viewportRef = useRef<HTMLSpanElement | null>(null);
   const textRef = useRef<HTMLSpanElement | null>(null);
   const [metrics, setMetrics] = useState({ overflowing: false, distance: 0, duration: 0 });
@@ -79,11 +79,12 @@ function OverflowMarquee({ text }: { text: string }) {
       ref={viewportRef}
       className="marquee"
       data-overflow={metrics.overflowing || undefined}
+      data-play={metrics.overflowing && play ? true : undefined}
       title={metrics.overflowing ? text : undefined}
     >
       <span className="marquee__track" style={style}>
         <span ref={textRef} className="marquee__text">{text}</span>
-        {metrics.overflowing ? <span className="marquee__text marquee__text--clone" aria-hidden="true">{text}</span> : null}
+        {metrics.overflowing && play ? <span className="marquee__text marquee__text--clone" aria-hidden="true">{text}</span> : null}
       </span>
     </span>
   );
@@ -343,9 +344,11 @@ export function NowPlaying() {
           <div ref={lyricsPanelRef} className="lyrics-panel" data-lenis-prevent>
             <div className="lyrics-panel__heading"><h2>歌詞</h2></div>
             {loading ? <div className="lyrics-skeleton"><span /><span /><span /><span /></div> : null}
-            {!loading && !lyrics ? <div className="lyrics-empty"><IconLyrics size={28} /><p>這首歌還沒有歌詞</p><small>下次同步時會讀取內嵌歌詞或同名 LRC 檔。</small></div> : null}
+            {!loading && !lyrics ? <div className="lyrics-empty"><IconLyrics size={28} /><p>這首歌還沒有歌詞</p></div> : null}
             {timed.length ? <div className="lyrics-lines">{timed.map((line, index) => (
-              <button type="button" key={`${line.time}-${index}`} ref={(node) => { lineRefs.current[index] = node; }} className={index === active ? 'is-active' : ''} onClick={() => seek(line.time)}>{line.text || '♪'}</button>
+              <button type="button" key={`${line.time}-${index}`} ref={(node) => { lineRefs.current[index] = node; }} className={index === active ? 'is-active' : ''} onClick={() => seek(line.time)}>
+                <span className="lyrics-lines__text">{line.text || '♪'}</span>
+              </button>
             ))}</div> : null}
             {plain.length ? <div className="lyrics-lines lyrics-lines--plain">{plain.map((line, index) => <p key={`${line}-${index}`}>{line || <br />}</p>)}</div> : null}
           </div>

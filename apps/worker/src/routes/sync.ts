@@ -207,6 +207,40 @@ interface ArtworkSource {
   offset: number;
 }
 
+interface ImportedArtwork {
+  id: string;
+  mime: string;
+  data?: string;
+  source?: {
+    path: string;
+    offset: number;
+    length: number;
+  };
+}
+
+interface ImportedTrack {
+  scanId: string;
+  path: string;
+  size: number;
+  etag: string | null;
+  mtime: number | null;
+  lrcPath: string | null;
+  coverPath: string | null;
+  coverSignature: string | null;
+  metadata: Omit<AudioMetadata, 'picture' | 'lyrics'>;
+  metadataError: string | null;
+  lyrics: { content: string; source: 'lrc' | 'embedded' } | null;
+  trackArtworkId: string | null;
+  folderArtworkId: string | null;
+}
+
+function decodeBase64(value: string): Uint8Array {
+  const raw = atob(value);
+  const data = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) data[i] = raw.charCodeAt(i);
+  return data;
+}
+
 async function storeArtwork(
   db: D1Database,
   mime: string,
@@ -230,6 +264,148 @@ async function storeArtwork(
   }
   return id;
 }
+
+/**
+ * The local sync command does all WebDAV reads and metadata parsing before it
+ * contacts the Worker. The Worker only validates and persists the prepared
+ * artwork, keeping expensive upstream I/O out of the request lifecycle.
+ */
+sync.post('/import/artwork', async (c) => {
+  const artwork = await c.req.json<ImportedArtwork>();
+  if (!/^[a-f0-9]{40}$/.test(artwork.id)) throw new HTTPException(400, { message: '封面 ID 格式錯誤' });
+  if (!artwork.mime?.startsWith('image/')) throw new HTTPException(400, { message: '封面 MIME 格式錯誤' });
+
+  const existing = await c.env.DB.prepare(
+    `SELECT 1 AS found FROM artworks WHERE id = ?
+     UNION ALL SELECT 1 AS found FROM artwork_sources WHERE id = ? LIMIT 1`,
+  ).bind(artwork.id, artwork.id).first<{ found: number }>();
+  if (existing) return c.json({ id: artwork.id, existing: true });
+
+  if (artwork.data) {
+    const data = decodeBase64(artwork.data);
+    if (!data.length || data.length > MAX_ART_BYTES) {
+      throw new HTTPException(400, { message: `封面必須小於 ${MAX_ART_BYTES} bytes` });
+    }
+    const actualId = await sha1(data);
+    if (actualId !== artwork.id) throw new HTTPException(400, { message: '封面內容校驗失敗' });
+    await c.env.DB.prepare('INSERT OR IGNORE INTO artworks (id, mime, data) VALUES (?, ?, ?)')
+      .bind(artwork.id, artworkMime('', data, artwork.mime), data)
+      .run();
+  } else if (artwork.source) {
+    const path = assertInRoot(c.env, artwork.source.path);
+    const offset = Math.floor(artwork.source.offset);
+    const length = Math.floor(artwork.source.length);
+    if (offset < 0 || length < 1) throw new HTTPException(400, { message: '封面來源範圍錯誤' });
+    await c.env.DB.prepare(
+      `INSERT INTO artwork_sources (id, mime, path, byte_start, byte_length)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET mime = excluded.mime, path = excluded.path,
+         byte_start = excluded.byte_start, byte_length = excluded.byte_length`,
+    ).bind(artwork.id, artwork.mime, path, offset, length).run();
+  } else {
+    throw new HTTPException(400, { message: '缺少封面內容或來源' });
+  }
+
+  return c.json({ id: artwork.id });
+});
+
+/** Persist one track already parsed by the local sync command. */
+sync.post('/import/track', async (c) => {
+  const item = await c.req.json<ImportedTrack>();
+  if (!item.scanId) throw new HTTPException(400, { message: '缺少 scanId' });
+  const path = assertInRoot(c.env, item.path);
+  if (!Number.isFinite(item.size) || item.size < 0) throw new HTTPException(400, { message: '音訊大小格式錯誤' });
+
+  const meta = item.metadata ?? {};
+  const guess = guessFromFilename(path);
+  const folder = parentDir(path);
+  const folderName = folder === normalizePath(c.env.MUSIC_ROOT || '/') ? '' : folder.slice(folder.lastIndexOf('/') + 1);
+  const title = meta.title || guess.title;
+  const artist = meta.artist || guess.artist || meta.albumArtist || '未知歌手';
+  const albumArtist = meta.albumArtist || artist;
+  const albumTitle = meta.album || folderName || '未知專輯';
+  const db = c.env.DB;
+
+  const upsertArtist = (name: string) =>
+    db.prepare('INSERT INTO artists (name) VALUES (?) ON CONFLICT(name) DO UPDATE SET name = artists.name RETURNING id')
+      .bind(name)
+      .first<{ id: number }>();
+  const artistRow = await upsertArtist(artist);
+  const albumArtistRow = albumArtist.toLowerCase() === artist.toLowerCase() ? artistRow : await upsertArtist(albumArtist);
+  const album = await db.prepare(
+    `INSERT INTO albums (title, artist_id, year, created_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(title, artist_id) DO UPDATE SET year = COALESCE(albums.year, excluded.year)
+     RETURNING id, artwork_id`,
+  ).bind(albumTitle, albumArtistRow!.id, meta.year ?? null, Date.now()).first<{ id: number; artwork_id: string | null }>();
+
+  const now = Date.now();
+  const row = await db.prepare(
+    `INSERT INTO tracks (
+       path, lrc_path, cover_path, cover_signature, size, etag, mtime, scan_id, status, error,
+       title, artist, artist_id, album_id, track_no, disc_no, year, genre, record_label,
+       duration, codec, bitrate, sample_rate, bit_depth, channels, artwork_id, has_lyrics,
+       metadata_version, added_at, updated_at
+     ) VALUES (
+       ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?
+     )
+     ON CONFLICT(path) DO UPDATE SET
+       lrc_path = excluded.lrc_path, cover_path = excluded.cover_path,
+       cover_signature = excluded.cover_signature, size = excluded.size, etag = excluded.etag,
+       mtime = excluded.mtime, scan_id = excluded.scan_id, status = 'ready', error = excluded.error,
+       title = excluded.title, artist = excluded.artist, artist_id = excluded.artist_id,
+       album_id = excluded.album_id, track_no = excluded.track_no, disc_no = excluded.disc_no,
+       year = excluded.year, genre = excluded.genre, record_label = excluded.record_label,
+       duration = excluded.duration, codec = excluded.codec, bitrate = excluded.bitrate,
+       sample_rate = excluded.sample_rate, bit_depth = excluded.bit_depth, channels = excluded.channels,
+       artwork_id = excluded.artwork_id, has_lyrics = excluded.has_lyrics,
+       metadata_version = 1, updated_at = excluded.updated_at
+     RETURNING id`,
+  ).bind(
+    path,
+    item.lrcPath,
+    item.coverPath,
+    item.coverSignature,
+    Math.floor(item.size),
+    item.etag,
+    item.mtime,
+    item.scanId,
+    item.metadataError,
+    title,
+    artist,
+    artistRow!.id,
+    album!.id,
+    meta.trackNo ?? guess.trackNo ?? null,
+    meta.discNo ?? null,
+    meta.year ?? null,
+    meta.genre ?? null,
+    meta.recordLabel ?? null,
+    meta.duration ?? null,
+    meta.codec ?? extOf(path),
+    meta.bitrate ?? null,
+    meta.sampleRate ?? null,
+    meta.bitDepth ?? null,
+    meta.channels ?? null,
+    item.trackArtworkId,
+    item.lyrics ? 1 : 0,
+    now,
+    now,
+  ).first<{ id: number }>();
+
+  const statements = item.lyrics
+    ? [db.prepare('INSERT OR REPLACE INTO lyrics (track_id, content, synced, source) VALUES (?, ?, ?, ?)').bind(
+        row!.id,
+        item.lyrics.content,
+        LRC_SYNCED.test(item.lyrics.content) ? 1 : 0,
+        item.lyrics.source,
+      )]
+    : [db.prepare('DELETE FROM lyrics WHERE track_id = ?').bind(row!.id)];
+  const albumArtworkId = item.folderArtworkId ?? album!.artwork_id ?? item.trackArtworkId;
+  if (albumArtworkId && albumArtworkId !== album!.artwork_id) {
+    statements.push(db.prepare('UPDATE albums SET artwork_id = ? WHERE id = ?').bind(albumArtworkId, album!.id));
+  }
+  await db.batch(statements);
+  return c.json({ id: row!.id, title });
+});
 
 async function saveTrack(
   env: Env,

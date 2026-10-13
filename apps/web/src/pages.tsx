@@ -341,7 +341,7 @@ export function SettingsPage() {
               </div>
               <div className="sync-root"><span>同步根目錄</span><code>{status?.root ?? '從 Worker 設定讀取'}</code></div>
               {progress ? <div className="sync-progress" role="status"><span className={syncing ? 'is-spinning' : ''}><IconSync size={17} /></span>{progress}</div> : null}
-              <button type="button" className="primary-button" disabled={syncing} onClick={() => void runSync()}><IconSync size={18} />{syncing ? '同步進行中…' : '立即同步音樂庫'}</button>
+              <button type="button" className="primary-button" disabled={syncing} onClick={() => void runSync()}><IconSync size={18} />遠端同步</button>
             </>
           ) : <p className="settings-note">只有管理員可以執行音樂庫同步。</p>}
         </section>

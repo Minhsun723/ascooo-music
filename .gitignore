@@ -3,5 +3,6 @@ node_modules/
 dist/
 .wrangler/
 .dev.vars
+.sync-cache/
 *.log
 .DS_Store

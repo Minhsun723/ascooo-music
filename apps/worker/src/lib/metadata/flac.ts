@@ -67,7 +67,7 @@ export async function parseFlac(r: RangeReader, start: number, meta: AudioMetada
       q += 16; // width, height, depth, colors
       const dataLen = u32be(b, q); q += 4;
       if (picType === 3 || picType === 0 || !meta.picture) {
-        meta.picture = { mime, data: b.slice(q, q + dataLen) };
+        meta.picture = { mime, data: b.slice(q, q + dataLen), offset: p + q };
       }
     }
     p += len;

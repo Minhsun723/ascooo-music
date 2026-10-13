@@ -12,3 +12,10 @@ WEBDAV_AUTH_MODE=auto
 
 # Used only by Ascooo Music login sessions.
 JWT_SECRET=change-me-to-a-long-random-string
+
+# Local-first sync uploads prepared metadata to this deployed site.
+SYNC_TARGET_URL=https://music.ascooo.com
+SYNC_ADMIN_USERNAME=your-admin-username
+SYNC_ADMIN_PASSWORD=your-admin-password
+# Local WebDAV metadata parsing concurrency (1-8).
+SYNC_PARSE_CONCURRENCY=4
