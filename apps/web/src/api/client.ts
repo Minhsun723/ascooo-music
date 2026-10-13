@@ -1,4 +1,4 @@
-import type { Album, Artist, HomeData, Lyrics, ManagedTrack, ManagedTrackStats, Playlist, SyncStatus, Track, User } from './types';
+import type { Album, Artist, HomeData, Lyrics, ManagedTrack, ManagedTrackStats, ManagedUser, Playlist, SyncStatus, Track, User } from './types';
 
 export class ApiError extends Error {
   constructor(
@@ -48,7 +48,15 @@ export const api = {
     login: (username: string, password: string) => post<{ user: User }>('/auth/login', { username, password }),
     logout: () => post('/auth/logout'),
     changePassword: (current: string, next: string) => post('/auth/password', { current, next }),
-    users: () => get<{ users: { id: number; username: string; role: string; created_at: number }[] }>('/auth/users'),
+    users: async () => {
+      const result = await get<{ users: { id: number; username: string; role: 'admin' | 'user'; created_at: number }[] }>('/auth/users');
+      return result.users.map<ManagedUser>((user) => ({
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        createdAt: user.created_at,
+      }));
+    },
     createUser: (username: string, password: string, role: string) => post('/auth/users', { username, password, role }),
     deleteUser: (id: number) => request(`/auth/users/${id}`, { method: 'DELETE' }),
   },

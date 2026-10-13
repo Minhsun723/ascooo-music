@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState, type DependencyList, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type DependencyList, type FormEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api } from './api/client';
-import type { Album, Artist, HomeData, ManagedTrack, ManagedTrackStats, Track } from './api/types';
+import type { Album, Artist, HomeData, ManagedTrack, ManagedTrackStats, ManagedUser, Track } from './api/types';
 import { formatLongDuration } from './lib/format';
 import { usePlayer } from './store/player';
 import { useSession } from './store/session';
@@ -11,7 +11,7 @@ import { Artwork } from './components/Artwork';
 import { DolbyLogo } from './components/DolbyLogo';
 import { AlbumGrid, ArtistGrid, PlaylistGrid } from './components/MediaGrid';
 import { TrackList } from './components/TrackList';
-import { IconDisc, IconEye, IconEyeOff, IconHeart, IconMusic, IconPlay, IconSearch, IconShuffle, IconSync, IconWave } from './components/Icons';
+import { IconDisc, IconEye, IconEyeOff, IconHeart, IconMusic, IconPlay, IconPlus, IconSearch, IconShuffle, IconSync, IconTrash, IconUser, IconWave } from './components/Icons';
 
 interface RequestState<T> {
   data: T | null;
@@ -163,8 +163,13 @@ function MusicVisibilityManager() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [paginationError, setPaginationError] = useState('');
   const [error, setError] = useState('');
   const [updating, setUpdating] = useState<Set<number>>(() => new Set());
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const loadingMoreRef = useRef(false);
+  const paginationContextRef = useRef({ filter, query });
 
   useEffect(() => {
     const timer = window.setTimeout(() => setQuery(searchInput.trim()), 220);
@@ -173,7 +178,9 @@ function MusicVisibilityManager() {
 
   useEffect(() => {
     let active = true;
+    paginationContextRef.current = { filter, query };
     setLoading(true);
+    setPaginationError('');
     setError('');
     api.managedTracks(filter, query, MANAGE_PAGE_SIZE)
       .then((result) => {
@@ -187,19 +194,41 @@ function MusicVisibilityManager() {
     return () => { active = false; };
   }, [filter, query]);
 
-  async function loadMore() {
+  const loadMore = useCallback(async () => {
+    if (loadingMoreRef.current || loading || tracks.length >= total) return;
+    const requestContext = { filter, query };
+    const offset = tracks.length;
+    loadingMoreRef.current = true;
     setLoadingMore(true);
+    setPaginationError('');
     try {
-      const result = await api.managedTracks(filter, query, MANAGE_PAGE_SIZE, tracks.length);
+      const result = await api.managedTracks(requestContext.filter, requestContext.query, MANAGE_PAGE_SIZE, offset);
+      const currentContext = paginationContextRef.current;
+      if (currentContext.filter !== requestContext.filter || currentContext.query !== requestContext.query) return;
       setTracks((current) => [...current, ...result.tracks]);
       setTotal(result.total);
       setStats(result.stats);
     } catch (requestError) {
-      toast((requestError as Error).message, 'error');
+      const currentContext = paginationContextRef.current;
+      if (currentContext.filter === requestContext.filter && currentContext.query === requestContext.query) {
+        setPaginationError((requestError as Error).message);
+      }
     } finally {
+      loadingMoreRef.current = false;
       setLoadingMore(false);
     }
-  }
+  }, [filter, loading, query, total, tracks.length]);
+
+  useEffect(() => {
+    const root = listRef.current;
+    const target = sentinelRef.current;
+    if (!root || !target || loading || loadingMore || paginationError || tracks.length >= total) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) void loadMore();
+    }, { root, rootMargin: '0px 0px 180px 0px' });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [loadMore, loading, loadingMore, paginationError, total, tracks.length]);
 
   async function toggleVisibility(track: ManagedTrack) {
     const nextVisible = !track.visible;
@@ -266,7 +295,7 @@ function MusicVisibilityManager() {
         <div className="music-manager__message"><IconMusic size={22} /><p>{query ? '找不到符合搜尋的歌曲。' : filter === 'hidden' ? '目前沒有隱藏的歌曲。' : '目前沒有可管理的歌曲。'}</p></div>
       ) : null}
       {!loading && !error && tracks.length ? (
-        <div className="managed-track-list" role="region" aria-label="音樂清單，可捲動" tabIndex={0}>
+        <div className="managed-track-list" role="region" aria-label="音樂清單，可捲動並自動載入更多內容" tabIndex={0} ref={listRef}>
           {tracks.map((track) => {
             const isUpdating = updating.has(track.id);
             return (
@@ -294,12 +323,198 @@ function MusicVisibilityManager() {
               </div>
             );
           })}
+          {tracks.length < total ? (
+            <div className="music-manager__sentinel" ref={sentinelRef} role="status" aria-live="polite">
+              {loadingMore ? <><IconSync className="is-spinning" size={16} /><span>正在載入更多歌曲…</span></> : null}
+              {!loadingMore && paginationError ? <><span>載入失敗：{paginationError}</span><button type="button" onClick={() => void loadMore()}>再試一次</button></> : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
-      {!loading && !error && tracks.length < total ? (
-        <button type="button" className="secondary-button music-manager__more" disabled={loadingMore} onClick={() => void loadMore()}>
-          {loadingMore ? '載入中…' : `載入更多（尚有 ${(total - tracks.length).toLocaleString()} 首）`}
-        </button>
+    </section>
+  );
+}
+
+function UserManagement({ currentUserId }: { currentUserId: number }) {
+  const [users, setUsers] = useState<ManagedUser[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [form, setForm] = useState({ username: '', password: '', role: 'user' as 'admin' | 'user' });
+  const [showPassword, setShowPassword] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [formError, setFormError] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<ManagedUser | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const loadUsers = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      setUsers(await api.auth.users());
+    } catch (requestError) {
+      setError((requestError as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadUsers(); }, [loadUsers]);
+
+  useEffect(() => {
+    if (!deleteTarget) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !deleting) setDeleteTarget(null);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [deleteTarget, deleting]);
+
+  async function createUser(event: FormEvent) {
+    event.preventDefault();
+    const username = form.username.trim();
+    if (!username || form.password.length < 8) return;
+    setCreating(true);
+    setFormError('');
+    try {
+      await api.auth.createUser(username, form.password, form.role);
+      setForm({ username: '', password: '', role: 'user' });
+      setShowPassword(false);
+      await loadUsers();
+      toast(`已建立帳號「${username}」`);
+    } catch (requestError) {
+      setFormError((requestError as Error).message);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function deleteUser() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await api.auth.deleteUser(deleteTarget.id);
+      setUsers((current) => current.filter((user) => user.id !== deleteTarget.id));
+      toast(`已刪除帳號「${deleteTarget.username}」`);
+      setDeleteTarget(null);
+    } catch (requestError) {
+      toast((requestError as Error).message, 'error');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  const adminCount = users.filter((user) => user.role === 'admin').length;
+
+  return (
+    <section className="settings-card settings-card--wide account-manager">
+      <div className="account-manager__heading">
+        <div>
+          <span className="eyebrow">ADMIN ONLY</span>
+          <h2>帳號與權限</h2>
+          <p>建立共用成員帳號，並控制誰能管理音樂庫與其他使用者。</p>
+        </div>
+        <div className="account-manager__summary" aria-live="polite">
+          <strong>{users.length}</strong>
+          <span>個帳號 · {adminCount} 位管理員</span>
+        </div>
+      </div>
+
+      <div className="account-manager__layout">
+        <form className="account-create" onSubmit={createUser}>
+          <div className="account-create__heading">
+            <span className="account-create__icon"><IconPlus size={18} /></span>
+            <div><h3>新增帳號</h3><p>建立後即可使用帳號與初始密碼登入。</p></div>
+          </div>
+          <label htmlFor="new-account-username"><span>帳號</span></label>
+          <input
+            id="new-account-username"
+            autoComplete="off"
+            value={form.username}
+            onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))}
+            placeholder="2–32 個英數字元"
+            minLength={2}
+            maxLength={32}
+            required
+          />
+          <label htmlFor="new-account-password"><span>初始密碼</span></label>
+          <div className="password-field">
+            <input
+              id="new-account-password"
+              type={showPassword ? 'text' : 'password'}
+              autoComplete="new-password"
+              value={form.password}
+              onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
+              placeholder="至少 8 個字元"
+              minLength={8}
+              required
+            />
+            <button type="button" aria-label={showPassword ? '隱藏初始密碼' : '顯示初始密碼'} aria-pressed={showPassword} onClick={() => setShowPassword((value) => !value)}>
+              {showPassword ? <IconEyeOff size={18} /> : <IconEye size={18} />}
+            </button>
+          </div>
+          <label htmlFor="new-account-role"><span>權限</span></label>
+          <select id="new-account-role" value={form.role} onChange={(event) => setForm((current) => ({ ...current, role: event.target.value as 'admin' | 'user' }))}>
+            <option value="user">一般使用者</option>
+            <option value="admin">管理員</option>
+          </select>
+          <p className="account-create__hint">管理員可同步及隱藏音樂、建立或刪除帳號。</p>
+          {formError ? <p className="account-create__error" role="alert">{formError}</p> : null}
+          <button type="submit" className="primary-button" disabled={creating || !form.username.trim() || form.password.length < 8}>
+            <IconPlus size={17} />{creating ? '建立中…' : '建立帳號'}
+          </button>
+        </form>
+
+        <div className="account-list-panel">
+          <div className="account-list-panel__heading">
+            <div><h3>現有帳號</h3><p>密碼不會顯示；使用者可在設定頁自行變更。</p></div>
+          </div>
+          {loading ? <LoadingBlock rows={3} /> : null}
+          {!loading && error ? (
+            <div className="account-list__message" role="alert"><p>{error}</p><button type="button" className="secondary-button" onClick={() => void loadUsers()}>再試一次</button></div>
+          ) : null}
+          {!loading && !error ? (
+            <div className="account-list" role="list">
+              {users.map((managedUser) => {
+                const isCurrent = managedUser.id === currentUserId;
+                return (
+                  <div className="account-row" role="listitem" key={managedUser.id}>
+                    <span className="account-row__avatar" aria-hidden="true">{managedUser.username.slice(0, 1).toUpperCase() || <IconUser size={18} />}</span>
+                    <div className="account-row__identity">
+                      <div><strong>{managedUser.username}</strong>{isCurrent ? <span className="account-row__current">目前登入</span> : null}</div>
+                      <small>建立於 {new Date(managedUser.createdAt).toLocaleDateString('zh-TW')}</small>
+                    </div>
+                    <span className={`account-role account-role--${managedUser.role}`}>{managedUser.role === 'admin' ? '管理員' : '使用者'}</span>
+                    <button
+                      type="button"
+                      className="account-row__delete"
+                      aria-label={isCurrent ? '目前登入的帳號無法刪除' : `刪除帳號 ${managedUser.username}`}
+                      disabled={isCurrent}
+                      title={isCurrent ? '目前登入的帳號無法刪除' : '刪除帳號'}
+                      onClick={() => setDeleteTarget(managedUser)}
+                    >
+                      <IconTrash size={17} /><span>刪除</span>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      {deleteTarget ? (
+        <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !deleting) setDeleteTarget(null); }}>
+          <section className="dialog account-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-account-title" aria-describedby="delete-account-description">
+            <span className="account-delete-dialog__icon"><IconTrash size={21} /></span>
+            <span className="eyebrow">DELETE ACCOUNT</span>
+            <h2 id="delete-account-title">刪除「{deleteTarget.username}」？</h2>
+            <p id="delete-account-description">這會同時移除該使用者的喜愛歌曲、播放紀錄與播放清單，而且無法復原。</p>
+            <div className="dialog__actions">
+              <button type="button" className="text-button" autoFocus disabled={deleting} onClick={() => setDeleteTarget(null)}>取消</button>
+              <button type="button" className="danger-button" disabled={deleting} onClick={() => void deleteUser()}>{deleting ? '刪除中…' : '確認刪除'}</button>
+            </div>
+          </section>
+        </div>
       ) : null}
     </section>
   );
@@ -347,6 +562,8 @@ export function SettingsPage() {
         </section>
 
         {user.role === 'admin' ? <MusicVisibilityManager /> : null}
+
+        {user.role === 'admin' ? <UserManagement currentUserId={user.id} /> : null}
 
         <section className="settings-card">
           <h2>變更密碼</h2>

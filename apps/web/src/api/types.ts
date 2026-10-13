@@ -4,6 +4,10 @@ export interface User {
   role: 'admin' | 'user';
 }
 
+export interface ManagedUser extends User {
+  createdAt: number;
+}
+
 export interface Track {
   id: number;
   title: string;

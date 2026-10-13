@@ -55,7 +55,12 @@ export async function readSession(c: Context<AppEnv>): Promise<SessionUser | nul
   if (!token) return null;
   try {
     const p = await verify(token, c.env.JWT_SECRET, 'HS256');
-    return { id: Number(p.sub), username: String(p.name), role: p.role === 'admin' ? 'admin' : 'user' };
+    const id = Number(p.sub);
+    if (!Number.isSafeInteger(id)) return null;
+    const user = await c.env.DB.prepare('SELECT id, username, role FROM users WHERE id = ?')
+      .bind(id)
+      .first<{ id: number; username: string; role: 'admin' | 'user' }>();
+    return user ? { id: user.id, username: user.username, role: user.role } : null;
   } catch {
     return null;
   }
