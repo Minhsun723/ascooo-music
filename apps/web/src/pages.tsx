@@ -19,9 +19,9 @@ interface RequestState<T> {
   error: string;
 }
 
-function useRequest<T>(loader: () => Promise<T>, dependencies: DependencyList): RequestState<T> & { reload: () => void } {
+function useRequest<T>(loader: () => Promise<T>, dependencies: DependencyList, initialData: T | null = null): RequestState<T> & { reload: () => void } {
   const [version, setVersion] = useState(0);
-  const [state, setState] = useState<RequestState<T>>({ data: null, loading: true, error: '' });
+  const [state, setState] = useState<RequestState<T>>(() => ({ data: initialData, loading: true, error: '' }));
   useEffect(() => {
     let active = true;
     setState((current) => ({ ...current, loading: true, error: '' }));
@@ -93,17 +93,21 @@ export function SearchPage() {
 }
 
 type LibraryData = { tracks: Track[]; total: number; albums: Album[]; artists: Artist[] };
+let libraryCache: { userId: number; data: LibraryData } | null = null;
 
 export function LibraryPage() {
   const [params, setParams] = useSearchParams();
   const tab = params.get('tab') ?? 'albums';
+  const userId = useSession((s) => s.user!.id);
   const playlists = useSession((s) => s.playlists);
   const request = useRequest<LibraryData>(async () => {
     const [tracks, albums, artists] = await Promise.all([api.tracks('added', 500), api.albums('added', 300), api.artists()]);
-    return { ...tracks, albums: albums.albums, artists: artists.artists };
-  }, []);
+    const data = { ...tracks, albums: albums.albums, artists: artists.artists };
+    libraryCache = { userId, data };
+    return data;
+  }, [], libraryCache?.userId === userId ? libraryCache.data : null);
   const tabs = [{ id: 'albums', label: '專輯' }, { id: 'tracks', label: '歌曲' }, { id: 'artists', label: '藝人' }, { id: 'playlists', label: '播放清單' }];
-  return <><PageIntro title="音樂庫" copy={request.data ? `${request.data.total.toLocaleString()} 首歌曲，依你的方式整理。` : '所有收藏都在這裡。'} /><div className="segmented-tabs" role="tablist" aria-label="音樂庫分類">{tabs.map((item) => <button type="button" role="tab" aria-selected={tab === item.id} className={tab === item.id ? 'is-active' : ''} key={item.id} onClick={() => setParams({ tab: item.id })}>{item.label}</button>)}</div>{request.loading ? <LoadingBlock rows={7} /> : null}{request.error ? <RequestError message={request.error} retry={request.reload} /> : null}{request.data && tab === 'albums' ? request.data.albums.length ? <AlbumGrid albums={request.data.albums} /> : <EmptyState title="還沒有專輯" copy="同步歌曲後，系統會依照內嵌資訊整理專輯。" /> : null}{request.data && tab === 'tracks' ? request.data.tracks.length ? <TrackList tracks={request.data.tracks} /> : <EmptyState title="還沒有歌曲" copy="前往設定頁執行 PikPak 同步。" /> : null}{request.data && tab === 'artists' ? request.data.artists.length ? <ArtistGrid artists={request.data.artists} /> : <EmptyState title="還沒有藝人" copy="同步歌曲後，藝人會自動出現在這裡。" /> : null}{tab === 'playlists' ? playlists.length ? <PlaylistGrid playlists={playlists} /> : <EmptyState icon={<IconDisc />} title="還沒有播放清單" copy="從歌曲選單加入現有清單，或從左側建立新清單。" /> : null}</>;
+  return <><PageIntro title="音樂庫" copy={request.data ? `${request.data.total.toLocaleString()} 首歌曲，依你的方式整理。` : '所有收藏都在這裡。'} /><div className="segmented-tabs" role="tablist" aria-label="音樂庫分類">{tabs.map((item) => <button type="button" role="tab" aria-selected={tab === item.id} className={tab === item.id ? 'is-active' : ''} key={item.id} onClick={() => setParams({ tab: item.id })}>{item.label}</button>)}</div>{request.loading && !request.data ? <LoadingBlock rows={7} /> : null}{request.error ? <RequestError message={request.error} retry={request.reload} /> : null}{request.data && tab === 'albums' ? request.data.albums.length ? <AlbumGrid albums={request.data.albums} /> : <EmptyState title="還沒有專輯" copy="同步歌曲後，系統會依照內嵌資訊整理專輯。" /> : null}{request.data && tab === 'tracks' ? request.data.tracks.length ? <TrackList tracks={request.data.tracks} /> : <EmptyState title="還沒有歌曲" copy="前往設定頁執行 PikPak 同步。" /> : null}{request.data && tab === 'artists' ? request.data.artists.length ? <ArtistGrid artists={request.data.artists} /> : <EmptyState title="還沒有藝人" copy="同步歌曲後，藝人會自動出現在這裡。" /> : null}{tab === 'playlists' ? playlists.length ? <PlaylistGrid playlists={playlists} /> : <EmptyState icon={<IconDisc />} title="還沒有播放清單" copy="從歌曲選單加入現有清單，或從左側建立新清單。" /> : null}</>;
 }
 
 function CollectionHero({ artworkId, title, subtitle, meta = '', badge, tracks, compactTitle = false, albumLayout = false }: { artworkId?: string | null; title: string; subtitle?: string; meta?: string; badge?: React.ReactNode; tracks: Track[]; compactTitle?: boolean; albumLayout?: boolean }) {

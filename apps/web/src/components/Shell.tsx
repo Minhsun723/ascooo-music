@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import { NavLink, Outlet, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { api } from '../api/client';
 import { useSession } from '../store/session';
 import { toast } from '../store/toast';
@@ -28,6 +28,50 @@ const mainNav = [
 
 function Brand() {
   return <NavLink to="/" className="brand" aria-label="Ascooo Music 首頁"><span className="brand__mark"><IconMusic size={18} /></span><span>ascooo</span><b>music</b></NavLink>;
+}
+
+function restoreScrollPosition(top: number) {
+  let active = true;
+  let frameId: number | undefined;
+  let timeoutId: number | undefined;
+  let observer: ResizeObserver | undefined;
+
+  const stop = () => {
+    if (!active) return;
+    active = false;
+    if (frameId !== undefined) window.cancelAnimationFrame(frameId);
+    if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+    observer?.disconnect();
+    window.removeEventListener('wheel', stop);
+    window.removeEventListener('touchstart', stop);
+    window.removeEventListener('pointerdown', stop);
+    window.removeEventListener('keydown', stop);
+  };
+
+  const attempt = () => {
+    if (!active) return;
+    window.scrollTo({ top, left: 0, behavior: 'instant' });
+    if (Math.abs(window.scrollY - top) <= 1) stop();
+  };
+
+  attempt();
+  if (!active) return stop;
+
+  observer = new ResizeObserver(() => {
+    if (frameId !== undefined) window.cancelAnimationFrame(frameId);
+    frameId = window.requestAnimationFrame(attempt);
+  });
+  observer.observe(document.body);
+  const page = document.querySelector('.page');
+  if (page) observer.observe(page);
+
+  window.addEventListener('wheel', stop, { passive: true });
+  window.addEventListener('touchstart', stop, { passive: true });
+  window.addEventListener('pointerdown', stop, { passive: true });
+  window.addEventListener('keydown', stop);
+  timeoutId = window.setTimeout(stop, 10_000);
+
+  return stop;
 }
 
 function CreatePlaylistDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -79,12 +123,46 @@ export function Shell() {
   const logout = useSession((s) => s.logout);
   const location = useLocation();
   const navigate = useNavigate();
+  const navigationType = useNavigationType();
+  const scrollPositions = useRef(new Map<string, number>());
+  const activeLocationKey = useRef(location.key);
+  const previousPathname = useRef<string | null>(null);
   const [query, setQuery] = useState(new URLSearchParams(location.search).get('q') ?? '');
   const [createOpen, setCreateOpen] = useState(false);
+  const isRestoringHistory = navigationType === 'POP' && scrollPositions.current.has(location.key);
 
   useEffect(() => {
     if (location.pathname === '/search') setQuery(new URLSearchParams(location.search).get('q') ?? '');
   }, [location.pathname, location.search]);
+
+  useEffect(() => {
+    const previous = window.history.scrollRestoration;
+    window.history.scrollRestoration = 'manual';
+    return () => { window.history.scrollRestoration = previous; };
+  }, []);
+
+  useEffect(() => {
+    const rememberPosition = () => {
+      scrollPositions.current.set(activeLocationKey.current, window.scrollY);
+    };
+    rememberPosition();
+    window.addEventListener('scroll', rememberPosition, { passive: true });
+    return () => window.removeEventListener('scroll', rememberPosition);
+  }, []);
+
+  useLayoutEffect(() => {
+    const pathnameChanged = previousPathname.current !== location.pathname;
+    previousPathname.current = location.pathname;
+    activeLocationKey.current = location.key;
+
+    const shouldRestore = navigationType === 'POP' || pathnameChanged;
+    const target = navigationType === 'POP'
+      ? scrollPositions.current.get(location.key) ?? 0
+      : 0;
+    const cancelRestoration = shouldRestore ? restoreScrollPosition(target) : () => {};
+
+    return cancelRestoration;
+  }, [location.key, location.pathname, navigationType]);
 
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
@@ -127,7 +205,7 @@ export function Shell() {
           <form className="global-search" role="search" onSubmit={search}><IconSearch size={19} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋歌曲、專輯或藝人" aria-label="搜尋音樂庫" /><kbd>⌘ K</kbd></form>
           <NavLink to="/settings" className="topbar__profile"><span>{user.username.slice(0, 1).toUpperCase()}</span><b>{user.username}</b></NavLink>
         </header>
-        <main className="page" key={location.pathname}><Outlet /></main>
+        <main className={`page${isRestoringHistory ? ' page--history' : ''}`} key={location.pathname}><Outlet /></main>
       </div>
       <nav className="mobile-nav" aria-label="行動版主要導覽">{mainNav.slice(0, 3).map(({ to, label, icon: Icon, end }) => <NavLink key={to} to={to} end={end} className={({ isActive }) => isActive ? 'is-active' : ''}><Icon size={21} /><span>{label}</span></NavLink>)}<NavLink to="/settings" className={({ isActive }) => isActive ? 'is-active' : ''}><IconSettings size={21} /><span>設定</span></NavLink></nav>
       <QueuePanel />
