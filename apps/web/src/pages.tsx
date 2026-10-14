@@ -12,7 +12,7 @@ import { DolbyLogo } from './components/DolbyLogo';
 import { AlbumGrid, ArtistGrid, PlaylistGrid } from './components/MediaGrid';
 import { RubberSegment } from './components/RubberSegment';
 import { TrackList } from './components/TrackList';
-import { IconDisc, IconEye, IconEyeOff, IconHeart, IconMusic, IconPlay, IconPlus, IconSearch, IconShuffle, IconSync, IconTrash, IconUser, IconWave } from './components/Icons';
+import { IconChevronLeft, IconDisc, IconEye, IconEyeOff, IconHeart, IconMusic, IconPlay, IconPlus, IconSearch, IconShuffle, IconSync, IconTrash, IconUser, IconWave } from './components/Icons';
 
 interface RequestState<T> {
   data: T | null;
@@ -58,7 +58,20 @@ function SectionHeading({ title, link }: { title: string; link?: string }) {
 
 const HOME_CACHE_TTL = 30_000;
 const LIBRARY_CACHE_TTL = 120_000;
+const ALBUM_CACHE_TTL = 120_000;
+const ALBUM_CACHE_LIMIT = 20;
+type AlbumData = Awaited<ReturnType<typeof api.album>>;
 let homeCache: { userId: number; cachedAt: number; data: HomeData } | null = null;
+const albumCache = new Map<string, { cachedAt: number; data: AlbumData }>();
+
+function cacheAlbum(key: string, data: AlbumData) {
+  albumCache.delete(key);
+  albumCache.set(key, { cachedAt: Date.now(), data });
+  if (albumCache.size > ALBUM_CACHE_LIMIT) {
+    const oldestKey = albumCache.keys().next().value;
+    if (oldestKey !== undefined) albumCache.delete(oldestKey);
+  }
+}
 
 export function HomePage() {
   const userId = useSession((s) => s.user!.id);
@@ -128,35 +141,57 @@ export function LibraryPage() {
   return <><PageIntro title="音樂庫" /><div className="segmented-tabs"><RubberSegment items={tabs} value={tab} onChange={(nextTab) => setParams({ tab: nextTab })} trackColor="transparent" thumbColor="#fff" textColor="var(--text-soft)" activeTextColor="#090909" radius={999} inset={0} equalSlots stretch={100} squash={3} speed={1} glide={75} draggable className="library-segment" aria-label="音樂庫分類" /></div>{request.loading && !request.data ? <LoadingBlock rows={7} /> : null}{request.error ? <RequestError message={request.error} retry={request.reload} /> : null}{request.data && tab === 'albums' ? request.data.albums.length ? <AlbumGrid albums={request.data.albums} /> : <EmptyState title="還沒有專輯" copy="同步歌曲後，系統會依照內嵌資訊整理專輯。" /> : null}{request.data && tab === 'tracks' ? request.data.tracks.length ? <TrackList tracks={request.data.tracks} /> : <EmptyState title="還沒有歌曲" copy="前往設定頁執行 PikPak 同步。" /> : null}{request.data && tab === 'artists' ? request.data.artists.length ? <ArtistGrid artists={request.data.artists} /> : <EmptyState title="還沒有藝人" copy="同步歌曲後，藝人會自動出現在這裡。" /> : null}{tab === 'playlists' ? playlists.length ? <PlaylistGrid playlists={playlists} /> : <EmptyState icon={<IconDisc />} title="還沒有播放清單" copy="從歌曲選單加入現有清單，或從左側建立新清單。" /> : null}</>;
 }
 
-function CollectionHero({ artworkId, title, subtitle, meta = '', badge, tracks, compactTitle = false, albumLayout = false }: { artworkId?: string | null; title: string; subtitle?: string; meta?: string; badge?: React.ReactNode; tracks: Track[]; compactTitle?: boolean; albumLayout?: boolean }) {
+function CollectionHero({ artworkId, title, subtitle, meta = '', badge, tracks, compactTitle = false, detailLayout = false, mobileBackAction }: { artworkId?: string | null; title: string; subtitle?: string; meta?: string; badge?: React.ReactNode; tracks: Track[]; compactTitle?: boolean; detailLayout?: boolean; mobileBackAction?: React.ReactNode }) {
   const playList = usePlayer((s) => s.playList);
   const hasMeta = !!(meta || badge);
-  return <header className={`collection-hero${compactTitle ? ' collection-hero--compact-title' : ''}${albumLayout ? ' collection-hero--album' : ''}`}><Artwork artworkId={artworkId} title={title} artist={subtitle} className="collection-hero__art" loading="eager" size={2000} /><div className="collection-hero__copy"><div className="collection-hero__details"><h1>{title}</h1>{subtitle ? <p>{subtitle}</p> : null}{hasMeta ? <small className="collection-hero__meta">{meta ? <span>{meta}</span> : null}{badge ? <>{meta ? <i aria-hidden="true">·</i> : null}{badge}</> : null}</small> : null}</div><div className="collection-hero__actions"><button type="button" className="primary-button" disabled={!tracks.length} onClick={() => playList(tracks)}><IconPlay size={18} />播放</button><button type="button" className="round-button round-button--outline" disabled={!tracks.length} aria-label="隨機播放" onClick={() => playList(tracks, 0, { shuffle: true })}><IconShuffle size={19} /></button></div></div></header>;
+  return <header className={`collection-hero${compactTitle ? ' collection-hero--compact-title' : ''}${detailLayout ? ' collection-hero--detail' : ''}`}>{mobileBackAction ? <div className="collection-hero__mobile-back">{mobileBackAction}</div> : null}<Artwork artworkId={artworkId} title={title} artist={subtitle} className="collection-hero__art" loading="eager" size={2000} /><div className="collection-hero__copy"><div className="collection-hero__details"><h1>{title}</h1>{subtitle ? <p>{subtitle}</p> : null}{hasMeta ? <small className="collection-hero__meta">{meta ? <span>{meta}</span> : null}{badge ? <>{meta ? <i aria-hidden="true">·</i> : null}{badge}</> : null}</small> : null}</div><div className="collection-hero__actions"><button type="button" className="primary-button" disabled={!tracks.length} onClick={() => playList(tracks)}><IconPlay size={18} />播放</button><button type="button" className="round-button round-button--outline" disabled={!tracks.length} aria-label="隨機播放" onClick={() => playList(tracks, 0, { shuffle: true })}><IconShuffle size={19} /></button></div></div></header>;
 }
 
 export function AlbumPage() {
   const id = Number(useParams().id);
-  const request = useRequest(() => api.album(id), [id]);
+  const navigate = useNavigate();
+  const userId = useSession((s) => s.user!.id);
+  const cacheKey = `${userId}:${id}`;
+  const cachedEntry = albumCache.get(cacheKey);
+  const cached = cachedEntry && Date.now() - cachedEntry.cachedAt < ALBUM_CACHE_TTL ? cachedEntry.data : null;
+  const request = useRequest<AlbumData>(async () => {
+    const data = await api.album(id);
+    cacheAlbum(cacheKey, data);
+    return data;
+  }, [id, userId], cached, cached !== null);
   if (request.loading) return <LoadingBlock rows={8} />;
   if (request.error || !request.data) return <RequestError message={request.error} retry={request.reload} />;
   const { album, tracks, moreByArtist } = request.data;
   const heroMeta = [album.genre, album.year ? `${album.year} 年` : null].filter(Boolean).join(' · ');
-  return <><CollectionHero artworkId={album.artworkId} title={album.title} subtitle={album.artist} meta={heroMeta} badge={album.atmos ? <DolbyLogo variant="atmos" /> : album.lossless ? <span className="quality-badge">LOSSLESS</span> : undefined} tracks={tracks} compactTitle albumLayout /><section className="page-section page-section--tight"><TrackList tracks={tracks} /><footer className="album-summary">{album.year ? <span>{album.year} 年</span> : null}<span>{album.trackCount} 首歌曲 · {formatLongDuration(album.duration)}</span>{album.recordLabel ? <span>℗ {album.year ? `${album.year} ` : ''}{album.recordLabel}</span> : null}</footer></section>{moreByArtist.length ? <section className="page-section"><SectionHeading title={`更多 ${album.artist}`} /><AlbumGrid albums={moreByArtist} /></section> : null}</>;
+  const goBack = () => {
+    const historyIndex = window.history.state?.idx;
+    if (typeof historyIndex === 'number' && historyIndex > 0) navigate(-1);
+    else navigate('/library?tab=albums', { replace: true });
+  };
+  const mobileBackAction = <button type="button" className="collection-back-button" aria-label="返回" onClick={goBack}><IconChevronLeft size={20} /></button>;
+  return <><CollectionHero artworkId={album.artworkId} title={album.title} subtitle={album.artist} meta={heroMeta} badge={album.atmos ? <DolbyLogo variant="atmos" /> : album.lossless ? <span className="quality-badge">LOSSLESS</span> : undefined} tracks={tracks} compactTitle detailLayout mobileBackAction={mobileBackAction} /><section className="page-section page-section--tight"><TrackList tracks={tracks} showMetadata={false} /><footer className="album-summary">{album.year ? <span>{album.year} 年</span> : null}<span>{album.trackCount} 首歌曲 · {formatLongDuration(album.duration)}</span>{album.recordLabel ? <span>℗ {album.year ? `${album.year} ` : ''}{album.recordLabel}</span> : null}</footer></section>{moreByArtist.length ? <section className="page-section"><SectionHeading title={`更多 ${album.artist}`} /><AlbumGrid albums={moreByArtist} /></section> : null}</>;
 }
 
 export function ArtistPage() {
   const id = Number(useParams().id);
+  const navigate = useNavigate();
   const request = useRequest(() => api.artist(id), [id]);
   if (request.loading) return <LoadingBlock rows={8} />;
   if (request.error || !request.data) return <RequestError message={request.error} retry={request.reload} />;
   const { artist, tracks, albums } = request.data;
-  return <><CollectionHero artworkId={artist.artworkId} title={artist.name} meta={`${albums.length} 張專輯 · ${tracks.length} 首熱門歌曲`} tracks={tracks} /><section className="page-section page-section--tight"><SectionHeading title="熱門歌曲" /><TrackList tracks={tracks.slice(0, 10)} /></section>{albums.length ? <section className="page-section"><SectionHeading title="專輯" /><AlbumGrid albums={albums} /></section> : null}</>;
+  const goBack = () => {
+    const historyIndex = window.history.state?.idx;
+    if (typeof historyIndex === 'number' && historyIndex > 0) navigate(-1);
+    else navigate('/library?tab=artists', { replace: true });
+  };
+  const mobileBackAction = <button type="button" className="collection-back-button" aria-label="返回" onClick={goBack}><IconChevronLeft size={20} /></button>;
+  return <><CollectionHero artworkId={artist.artworkId} title={artist.name} meta={`${albums.length} 張專輯 · ${tracks.length} 首熱門歌曲`} tracks={tracks} compactTitle detailLayout mobileBackAction={mobileBackAction} /><section className="page-section page-section--tight"><SectionHeading title="熱門歌曲" /><TrackList tracks={tracks.slice(0, 10)} /></section>{albums.length ? <section className="page-section"><SectionHeading title="專輯" /><AlbumGrid albums={albums} /></section> : null}</>;
 }
 
 export function FavoritesPage() {
   const request = useRequest(() => api.favorites(), []);
   const tracks = request.data?.tracks ?? [];
-  return <><PageIntro title="喜愛的歌曲" copy={tracks.length ? `${tracks.length} 首你不想錯過的歌。` : undefined} />{request.loading ? <LoadingBlock rows={6} /> : request.error ? <RequestError message={request.error} retry={request.reload} /> : tracks.length ? <TrackList tracks={tracks} /> : <EmptyState icon={<IconHeart />} title="還沒有喜愛的歌曲" copy="點一下歌曲旁的愛心，它就會收藏在這裡。" />}</>;
+  return <><PageIntro title="喜愛的歌曲" copy={tracks.length ? `${tracks.length} 首你不想錯過的歌。` : undefined} />{request.loading ? <LoadingBlock rows={6} /> : request.error ? <RequestError message={request.error} retry={request.reload} /> : tracks.length ? <TrackList tracks={tracks} /> : <EmptyState icon={<IconHeart />} title="還沒有喜愛的歌曲" />}</>;
 }
 
 export function PlaylistPage() {

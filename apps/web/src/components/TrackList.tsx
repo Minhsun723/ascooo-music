@@ -1,4 +1,4 @@
-import type { MouseEvent } from 'react';
+import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { api } from '../api/client';
 import type { Track } from '../api/types';
 import { formatTime, isDolbyAtmos, qualityLabel } from '../lib/format';
@@ -41,10 +41,36 @@ export function LikeButton({ track, className = '' }: { track: Track; className?
 }
 
 function TrackMenu({ track, onRemove }: { track: Track; onRemove?: () => void }) {
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const [open, setOpen] = useState(false);
   const playlists = useSession((s) => s.playlists);
   const refreshPlaylists = useSession((s) => s.refreshPlaylists);
   const playNext = usePlayer((s) => s.playNext);
   const addToQueue = usePlayer((s) => s.addToQueue);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function handlePointerDown(event: PointerEvent) {
+      const details = detailsRef.current;
+      if (details && !details.contains(event.target as Node)) details.removeAttribute('open');
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      const details = detailsRef.current;
+      if (!details) return;
+      details.removeAttribute('open');
+      details.querySelector('summary')?.focus();
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open]);
 
   async function addToPlaylist(playlistId: number, event: MouseEvent<HTMLButtonElement>) {
     closeMenu(event);
@@ -58,7 +84,7 @@ function TrackMenu({ track, onRemove }: { track: Track; onRemove?: () => void })
   }
 
   return (
-    <details className="track-menu">
+    <details ref={detailsRef} className="track-menu" onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary className="icon-button" aria-label={`${track.title} 的更多選項`}><IconMore size={19} /></summary>
       <div className="menu-popover">
         <button type="button" onClick={(event) => { closeMenu(event); playNext([track]); toast('下一首播放'); }}>
@@ -87,10 +113,11 @@ interface TrackListProps {
   tracks: Track[];
   numbered?: boolean;
   compact?: boolean;
+  showMetadata?: boolean;
   onRemove?: (track: Track) => void;
 }
 
-export function TrackList({ tracks, numbered = true, compact = false, onRemove }: TrackListProps) {
+export function TrackList({ tracks, numbered = true, compact = false, showMetadata = true, onRemove }: TrackListProps) {
   const current = useCurrentTrack();
   const isPlaying = usePlayer((s) => s.isPlaying);
   const playList = usePlayer((s) => s.playList);
@@ -115,7 +142,7 @@ export function TrackList({ tracks, numbered = true, compact = false, onRemove }
               <Artwork artworkId={track.artworkId} title={track.title} artist={track.artist} className="track-row__art" />
               <span className="track-row__copy">
                 <strong>{track.title}</strong>
-                <small>{track.artist}<span aria-hidden="true"> · </span>{track.album}</small>
+                {showMetadata ? <small>{track.artist}<span aria-hidden="true"> · </span>{track.album}</small> : null}
               </span>
             </button>
             <span className="track-row__quality">

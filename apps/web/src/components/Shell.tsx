@@ -6,7 +6,6 @@ import { useSession } from '../store/session';
 import { toast } from '../store/toast';
 import {
   IconChevronLeft,
-  IconChevronRight,
   IconDisc,
   IconHeart,
   IconHome,
@@ -26,12 +25,30 @@ const mainNav = [
   { to: '/favorites', label: '喜愛的歌曲', icon: IconHeart },
 ];
 
+const legalLinks = [
+  { href: 'https://ascooo.com/privacy', label: '隱私權政策' },
+  { href: 'https://ascooo.com/terms', label: '使用條款' },
+];
+
 function isInteractiveTarget(target: EventTarget | null) {
   return target instanceof Element && Boolean(target.closest('input, textarea, select, button, a, [contenteditable="true"], [role="button"], [role="textbox"]'));
 }
 
 function Brand() {
   return <NavLink to="/" className="brand" aria-label="Ascooo Music 首頁"><img className="brand__image" src="/brand-logo/ascooo-music_light.png" width="750" height="320" alt="" aria-hidden="true" draggable={false} /></NavLink>;
+}
+
+function SiteFooter() {
+  return (
+    <footer className="site-footer">
+      <p className="site-footer__copyright">© {new Date().getFullYear()} Ascooo. All rights reserved.</p>
+      <nav className="site-footer__links" aria-label="法律資訊">
+        {legalLinks.map(({ href, label }) => (
+          <a key={href} href={href} target="_blank" rel="noopener noreferrer">{label}</a>
+        ))}
+      </nav>
+    </footer>
+  );
 }
 
 function restoreScrollPosition(top: number) {
@@ -125,6 +142,7 @@ export function Shell() {
   const user = useSession((s) => s.user)!;
   const playlists = useSession((s) => s.playlists);
   const logout = useSession((s) => s.logout);
+  const hasPlayer = usePlayer((s) => Boolean(s.queue[s.index]));
   const location = useLocation();
   const navigate = useNavigate();
   const navigationType = useNavigationType();
@@ -133,6 +151,7 @@ export function Shell() {
   const previousPathname = useRef<string | null>(null);
   const [query, setQuery] = useState(new URLSearchParams(location.search).get('q') ?? '');
   const [createOpen, setCreateOpen] = useState(false);
+  const isHomePage = location.pathname === '/';
   const isSearchPage = location.pathname === '/search';
   const isRestoringHistory = navigationType === 'POP' && scrollPositions.current.has(location.key);
 
@@ -227,14 +246,15 @@ export function Shell() {
           <button type="button" className="icon-button" aria-label="登出" onClick={() => void logout()}><IconLogout size={18} /></button>
         </div>
       </aside>
-      <div className="app-shell__body">
+      <div className={`app-shell__body${hasPlayer ? ' app-shell__body--with-player' : ''}`}>
         <header className={`topbar${isSearchPage ? ' topbar--search' : ''}`}>
-          <div className="history-controls"><button type="button" className="round-button" aria-label="上一頁" onClick={() => navigate(-1)}><IconChevronLeft size={19} /></button><button type="button" className="round-button" aria-label="下一頁" onClick={() => navigate(1)}><IconChevronRight size={19} /></button></div>
+          <div className="history-controls">{!isHomePage && <button type="button" className="round-button" aria-label="返回" onClick={() => navigate(-1)}><IconChevronLeft size={19} /></button>}</div>
           <NavLink to="/" className="topbar__mobile-brand" aria-label="Ascooo Music 首頁"><img src="/brand-logo/music-logo.png" width="1000" height="1000" alt="" aria-hidden="true" draggable={false} /></NavLink>
           <form className="global-search" role="search" onSubmit={search}><IconSearch size={19} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋歌曲、專輯或藝人" aria-label="搜尋音樂庫" /><kbd>⌘ K</kbd></form>
           <NavLink to="/settings" className="topbar__profile"><span>{user.username.slice(0, 1).toUpperCase()}</span><b>{user.username}</b></NavLink>
         </header>
         <main className={`page${isRestoringHistory ? ' page--history' : ''}`} key={location.pathname}><Outlet /></main>
+        <SiteFooter />
       </div>
       <nav className="mobile-nav" aria-label="行動版主要導覽">{mainNav.slice(0, 3).map(({ to, label, icon: Icon, end }) => <NavLink key={to} to={to} end={end} className={({ isActive }) => isActive ? 'is-active' : ''}><Icon size={21} /><span>{label}</span></NavLink>)}<NavLink to="/settings" className={({ isActive }) => isActive ? 'is-active' : ''}><IconSettings size={21} /><span>設定</span></NavLink></nav>
       <QueuePanel />
