@@ -12,7 +12,7 @@ import { DolbyLogo } from './components/DolbyLogo';
 import { AlbumGrid, ArtistGrid, PlaylistGrid } from './components/MediaGrid';
 import { RubberSegment } from './components/RubberSegment';
 import { TrackList } from './components/TrackList';
-import { IconChevronLeft, IconDisc, IconEye, IconEyeOff, IconHeart, IconMusic, IconPlay, IconPlus, IconSearch, IconShuffle, IconSync, IconTrash, IconUser, IconWave } from './components/Icons';
+import { IconChevronLeft, IconDisc, IconEye, IconEyeOff, IconHeart, IconLogout, IconMusic, IconPlay, IconPlus, IconSearch, IconShuffle, IconSync, IconTrash, IconUser, IconWave } from './components/Icons';
 
 interface RequestState<T> {
   data: T | null;
@@ -588,6 +588,7 @@ function UserManagement({ currentUserId }: { currentUserId: number }) {
 
 export function SettingsPage() {
   const user = useSession((s) => s.user)!;
+  const logout = useSession((s) => s.logout);
   const status = useLibrarySync((s) => s.status);
   const syncing = useLibrarySync((s) => s.syncing);
   const progress = useLibrarySync((s) => s.progress);
@@ -606,26 +607,25 @@ export function SettingsPage() {
 
   return (
     <>
-      <PageIntro title="設定" copy="管理音樂來源、顯示內容與帳號安全。" />
+      <PageIntro title="設定" />
+      <button type="button" className="secondary-button settings-mobile-logout" onClick={() => void logout()}><IconLogout size={18} />登出</button>
       <div className="settings-grid">
-        <section className="settings-card settings-card--wide">
-          <div className="settings-card__heading">
-            <div><h2>PikPak 音樂庫</h2></div>
-            <span className={`status-dot ${status ? 'is-online' : ''}`}>{status ? '已連線' : '等待檢查'}</span>
-          </div>
-          {user.role === 'admin' ? (
-            <>
-              <div className="sync-summary">
-                <div><strong>{status?.ready.toLocaleString() ?? '—'}</strong><span>可播放歌曲</span></div>
-                <div><strong>{status?.pending.toLocaleString() ?? '—'}</strong><span>等待處理</span></div>
-                <div><strong>{status?.errorCount.toLocaleString() ?? '—'}</strong><span>需留意</span></div>
-              </div>
-              <div className="sync-root"><span>同步根目錄</span><code>{status?.root ?? '從 Worker 設定讀取'}</code></div>
-              {progress ? <div className="sync-progress" role="status"><span className={syncing ? 'is-spinning' : ''}><IconSync size={17} /></span>{progress}</div> : null}
-              <button type="button" className="primary-button" disabled={syncing} onClick={() => void runSync()}><IconSync size={18} />遠端同步</button>
-            </>
-          ) : <p className="settings-note">只有管理員可以執行音樂庫同步。</p>}
-        </section>
+        {user.role === 'admin' ? (
+          <section className="settings-card settings-card--wide">
+            <div className="settings-card__heading">
+              <div><h2>PikPak 音樂庫</h2></div>
+              <span className={`status-dot ${status ? 'is-online' : ''}`}>{status ? '已連線' : '等待檢查'}</span>
+            </div>
+            <div className="sync-summary">
+              <div><strong>{status?.ready.toLocaleString() ?? '—'}</strong><span>可播放歌曲</span></div>
+              <div><strong>{status?.pending.toLocaleString() ?? '—'}</strong><span>等待處理</span></div>
+              <div><strong>{status?.errorCount.toLocaleString() ?? '—'}</strong><span>需留意</span></div>
+            </div>
+            <div className="sync-root"><span>同步根目錄</span><code>{status?.root ?? '從 Worker 設定讀取'}</code></div>
+            {progress ? <div className="sync-progress" role="status"><span className={syncing ? 'is-spinning' : ''}><IconSync size={17} /></span>{progress}</div> : null}
+            <button type="button" className="primary-button" disabled={syncing} onClick={() => void runSync()}><IconSync size={18} />遠端同步</button>
+          </section>
+        ) : null}
 
         {user.role === 'admin' ? <MusicVisibilityManager /> : null}
 
