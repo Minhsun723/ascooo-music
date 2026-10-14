@@ -20,10 +20,16 @@ interface RequestState<T> {
   error: string;
 }
 
-function useRequest<T>(loader: () => Promise<T>, dependencies: DependencyList, initialData: T | null = null): RequestState<T> & { reload: () => void } {
+function useRequest<T>(
+  loader: () => Promise<T>,
+  dependencies: DependencyList,
+  initialData: T | null = null,
+  initialDataFresh = false,
+): RequestState<T> & { reload: () => void } {
   const [version, setVersion] = useState(0);
-  const [state, setState] = useState<RequestState<T>>(() => ({ data: initialData, loading: true, error: '' }));
+  const [state, setState] = useState<RequestState<T>>(() => ({ data: initialData, loading: !initialDataFresh, error: '' }));
   useEffect(() => {
+    if (version === 0 && initialDataFresh) return;
     let active = true;
     setState((current) => ({ ...current, loading: true, error: '' }));
     loader().then((data) => { if (active) setState({ data, loading: false, error: '' }); }).catch((error) => { if (active) setState({ data: null, loading: false, error: (error as Error).message }); });
@@ -50,15 +56,18 @@ function SectionHeading({ title, link }: { title: string; link?: string }) {
   return <div className="section-heading"><div><h2>{title}</h2></div>{link ? <Link to={link}>查看全部 <span aria-hidden="true">↗</span></Link> : null}</div>;
 }
 
-let homeCache: { userId: number; data: HomeData } | null = null;
+const HOME_CACHE_TTL = 30_000;
+const LIBRARY_CACHE_TTL = 120_000;
+let homeCache: { userId: number; cachedAt: number; data: HomeData } | null = null;
 
 export function HomePage() {
   const userId = useSession((s) => s.user!.id);
+  const cached = homeCache?.userId === userId && Date.now() - homeCache.cachedAt < HOME_CACHE_TTL ? homeCache.data : null;
   const request = useRequest<HomeData>(async () => {
     const data = await api.home();
-    homeCache = { userId, data };
+    homeCache = { userId, cachedAt: Date.now(), data };
     return data;
-  }, [], homeCache?.userId === userId ? homeCache.data : null);
+  }, [], cached, cached !== null);
   if (request.loading && !request.data) return <LoadingBlock rows={7} />;
   if (request.error || !request.data) return <RequestError message={request.error} retry={request.reload} />;
   const data = request.data;
@@ -101,19 +110,20 @@ export function SearchPage() {
 }
 
 type LibraryData = { tracks: Track[]; total: number; albums: Album[]; artists: Artist[] };
-let libraryCache: { userId: number; data: LibraryData } | null = null;
+let libraryCache: { userId: number; cachedAt: number; data: LibraryData } | null = null;
 
 export function LibraryPage() {
   const [params, setParams] = useSearchParams();
   const tab = params.get('tab') ?? 'albums';
   const userId = useSession((s) => s.user!.id);
   const playlists = useSession((s) => s.playlists);
+  const cached = libraryCache?.userId === userId && Date.now() - libraryCache.cachedAt < LIBRARY_CACHE_TTL ? libraryCache.data : null;
   const request = useRequest<LibraryData>(async () => {
     const [tracks, albums, artists] = await Promise.all([api.tracks('added', 500), api.albums('added', 300), api.artists()]);
     const data = { ...tracks, albums: albums.albums, artists: artists.artists };
-    libraryCache = { userId, data };
+    libraryCache = { userId, cachedAt: Date.now(), data };
     return data;
-  }, [], libraryCache?.userId === userId ? libraryCache.data : null);
+  }, [], cached, cached !== null);
   const tabs = [{ value: 'albums', label: '專輯' }, { value: 'tracks', label: '歌曲' }, { value: 'artists', label: '藝人' }, { value: 'playlists', label: '播放清單' }];
   return <><PageIntro title="音樂庫" /><div className="segmented-tabs"><RubberSegment items={tabs} value={tab} onChange={(nextTab) => setParams({ tab: nextTab })} trackColor="transparent" thumbColor="#fff" textColor="var(--text-soft)" activeTextColor="#090909" radius={999} inset={0} equalSlots stretch={100} squash={3} speed={1} glide={75} draggable className="library-segment" aria-label="音樂庫分類" /></div>{request.loading && !request.data ? <LoadingBlock rows={7} /> : null}{request.error ? <RequestError message={request.error} retry={request.reload} /> : null}{request.data && tab === 'albums' ? request.data.albums.length ? <AlbumGrid albums={request.data.albums} /> : <EmptyState title="還沒有專輯" copy="同步歌曲後，系統會依照內嵌資訊整理專輯。" /> : null}{request.data && tab === 'tracks' ? request.data.tracks.length ? <TrackList tracks={request.data.tracks} /> : <EmptyState title="還沒有歌曲" copy="前往設定頁執行 PikPak 同步。" /> : null}{request.data && tab === 'artists' ? request.data.artists.length ? <ArtistGrid artists={request.data.artists} /> : <EmptyState title="還沒有藝人" copy="同步歌曲後，藝人會自動出現在這裡。" /> : null}{tab === 'playlists' ? playlists.length ? <PlaylistGrid playlists={playlists} /> : <EmptyState icon={<IconDisc />} title="還沒有播放清單" copy="從歌曲選單加入現有清單，或從左側建立新清單。" /> : null}</>;
 }

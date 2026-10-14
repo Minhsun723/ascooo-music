@@ -567,29 +567,33 @@ sync.post('/finalize', async (c) => {
   }>();
   const root = normalizePath(c.env.MUSIC_ROOT || '/');
   const scanned = assertInRoot(c.env, dir || root);
-  const prefix = scanned === '/' ? '/%' : `${scanned}/%`;
+  const prefix = scanned === '/' ? '/' : `${scanned}/`;
+  const prefixEnd = `${prefix}\u{10ffff}`;
   const db = c.env.DB;
   const artworkIds = [...new Set((rawArtworkIds ?? []).filter((id) => /^[a-f0-9]{40}$/.test(id)))];
   if (artworkIds.length !== (rawArtworkIds?.length ?? 0) || artworkIds.length > 20_000) {
     throw new HTTPException(400, { message: '封面清理清單格式錯誤' });
   }
   const removed = await db
-    .prepare(`DELETE FROM tracks WHERE path LIKE ? AND (scan_id IS NULL OR scan_id != ?) RETURNING id`)
-    .bind(prefix, scanId)
+    .prepare(`DELETE FROM tracks WHERE path >= ? AND path < ? AND (scan_id IS NULL OR scan_id != ?) RETURNING id`)
+    .bind(prefix, prefixEnd, scanId)
     .all();
   await db.batch([
-    db.prepare('DELETE FROM albums WHERE id NOT IN (SELECT DISTINCT album_id FROM tracks WHERE album_id IS NOT NULL)'),
+    db.prepare('DELETE FROM albums WHERE NOT EXISTS (SELECT 1 FROM tracks WHERE tracks.album_id = albums.id)'),
     db.prepare(
-      `DELETE FROM artists WHERE id NOT IN (SELECT DISTINCT artist_id FROM tracks WHERE artist_id IS NOT NULL)
-         AND id NOT IN (SELECT DISTINCT artist_id FROM albums)`,
+      `DELETE FROM artists
+       WHERE NOT EXISTS (SELECT 1 FROM tracks WHERE tracks.artist_id = artists.id)
+         AND NOT EXISTS (SELECT 1 FROM albums WHERE albums.artist_id = artists.id)`,
     ),
     db.prepare(
-      `DELETE FROM artworks WHERE id NOT IN (SELECT artwork_id FROM tracks WHERE artwork_id IS NOT NULL)
-         AND id NOT IN (SELECT artwork_id FROM albums WHERE artwork_id IS NOT NULL)`,
+      `DELETE FROM artworks
+       WHERE NOT EXISTS (SELECT 1 FROM tracks WHERE tracks.artwork_id = artworks.id)
+         AND NOT EXISTS (SELECT 1 FROM albums WHERE albums.artwork_id = artworks.id)`,
     ),
     db.prepare(
-      `DELETE FROM artwork_sources WHERE id NOT IN (SELECT artwork_id FROM tracks WHERE artwork_id IS NOT NULL)
-         AND id NOT IN (SELECT artwork_id FROM albums WHERE artwork_id IS NOT NULL)`,
+      `DELETE FROM artwork_sources
+       WHERE NOT EXISTS (SELECT 1 FROM tracks WHERE tracks.artwork_id = artwork_sources.id)
+         AND NOT EXISTS (SELECT 1 FROM albums WHERE albums.artwork_id = artwork_sources.id)`,
     ),
     ...(artworkIds.length ? [
       db.prepare('DELETE FROM artworks WHERE id IN (SELECT value FROM json_each(?))').bind(JSON.stringify(artworkIds)),

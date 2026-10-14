@@ -39,7 +39,11 @@ me.delete('/favorites/:trackId', async (c) => {
 me.post('/history', async (c) => {
   const { trackId } = await c.req.json<{ trackId: number }>();
   await c.env.DB.prepare(
-    "INSERT INTO play_history (user_id, track_id, played_at) SELECT ?, id, ? FROM tracks WHERE id = ? AND status = 'ready' AND visible = 1",
+    `INSERT INTO play_stats (user_id, track_id, play_count, last_played)
+     SELECT ?, id, 1, ? FROM tracks WHERE id = ? AND status = 'ready' AND visible = 1
+     ON CONFLICT(user_id, track_id) DO UPDATE SET
+       play_count = play_stats.play_count + 1,
+       last_played = excluded.last_played`,
   )
     .bind(c.get('user').id, Date.now(), Number(trackId))
     .run();

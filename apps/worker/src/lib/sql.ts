@@ -73,10 +73,11 @@ export const ALBUM_SELECT = `
   MAX(CASE WHEN LOWER(t.codec) IN ('ec-3','eac3','e-ac-3') THEN 1 ELSE 0 END) AS atmos
 `;
 
+/** Keep album filters ahead of track aggregation so artist/id lookups stay indexed. */
 export const ALBUM_FROM = `
   FROM albums al
   JOIN artists ar ON ar.id = al.artist_id
-  JOIN tracks t ON t.album_id = al.id AND t.status = 'ready' AND t.visible = 1
+  CROSS JOIN tracks t ON t.album_id = al.id AND t.status = 'ready' AND t.visible = 1
 `;
 
 export interface AlbumRow {

@@ -21,6 +21,14 @@ const int = (v: string | undefined, def: number, max = 500) => {
   return Number.isFinite(n) && n >= 0 ? Math.min(n, max) : def;
 };
 
+function shuffledTake<T>(items: T[], limit: number): T[] {
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [items[i], items[j]] = [items[j], items[i]];
+  }
+  return items.slice(0, limit);
+}
+
 const TRACK_SORTS: Record<string, string> = {
   added: 't.added_at DESC, t.id DESC',
   title: 't.title COLLATE NOCASE ASC',
@@ -39,35 +47,82 @@ const ALBUM_SORTS: Record<string, string> = {
 library.get('/home', async (c) => {
   const uid = c.get('user').id;
   const db = c.env.DB;
-  const [recentAlbums, recentPlays, randomAlbums, randomTracks, stats] = await db.batch([
-    db.prepare(`SELECT ${ALBUM_SELECT} ${ALBUM_FROM} GROUP BY al.id ORDER BY added_at DESC LIMIT 12`),
+  const [trackBound, albumBound] = await db.batch([
+    db.prepare("SELECT MAX(id) AS max_id FROM tracks WHERE status = 'ready' AND visible = 1"),
     db.prepare(
-      `SELECT ${TRACK_SELECT} FROM (
-         SELECT track_id, MAX(played_at) AS last FROM play_history WHERE user_id = ? GROUP BY track_id
-         ORDER BY last DESC LIMIT 16
-       ) h JOIN tracks t ON t.id = h.track_id ${TRACK_JOINS} WHERE t.status = 'ready' AND t.visible = 1 ORDER BY h.last DESC`,
-    ).bind(uid, uid),
-    db.prepare(`SELECT ${ALBUM_SELECT} ${ALBUM_FROM} GROUP BY al.id ORDER BY RANDOM() LIMIT 12`),
-    db.prepare(`SELECT ${TRACK_SELECT} FROM tracks t ${TRACK_JOINS} WHERE t.status = 'ready' AND t.visible = 1 ORDER BY RANDOM() LIMIT 20`).bind(uid),
-    db.prepare(
-      `SELECT COUNT(*) AS tracks, COALESCE(SUM(size),0) AS bytes, COALESCE(SUM(duration),0) AS seconds,
-        COALESCE(SUM(CASE WHEN codec IN ('flac','alac','wav') THEN 1 ELSE 0 END), 0) AS lossless,
-        (SELECT COUNT(*) FROM albums al WHERE EXISTS (
-          SELECT 1 FROM tracks at WHERE at.album_id = al.id AND at.status = 'ready' AND at.visible = 1
-        )) AS albums,
-        (SELECT COUNT(*) FROM artists ar WHERE EXISTS (
-          SELECT 1 FROM tracks art LEFT JOIN albums aal ON aal.id = art.album_id
-          WHERE (art.artist_id = ar.id OR aal.artist_id = ar.id) AND art.status = 'ready' AND art.visible = 1
-        )) AS artists,
-        COALESCE(SUM(has_lyrics), 0) AS with_lyrics
-       FROM tracks WHERE status = 'ready' AND visible = 1`,
+      `SELECT MAX(al.id) AS max_id FROM albums al WHERE EXISTS (
+         SELECT 1 FROM tracks t WHERE t.album_id = al.id AND t.status = 'ready' AND t.visible = 1
+       )`,
     ),
   ]);
+  const randomStart = (result: D1Result) => {
+    const max = Number((result.results[0] as { max_id: number | null } | undefined)?.max_id ?? 0);
+    return max > 0 ? Math.floor(Math.random() * max) + 1 : 0;
+  };
+  const trackStart = randomStart(trackBound);
+  const albumStart = randomStart(albumBound);
+  const randomAlbumQuery = (comparison: '>=' | '<') => db.prepare(
+    `WITH picked AS (
+       SELECT al.id FROM albums al
+       WHERE al.id ${comparison} ? AND EXISTS (
+         SELECT 1 FROM tracks et WHERE et.album_id = al.id AND et.status = 'ready' AND et.visible = 1
+       )
+       ORDER BY al.id LIMIT 24
+     )
+     SELECT ${ALBUM_SELECT}
+     FROM picked p
+     JOIN albums al ON al.id = p.id
+     JOIN artists ar ON ar.id = al.artist_id
+     JOIN tracks t ON t.album_id = al.id AND t.status = 'ready' AND t.visible = 1
+     GROUP BY al.id ORDER BY al.id`,
+  ).bind(albumStart);
+  const randomTrackQuery = (comparison: '>=' | '<') => db.prepare(
+    `SELECT ${TRACK_SELECT} FROM tracks t ${TRACK_JOINS}
+     WHERE t.status = 'ready' AND t.visible = 1 AND t.id ${comparison} ?
+     ORDER BY t.id LIMIT 100`,
+  ).bind(uid, trackStart);
+
+  const [recentAlbums, recentPlays, randomAlbumsAfter, randomAlbumsBefore, randomTracksAfter, randomTracksBefore, stats] = await db.batch([
+    db.prepare(`SELECT ${ALBUM_SELECT} ${ALBUM_FROM} GROUP BY al.id ORDER BY added_at DESC LIMIT 12`),
+    db.prepare(
+      `SELECT ${TRACK_SELECT} FROM play_stats h JOIN tracks t ON t.id = h.track_id ${TRACK_JOINS}
+       WHERE h.user_id = ? AND t.status = 'ready' AND t.visible = 1
+       ORDER BY h.last_played DESC LIMIT 16`,
+    ).bind(uid, uid),
+    randomAlbumQuery('>='),
+    randomAlbumQuery('<'),
+    randomTrackQuery('>='),
+    randomTrackQuery('<'),
+    db.prepare(
+      `WITH visible_tracks AS (
+         SELECT id, album_id, artist_id, size, duration, codec, has_lyrics
+         FROM tracks WHERE status = 'ready' AND visible = 1
+       ), library_artists AS (
+         SELECT artist_id FROM visible_tracks WHERE artist_id IS NOT NULL
+         UNION
+         SELECT al.artist_id FROM visible_tracks vt JOIN albums al ON al.id = vt.album_id
+       )
+       SELECT COUNT(*) AS tracks, COALESCE(SUM(size),0) AS bytes, COALESCE(SUM(duration),0) AS seconds,
+        COALESCE(SUM(CASE WHEN codec IN ('flac','alac','wav') THEN 1 ELSE 0 END), 0) AS lossless,
+        COUNT(DISTINCT album_id) AS albums,
+        (SELECT COUNT(*) FROM library_artists) AS artists,
+        COALESCE(SUM(has_lyrics), 0) AS with_lyrics
+       FROM visible_tracks`,
+    ),
+  ]);
+  const randomAlbums = shuffledTake([
+    ...(randomAlbumsAfter.results as AlbumRow[]),
+    ...(randomAlbumsBefore.results as AlbumRow[]),
+  ], 12);
+  const randomTracks = shuffledTake([
+    ...(randomTracksAfter.results as TrackRow[]),
+    ...(randomTracksBefore.results as TrackRow[]),
+  ], 20);
   return c.json({
     recentAlbums: (recentAlbums.results as AlbumRow[]).map(toAlbum),
     recentPlays: (recentPlays.results as TrackRow[]).map(toTrack),
-    randomAlbums: (randomAlbums.results as AlbumRow[]).map(toAlbum),
-    quickPicks: (randomTracks.results as TrackRow[]).map(toTrack),
+    randomAlbums: randomAlbums.map(toAlbum),
+    quickPicks: randomTracks.map(toTrack),
     stats: stats.results[0],
   });
 });
@@ -125,11 +180,21 @@ library.get('/artists', async (c) => {
   const limit = int(c.req.query('limit'), 200);
   const offset = int(c.req.query('offset'), 0, 1e9);
   const { results } = await c.env.DB.prepare(
-    `SELECT ar.id, ar.name, COUNT(t.id) AS track_count,
+    `WITH artist_tracks AS (
+       SELECT t.artist_id, t.id AS track_id
+       FROM tracks t
+       WHERE t.artist_id IS NOT NULL AND t.status = 'ready' AND t.visible = 1
+       UNION
+       SELECT al.artist_id, t.id AS track_id
+       FROM tracks t JOIN albums al ON al.id = t.album_id
+       WHERE t.status = 'ready' AND t.visible = 1
+     ), artist_counts AS (
+       SELECT artist_id, COUNT(*) AS track_count FROM artist_tracks GROUP BY artist_id
+     )
+     SELECT ar.id, ar.name, ac.track_count,
        (SELECT al.artwork_id FROM albums al WHERE al.artist_id = ar.id AND al.artwork_id IS NOT NULL LIMIT 1) AS artwork_id
-     FROM artists ar
-     JOIN tracks t ON (t.artist_id = ar.id OR t.album_id IN (SELECT id FROM albums WHERE artist_id = ar.id)) AND t.status = 'ready' AND t.visible = 1
-     GROUP BY ar.id ORDER BY ar.name COLLATE NOCASE LIMIT ? OFFSET ?`,
+     FROM artist_counts ac JOIN artists ar ON ar.id = ac.artist_id
+     ORDER BY ar.name COLLATE NOCASE LIMIT ? OFFSET ?`,
   )
     .bind(limit, offset)
     .all<{ id: number; name: string; track_count: number; artwork_id: string | null }>();
@@ -143,20 +208,30 @@ library.get('/artists/:id', async (c) => {
   const id = Number(c.req.param('id'));
   const db = c.env.DB;
   const artist = await db.prepare(
-    `SELECT ar.id, ar.name FROM artists ar WHERE ar.id = ? AND EXISTS (
-       SELECT 1 FROM tracks t LEFT JOIN albums al ON al.id = t.album_id
-       WHERE (t.artist_id = ar.id OR al.artist_id = ar.id) AND t.status = 'ready' AND t.visible = 1
+    `SELECT ar.id, ar.name FROM artists ar WHERE ar.id = ? AND (
+       EXISTS (SELECT 1 FROM tracks t
+               WHERE t.artist_id = ar.id AND t.status = 'ready' AND t.visible = 1)
+       OR EXISTS (SELECT 1 FROM albums al CROSS JOIN tracks t ON t.album_id = al.id
+                  WHERE al.artist_id = ar.id AND t.status = 'ready' AND t.visible = 1)
      )`,
   ).bind(id).first<{ id: number; name: string }>();
   if (!artist) throw new HTTPException(404, { message: '找不到這位歌手' });
   const [albums, top] = await db.batch([
     db.prepare(`SELECT ${ALBUM_SELECT} ${ALBUM_FROM} WHERE al.artist_id = ? GROUP BY al.id ORDER BY al.year DESC, al.title`).bind(id),
     db.prepare(
-      `SELECT ${TRACK_SELECT}, (SELECT COUNT(*) FROM play_history ph WHERE ph.track_id = t.id) AS plays
-       FROM tracks t ${TRACK_JOINS}
-       WHERE (t.artist_id = ? OR al.artist_id = ?) AND t.status = 'ready' AND t.visible = 1
+      `WITH artist_track_ids AS (
+         SELECT t.id FROM tracks t
+         WHERE t.artist_id = ? AND t.status = 'ready' AND t.visible = 1
+         UNION
+         SELECT t.id FROM albums artist_albums CROSS JOIN tracks t ON t.album_id = artist_albums.id
+         WHERE artist_albums.artist_id = ? AND t.status = 'ready' AND t.visible = 1
+       )
+       SELECT ${TRACK_SELECT}, COALESCE(SUM(ps.play_count), 0) AS plays
+       FROM artist_track_ids ati JOIN tracks t ON t.id = ati.id ${TRACK_JOINS}
+       LEFT JOIN play_stats ps ON ps.track_id = t.id
+       GROUP BY t.id
        ORDER BY plays DESC, t.added_at DESC LIMIT 50`,
-    ).bind(uid, id, id),
+    ).bind(id, id, uid),
   ]);
   const albumList = (albums.results as AlbumRow[]).map(toAlbum);
   return c.json({
