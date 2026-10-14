@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { api } from '../api/client';
 import { usePlayer } from '../store/player';
@@ -29,6 +29,24 @@ const legalLinks = [
   { href: 'https://ascooo.com/privacy', label: '隱私權政策' },
   { href: 'https://ascooo.com/terms', label: '使用條款' },
 ];
+
+function getDocumentTitle(pathname: string, search: string) {
+  if (pathname === '/') return 'Ascooo Music';
+
+  let pageTitle: string;
+  if (pathname === '/search') {
+    const query = new URLSearchParams(search).get('q')?.trim();
+    pageTitle = query ? `搜尋「${query}」` : '搜尋';
+  } else if (pathname === '/library') pageTitle = '音樂庫';
+  else if (pathname === '/favorites') pageTitle = '喜愛的歌曲';
+  else if (pathname === '/settings') pageTitle = '設定';
+  else if (pathname.startsWith('/album/')) pageTitle = '專輯';
+  else if (pathname.startsWith('/artist/')) pageTitle = '藝人';
+  else if (pathname.startsWith('/playlist/')) pageTitle = '播放清單';
+  else pageTitle = '找不到頁面';
+
+  return `${pageTitle} · Ascooo Music`;
+}
 
 function isInteractiveTarget(target: EventTarget | null) {
   return target instanceof Element && Boolean(target.closest('input, textarea, select, button, a, [contenteditable="true"], [role="button"], [role="textbox"]'));
@@ -142,7 +160,9 @@ export function Shell() {
   const user = useSession((s) => s.user)!;
   const playlists = useSession((s) => s.playlists);
   const logout = useSession((s) => s.logout);
-  const hasPlayer = usePlayer((s) => Boolean(s.queue[s.index]));
+  const currentTrack = usePlayer((s) => s.queue[s.index]);
+  const isNowPlayingOpen = usePlayer((s) => s.nowPlayingOpen);
+  const hasPlayer = Boolean(currentTrack);
   const location = useLocation();
   const navigate = useNavigate();
   const navigationType = useNavigationType();
@@ -151,9 +171,28 @@ export function Shell() {
   const previousPathname = useRef<string | null>(null);
   const [query, setQuery] = useState(new URLSearchParams(location.search).get('q') ?? '');
   const [createOpen, setCreateOpen] = useState(false);
+  const [dynamicPageTitle, setDynamicPageTitle] = useState<{ pathname: string; title: string } | null>(null);
   const isHomePage = location.pathname === '/';
   const isSearchPage = location.pathname === '/search';
   const isRestoringHistory = navigationType === 'POP' && scrollPositions.current.has(location.key);
+  const navigationPageTitle = typeof location.state?.pageTitle === 'string'
+    ? location.state.pageTitle.trim()
+    : '';
+  const setPageTitle = useCallback((title: string | null) => {
+    setDynamicPageTitle(title ? { pathname: location.pathname, title } : null);
+  }, [location.pathname]);
+
+  useLayoutEffect(() => {
+    const immediatePageTitle = dynamicPageTitle?.pathname === location.pathname
+      ? dynamicPageTitle.title
+      : navigationPageTitle;
+    const routeTitle = immediatePageTitle
+      ? `${immediatePageTitle} · Ascooo Music`
+      : getDocumentTitle(location.pathname, location.search);
+    document.title = isNowPlayingOpen && currentTrack
+      ? `${currentTrack.title} · ${currentTrack.artist}`
+      : routeTitle;
+  }, [currentTrack, dynamicPageTitle, isNowPlayingOpen, location.pathname, location.search, navigationPageTitle]);
 
   useEffect(() => {
     if (location.pathname === '/search') setQuery(new URLSearchParams(location.search).get('q') ?? '');
@@ -253,7 +292,7 @@ export function Shell() {
           <form className="global-search" role="search" onSubmit={search}><IconSearch size={19} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋歌曲、專輯或藝人" aria-label="搜尋音樂庫" /><kbd>⌘ K</kbd></form>
           <NavLink to="/settings" className="topbar__profile"><span>{user.username.slice(0, 1).toUpperCase()}</span><b>{user.username}</b></NavLink>
         </header>
-        <main className={`page${isRestoringHistory ? ' page--history' : ''}`} key={location.pathname}><Outlet /></main>
+        <main className={`page${isRestoringHistory ? ' page--history' : ''}`} key={location.pathname}><Outlet context={setPageTitle} /></main>
         <SiteFooter />
       </div>
       <nav className="mobile-nav" aria-label="行動版主要導覽">{mainNav.slice(0, 3).map(({ to, label, icon: Icon, end }) => <NavLink key={to} to={to} end={end} className={({ isActive }) => isActive ? 'is-active' : ''}><Icon size={21} /><span>{label}</span></NavLink>)}<NavLink to="/settings" className={({ isActive }) => isActive ? 'is-active' : ''}><IconSettings size={21} /><span>設定</span></NavLink></nav>

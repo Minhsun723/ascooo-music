@@ -201,7 +201,6 @@ export const usePlayer = create<PlayerState>()(
           audio.removeAttribute('src');
           audio.load();
           if ('mediaSession' in navigator) navigator.mediaSession.metadata = null;
-          document.title = 'Ascooo Music';
           set({
             sessionOwnerId: userId,
             queue: [],
@@ -327,7 +326,6 @@ function updateMediaSession(t: Track) {
     album: t.album,
     artwork: art ? [{ src: new URL(art, location.origin).toString(), sizes: '512x512' }] : [],
   });
-  document.title = `${t.title} · ${t.artist}`;
 }
 
 export const useCurrentTrack = () => usePlayer((s) => s.queue[s.index] as Track | undefined);

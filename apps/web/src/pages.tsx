@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type DependencyList, type FormEvent } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import { api } from './api/client';
 import type { Album, Artist, HomeData, ManagedTrack, ManagedTrackStats, ManagedUser, Track } from './api/types';
 import { formatLongDuration } from './lib/format';
@@ -100,6 +100,14 @@ function PageIntro({ title, copy, children }: { title: string; copy?: string; ch
   return <><header className="page-intro"><h1>{title}</h1>{copy ? <p>{copy}</p> : null}</header>{children}</>;
 }
 
+function useDynamicPageTitle(title?: string) {
+  const setPageTitle = useOutletContext<(title: string | null) => void>();
+  useEffect(() => {
+    setPageTitle(title ?? null);
+    return () => setPageTitle(null);
+  }, [setPageTitle, title]);
+}
+
 export function SearchPage() {
   const [params] = useSearchParams();
   const query = params.get('q')?.trim() ?? '';
@@ -159,6 +167,7 @@ export function AlbumPage() {
     cacheAlbum(cacheKey, data);
     return data;
   }, [id, userId], cached, cached !== null);
+  useDynamicPageTitle(request.data?.album.title);
   if (request.loading) return <LoadingBlock rows={8} />;
   if (request.error || !request.data) return <RequestError message={request.error} retry={request.reload} />;
   const { album, tracks, moreByArtist } = request.data;
@@ -176,6 +185,7 @@ export function ArtistPage() {
   const id = Number(useParams().id);
   const navigate = useNavigate();
   const request = useRequest(() => api.artist(id), [id]);
+  useDynamicPageTitle(request.data?.artist.name);
   if (request.loading) return <LoadingBlock rows={8} />;
   if (request.error || !request.data) return <RequestError message={request.error} retry={request.reload} />;
   const { artist, tracks, albums } = request.data;

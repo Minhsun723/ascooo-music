@@ -13,7 +13,7 @@ export function MediaCard({ item }: { item: MediaItem }) {
   if (item.kind === 'artist') {
     const artist = item.data;
     return (
-      <Link className="media-card media-card--artist" to={`/artist/${artist.id}`}>
+      <Link className="media-card media-card--artist" to={`/artist/${artist.id}`} state={{ pageTitle: artist.name }}>
         <div className="media-card__art">
           <Artwork artworkId={artist.artworkId} title={artist.name} rounded="circle" />
         </div>
@@ -38,7 +38,7 @@ export function MediaCard({ item }: { item: MediaItem }) {
 
   const album = item.data;
   return (
-    <Link className="media-card" to={`/album/${album.id}`}>
+    <Link className="media-card" to={`/album/${album.id}`} state={{ pageTitle: album.title }}>
       <div className="media-card__art">
         <Artwork artworkId={album.artworkId} title={album.title} artist={album.artist} />
         {album.atmos
