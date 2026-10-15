@@ -18,4 +18,16 @@ SYNC_TARGET_URL=https://music.ascooo.com
 SYNC_ADMIN_USERNAME=your-admin-username
 SYNC_ADMIN_PASSWORD=your-admin-password
 # Local WebDAV metadata parsing concurrency (1-8).
-SYNC_PARSE_CONCURRENCY=4
+SYNC_PARSE_CONCURRENCY=1
+
+# Optional Apple Music enrichment, executed only by the local sync command.
+# The public developer token is discovered automatically; paste one here only
+# if automatic discovery stops working.
+APPLE_MUSIC_ENABLED=true
+APPLE_MUSIC_DEVELOPER_TOKEN=
+APPLE_MUSIC_USER_TOKEN=
+APPLE_MUSIC_STOREFRONT=jp
+APPLE_MUSIC_LYRICS_STOREFRONT=tw
+APPLE_MUSIC_LANGUAGE=ja-JP
+APPLE_MUSIC_LYRICS_PATH=/ascooo-music/lyrics
+APPLE_MUSIC_REFRESH_DAYS=90

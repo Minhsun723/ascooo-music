@@ -166,6 +166,21 @@ export class WebDAV {
     return entries;
   }
 
+  /** Write a small UTF-8 sidecar file through WebDAV (used by local sync only). */
+  async writeText(path: string, content: string, contentType = 'text/plain; charset=utf-8'): Promise<void> {
+    const target = normalizePath(path);
+    const res = await this.fetchWithAuth(this.url(target), {
+      method: 'PUT',
+      headers: { 'Content-Type': contentType },
+      body: content,
+    });
+    if (res.status === 401) throw new Error('WebDAV 驗證失敗，請檢查 PikPak 接入點、帳密或 Bearer Token');
+    if (![200, 201, 204].includes(res.status)) {
+      throw new Error(`寫入 ${target} 失敗：HTTP ${res.status}${res.status === 409 ? '（請先建立上層資料夾）' : ''}`);
+    }
+    await res.body?.cancel().catch(() => {});
+  }
+
   /** GET a file, following PikPak's CDN redirect and forwarding Range headers. */
   async fetchFile(path: string, init: { range?: string | null; ifRange?: string | null } = {}): Promise<Response> {
     const key = normalizePath(path);

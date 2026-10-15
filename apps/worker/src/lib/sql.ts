@@ -1,7 +1,10 @@
 /** Shared SQL fragments that shape rows into the API's Track JSON. */
 
 export const TRACK_SELECT = `
-  t.id, t.title, t.artist, t.artist_id, t.album_id, al.title AS album, aa.name AS album_artist,
+  t.id, COALESCE(t.display_title, t.title) AS title,
+  COALESCE(t.display_artist, t.artist) AS artist,
+  t.artist_id, t.album_id, al.title AS album,
+  COALESCE(aa.display_name, aa.name) AS album_artist,
   t.track_no, t.disc_no, t.year, t.genre, t.duration, t.codec, t.bitrate, t.sample_rate,
   t.bit_depth, t.channels, COALESCE(t.artwork_id, al.artwork_id) AS artwork_id, t.has_lyrics,
   t.added_at, CASE WHEN f.track_id IS NULL THEN 0 ELSE 1 END AS liked
@@ -64,7 +67,8 @@ export function toTrack(r: TrackRow) {
 }
 
 export const ALBUM_SELECT = `
-  al.id, al.title, al.year, al.artwork_id, al.artist_id, ar.name AS artist,
+  al.id, al.title, al.year, al.artwork_id, al.artist_id,
+  COALESCE(ar.display_name, ar.name) AS artist,
   COUNT(t.id) AS track_count, COALESCE(SUM(t.duration), 0) AS duration,
   MAX(t.added_at) AS added_at,
   MAX(NULLIF(t.genre, '')) AS genre,

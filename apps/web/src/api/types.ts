@@ -96,7 +96,8 @@ export interface HomeData {
 export interface Lyrics {
   content: string;
   synced: boolean;
-  source: 'embedded' | 'lrc';
+  source: 'embedded' | 'lrc' | 'ttml' | 'apple-music';
+  format: 'plain' | 'lrc' | 'ttml';
 }
 
 export interface SyncStatus {

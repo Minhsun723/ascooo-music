@@ -77,6 +77,7 @@ export interface AudioMetadata {
   year?: number;
   genre?: string;
   recordLabel?: string;
+  isrc?: string;
   lyrics?: string;
   duration?: number;
   codec?: string;

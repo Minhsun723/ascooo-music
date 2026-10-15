@@ -1,5 +1,6 @@
 .agents/
 .codex/
+.impeccable/
 node_modules/
 dist/
 .wrangler/

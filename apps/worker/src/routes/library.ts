@@ -31,8 +31,8 @@ function shuffledTake<T>(items: T[], limit: number): T[] {
 
 const TRACK_SORTS: Record<string, string> = {
   added: 't.added_at DESC, t.id DESC',
-  title: 't.title COLLATE NOCASE ASC',
-  artist: 't.artist COLLATE NOCASE ASC, al.title COLLATE NOCASE, t.disc_no, t.track_no',
+  title: 'COALESCE(t.display_title, t.title) COLLATE NOCASE ASC',
+  artist: 'COALESCE(t.display_artist, t.artist) COLLATE NOCASE ASC, al.title COLLATE NOCASE, t.disc_no, t.track_no',
   album: 'al.title COLLATE NOCASE ASC, t.disc_no, t.track_no',
   duration: 't.duration DESC',
 };
@@ -40,7 +40,7 @@ const TRACK_SORTS: Record<string, string> = {
 const ALBUM_SORTS: Record<string, string> = {
   added: 'added_at DESC',
   title: 'al.title COLLATE NOCASE ASC',
-  artist: 'ar.name COLLATE NOCASE ASC, al.year',
+  artist: 'COALESCE(ar.display_name, ar.name) COLLATE NOCASE ASC, al.year',
   year: 'al.year DESC',
 };
 
@@ -191,10 +191,11 @@ library.get('/artists', async (c) => {
      ), artist_counts AS (
        SELECT artist_id, COUNT(*) AS track_count FROM artist_tracks GROUP BY artist_id
      )
-     SELECT ar.id, ar.name, ac.track_count,
-       (SELECT al.artwork_id FROM albums al WHERE al.artist_id = ar.id AND al.artwork_id IS NOT NULL LIMIT 1) AS artwork_id
+     SELECT ar.id, COALESCE(ar.display_name, ar.name) AS name, ac.track_count,
+       COALESCE(ar.artwork_id,
+         (SELECT al.artwork_id FROM albums al WHERE al.artist_id = ar.id AND al.artwork_id IS NOT NULL LIMIT 1)) AS artwork_id
      FROM artist_counts ac JOIN artists ar ON ar.id = ac.artist_id
-     ORDER BY ar.name COLLATE NOCASE LIMIT ? OFFSET ?`,
+     ORDER BY COALESCE(ar.display_name, ar.name) COLLATE NOCASE LIMIT ? OFFSET ?`,
   )
     .bind(limit, offset)
     .all<{ id: number; name: string; track_count: number; artwork_id: string | null }>();
@@ -208,13 +209,13 @@ library.get('/artists/:id', async (c) => {
   const id = Number(c.req.param('id'));
   const db = c.env.DB;
   const artist = await db.prepare(
-    `SELECT ar.id, ar.name FROM artists ar WHERE ar.id = ? AND (
+    `SELECT ar.id, COALESCE(ar.display_name, ar.name) AS name, ar.artwork_id FROM artists ar WHERE ar.id = ? AND (
        EXISTS (SELECT 1 FROM tracks t
                WHERE t.artist_id = ar.id AND t.status = 'ready' AND t.visible = 1)
        OR EXISTS (SELECT 1 FROM albums al CROSS JOIN tracks t ON t.album_id = al.id
                   WHERE al.artist_id = ar.id AND t.status = 'ready' AND t.visible = 1)
      )`,
-  ).bind(id).first<{ id: number; name: string }>();
+  ).bind(id).first<{ id: number; name: string; artwork_id: string | null }>();
   if (!artist) throw new HTTPException(404, { message: '找不到這位歌手' });
   const [albums, top] = await db.batch([
     db.prepare(`SELECT ${ALBUM_SELECT} ${ALBUM_FROM} WHERE al.artist_id = ? GROUP BY al.id ORDER BY al.year DESC, al.title`).bind(id),
@@ -235,7 +236,11 @@ library.get('/artists/:id', async (c) => {
   ]);
   const albumList = (albums.results as AlbumRow[]).map(toAlbum);
   return c.json({
-    artist: { ...artist, artworkId: albumList.find((a) => a.artworkId)?.artworkId ?? null },
+    artist: {
+      id: artist.id,
+      name: artist.name,
+      artworkId: artist.artwork_id ?? albumList.find((a) => a.artworkId)?.artworkId ?? null,
+    },
     albums: albumList,
     tracks: (top.results as TrackRow[]).map(toTrack),
   });
@@ -250,19 +255,27 @@ library.get('/search', async (c) => {
   const [tracks, albums, artists] = await db.batch([
     db.prepare(
       `SELECT ${TRACK_SELECT} FROM tracks t ${TRACK_JOINS}
-       WHERE t.status = 'ready' AND t.visible = 1 AND (t.title LIKE ?2 ESCAPE '\\' OR t.artist LIKE ?2 ESCAPE '\\' OR al.title LIKE ?2 ESCAPE '\\')
-       ORDER BY CASE WHEN t.title LIKE ?3 ESCAPE '\\' THEN 0 ELSE 1 END, t.title COLLATE NOCASE LIMIT 50`,
+       WHERE t.status = 'ready' AND t.visible = 1 AND (
+         t.title LIKE ?2 ESCAPE '\\' OR t.display_title LIKE ?2 ESCAPE '\\'
+         OR t.artist LIKE ?2 ESCAPE '\\' OR t.display_artist LIKE ?2 ESCAPE '\\'
+         OR al.title LIKE ?2 ESCAPE '\\'
+       )
+       ORDER BY CASE WHEN COALESCE(t.display_title, t.title) LIKE ?3 ESCAPE '\\' THEN 0 ELSE 1 END,
+         COALESCE(t.display_title, t.title) COLLATE NOCASE LIMIT 50`,
     ).bind(uid, like, likePattern(q).slice(1)),
     db.prepare(
-      `SELECT ${ALBUM_SELECT} ${ALBUM_FROM} WHERE al.title LIKE ? ESCAPE '\\' OR ar.name LIKE ? ESCAPE '\\' GROUP BY al.id LIMIT 20`,
-    ).bind(like, like),
+      `SELECT ${ALBUM_SELECT} ${ALBUM_FROM}
+       WHERE al.title LIKE ? ESCAPE '\\' OR ar.name LIKE ? ESCAPE '\\' OR ar.display_name LIKE ? ESCAPE '\\'
+       GROUP BY al.id LIMIT 20`,
+    ).bind(like, like, like),
     db.prepare(
-      `SELECT ar.id, ar.name,
-         (SELECT al.artwork_id FROM albums al WHERE al.artist_id = ar.id AND al.artwork_id IS NOT NULL LIMIT 1) AS artwork_id
-       FROM artists ar WHERE ar.name LIKE ? ESCAPE '\\'
+      `SELECT ar.id, COALESCE(ar.display_name, ar.name) AS name,
+         COALESCE(ar.artwork_id,
+           (SELECT al.artwork_id FROM albums al WHERE al.artist_id = ar.id AND al.artwork_id IS NOT NULL LIMIT 1)) AS artwork_id
+       FROM artists ar WHERE (ar.name LIKE ? ESCAPE '\\' OR ar.display_name LIKE ? ESCAPE '\\')
          AND EXISTS (SELECT 1 FROM tracks t WHERE t.artist_id = ar.id AND t.status = 'ready' AND t.visible = 1)
        LIMIT 12`,
-    ).bind(like),
+    ).bind(like, like),
   ]);
   return c.json({
     tracks: (tracks.results as TrackRow[]).map(toTrack),
@@ -290,14 +303,14 @@ library.get('/admin/tracks', requireAdmin, async (c) => {
 
   if (q) {
     const like = likePattern(q);
-    conditions.push("(t.title LIKE ? ESCAPE '\\' OR t.artist LIKE ? ESCAPE '\\' OR al.title LIKE ? ESCAPE '\\')");
-    trackBindings.push(like, like, like);
+    conditions.push("(t.title LIKE ? ESCAPE '\\' OR t.display_title LIKE ? ESCAPE '\\' OR t.artist LIKE ? ESCAPE '\\' OR t.display_artist LIKE ? ESCAPE '\\' OR al.title LIKE ? ESCAPE '\\')");
+    trackBindings.push(like, like, like, like, like);
   }
 
   const where = conditions.join(' AND ');
   const tracksStatement = c.env.DB.prepare(
     `SELECT ${TRACK_SELECT}, t.visible FROM tracks t ${TRACK_JOINS}
-     WHERE ${where} ORDER BY t.title COLLATE NOCASE, t.id LIMIT ? OFFSET ?`,
+     WHERE ${where} ORDER BY COALESCE(t.display_title, t.title) COLLATE NOCASE, t.id LIMIT ? OFFSET ?`,
   ).bind(...trackBindings, limit + 1, offset);
   const statsStatement = c.env.DB.prepare(
     `SELECT COUNT(*) AS total,
@@ -330,12 +343,12 @@ library.patch('/admin/tracks/:id/visibility', requireAdmin, async (c) => {
 
 library.get('/tracks/:id/lyrics', async (c) => {
   const row = await c.env.DB.prepare(
-    'SELECT l.content, l.synced, l.source FROM lyrics l JOIN tracks t ON t.id = l.track_id WHERE l.track_id = ? AND t.visible = 1',
+    'SELECT l.content, l.synced, l.source, l.format FROM lyrics l JOIN tracks t ON t.id = l.track_id WHERE l.track_id = ? AND t.visible = 1',
   )
     .bind(Number(c.req.param('id')))
-    .first<{ content: string; synced: number; source: string }>();
+    .first<{ content: string; synced: number; source: string; format: 'lrc' | 'ttml' | 'plain' }>();
   if (!row) return c.json({ lyrics: null });
-  return c.json({ lyrics: { content: row.content, synced: !!row.synced, source: row.source } });
+  return c.json({ lyrics: { content: row.content, synced: !!row.synced, source: row.source, format: row.format } });
 });
 
 export default library;

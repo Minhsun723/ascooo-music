@@ -27,6 +27,7 @@ export function applyVorbisComments(b: Uint8Array, meta: AudioMetadata): void {
   meta.year ??= parseYear(tags.DATE ?? tags.YEAR ?? tags.ORIGINALDATE);
   meta.genre ??= clean(tags.GENRE);
   meta.recordLabel ??= clean(tags.LABEL ?? tags.ORGANIZATION ?? tags.PUBLISHER ?? tags.RECORDLABEL ?? tags.RECORD_LABEL);
+  meta.isrc ??= clean(tags.ISRC);
   const lyr = tags.LYRICS ?? tags.UNSYNCEDLYRICS ?? tags.SYNCEDLYRICS;
   if (lyr?.trim()) meta.lyrics ??= lyr.trim();
 }

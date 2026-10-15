@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import { api, artUrl } from '../api/client';
+import type { Lyrics } from '../api/types';
 import { DEFAULT_PALETTE, extractPalette, type Palette } from '../lib/color';
-import { activeIndex, parseLrc, plainLines } from '../lib/lrc';
+import { activeIndex, parseLrc, parseTtml, plainLines, type LyricWord } from '../lib/lrc';
 import { formatTime, isDolbyAtmos, qualityLabel } from '../lib/format';
 import { useCurrentTrack, usePlayer } from '../store/player';
 import { Artwork } from './Artwork';
@@ -32,6 +33,12 @@ const PLAYER_DRAG_DISMISS_MAX = 96;
 const PLAYER_DRAG_DISMISS_RATIO = 0.12;
 const PLAYER_FLICK_VELOCITY = 0.2;
 const PLAYER_FLICK_MIN_DISTANCE = 24;
+
+function wordState(word: LyricWord, currentTime: number): 'future' | 'active' | 'past' {
+  if (currentTime + 0.06 < word.time) return 'future';
+  if (currentTime < word.end) return 'active';
+  return 'past';
+}
 
 function transformTranslateY(transform: string) {
   if (!transform || transform === 'none') return 0;
@@ -288,7 +295,7 @@ export function NowPlaying() {
   const toggleMute = usePlayer((s) => s.toggleMute);
   const setQueueOpen = usePlayer((s) => s.setQueueOpen);
   const setOpen = usePlayer((s) => s.setNowPlaying);
-  const [lyrics, setLyrics] = useState<{ content: string; synced: boolean } | null>(null);
+  const [lyrics, setLyrics] = useState<Lyrics | null>(null);
   const [loading, setLoading] = useState(false);
   const [palette, setPalette] = useState<Palette>(DEFAULT_PALETTE);
   const [shouldRender, setShouldRender] = useState(open);
@@ -340,7 +347,10 @@ export function NowPlaying() {
     return () => { cancelled = true; };
   }, [open, track]);
 
-  const timed = useMemo(() => lyrics?.synced ? parseLrc(lyrics.content) : [], [lyrics]);
+  const timed = useMemo(() => {
+    if (!lyrics?.synced) return [];
+    return lyrics.format === 'ttml' ? parseTtml(lyrics.content) : parseLrc(lyrics.content);
+  }, [lyrics]);
   const plain = useMemo(() => lyrics && !lyrics.synced ? plainLines(lyrics.content) : [], [lyrics]);
   const active = timed.length ? activeIndex(timed, currentTime) : -1;
 
@@ -510,8 +520,18 @@ export function NowPlaying() {
             {loading ? <div className="lyrics-skeleton"><span /><span /><span /><span /></div> : null}
             {!loading && !lyrics ? <div className="lyrics-empty"><IconLyrics size={28} /><p>這首歌還沒有歌詞</p></div> : null}
             {timed.length ? <div className="lyrics-lines">{timed.map((line, index) => (
-              <button type="button" key={`${line.time}-${index}`} ref={(node) => { lineRefs.current[index] = node; }} className={index === active ? 'is-active' : ''} onClick={() => seek(line.time)}>
-                <span className="lyrics-lines__text">{line.text || '♪'}</span>
+              <button type="button" key={`${line.time}-${index}`} ref={(node) => { lineRefs.current[index] = node; }} className={index === active ? 'is-active' : ''} aria-label={line.text || '♪'} onClick={() => seek(line.time)}>
+                <span className={`lyrics-lines__text${line.words?.length ? ' lyrics-lines__text--timed' : ''}`} aria-hidden="true">
+                  {line.words?.length
+                    ? line.words.map((word, wordIndex) => (
+                        <span
+                          className="lyrics-word"
+                          data-state={index === active ? wordState(word, currentTime) : undefined}
+                          key={`${word.time}-${wordIndex}`}
+                        >{word.text}</span>
+                      ))
+                    : line.text || '♪'}
+                </span>
               </button>
             ))}</div> : null}
             {plain.length ? <div className="lyrics-lines lyrics-lines--plain">{plain.map((line, index) => <p key={`${line}-${index}`}>{line || <br />}</p>)}</div> : null}

@@ -3,15 +3,18 @@ import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promi
 import { dirname, resolve } from 'node:path';
 import sharp from 'sharp';
 import { ARTWORK_SIZES, type ArtworkSize } from '../apps/worker/src/lib/artwork';
-import { AUDIO_EXTENSIONS, type AudioMetadata, extOf, extractMetadata } from '../apps/worker/src/lib/metadata';
+import { AUDIO_EXTENSIONS, type AudioMetadata, extOf, extractMetadata, guessFromFilename } from '../apps/worker/src/lib/metadata';
 import { type DavEntry, WebDAV, normalizePath } from '../apps/worker/src/lib/webdav';
+import { AppleMusicClient, appleArtworkUrl, type AppleArtwork, type AppleMusicMatch } from './apple-music';
 
 const COVER_NAMES = ['cover', 'folder', 'front', 'album', 'albumart', 'albumcover', 'artwork', 'jacket', '封面', '專輯封面', '专辑封面'];
 const IMAGE_EXT = ['jpg', 'jpeg', 'png', 'webp', 'avif', 'gif'];
 const projectRoot = process.cwd();
 const cacheFile = resolve(projectRoot, '.sync-cache/library.json');
 const uploadStateFile = resolve(projectRoot, '.sync-cache/upload-state.json');
-const transientHttpError = /HTTP (?:429|500|502|503|504)\b/;
+// PikPak occasionally returns a short-lived 404 while creating a fresh signed
+// download URL. A repeated 404 is still treated as a real missing file.
+const transientHttpError = /HTTP (?:404|408|425|429|500|502|503|504)\b/;
 const dailyD1LimitError = /exceeded D1's free tier daily/i;
 
 interface PreparedArtworkVariant {
@@ -39,13 +42,25 @@ interface PreparedTrack {
   coverSignature: string | null;
   metadata: Omit<AudioMetadata, 'picture' | 'lyrics'>;
   metadataError: string | null;
-  lyrics: { content: string; source: 'lrc' | 'embedded' } | null;
+  lyrics: {
+    content: string;
+    source: 'lrc' | 'ttml' | 'embedded' | 'apple-music';
+    format: 'lrc' | 'ttml' | 'plain';
+  } | null;
+  appleMusic: (Omit<AppleMusicMatch, 'artistArtwork' | 'songArtwork'> & {
+    artistArtworkId: string | null;
+    lyricsSongId: string | null;
+    lyricsAudioLocale: string | null;
+    lyricsHasTimeSyncedLyrics: boolean | null;
+  }) | null;
+  appleCheckedAt: number | null;
+  appleLyricsCheckedAt: number | null;
   trackArtworkId: string | null;
   folderArtworkId: string | null;
 }
 
 interface SyncManifest {
-  version: 3;
+  version: 5;
   createdAt: string;
   root: string;
   scanId: string;
@@ -60,8 +75,8 @@ interface UploadState {
 }
 
 function concurrencyFromEnvironment(): number {
-  const value = Number(process.env.SYNC_PARSE_CONCURRENCY ?? 4);
-  return Number.isFinite(value) ? Math.min(Math.max(Math.floor(value), 1), 8) : 4;
+  const value = Number(process.env.SYNC_PARSE_CONCURRENCY ?? 1);
+  return Number.isFinite(value) ? Math.min(Math.max(Math.floor(value), 1), 8) : 1;
 }
 
 function entrySignature(file: DavEntry | null | undefined): string | null {
@@ -93,8 +108,22 @@ async function mapConcurrent<T, R>(items: T[], concurrency: number, operation: (
 
 async function previousManifest(root: string): Promise<SyncManifest | null> {
   try {
-    const manifest = JSON.parse(await readFile(cacheFile, 'utf8')) as SyncManifest;
-    return manifest.version === 3 && manifest.root === root ? manifest : null;
+    const manifest = JSON.parse(await readFile(cacheFile, 'utf8')) as SyncManifest & { version: number };
+    if (manifest.root !== root || ![4, 5].includes(manifest.version)) return null;
+    if (manifest.version === 5) return manifest;
+    return {
+      ...manifest,
+      version: 5,
+      tracks: manifest.tracks.map((track) => ({
+        ...track,
+        appleMusic: track.appleMusic ? {
+          ...track.appleMusic,
+          lyricsSongId: track.appleMusic.lyricsSongId ?? null,
+          lyricsAudioLocale: track.appleMusic.lyricsAudioLocale ?? null,
+          lyricsHasTimeSyncedLyrics: track.appleMusic.lyricsHasTimeSyncedLyrics ?? null,
+        } : null,
+      })),
+    };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT' || error instanceof SyntaxError) return null;
     throw error;
@@ -187,6 +216,26 @@ function folderCover(files: DavEntry[]): DavEntry | null {
 
 const sha1 = (data: Uint8Array) => createHash('sha1').update(data).digest('hex');
 const sha256 = (data: Uint8Array) => createHash('sha256').update(data).digest('hex');
+const LRC_SYNCED = /^\s*\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]/m;
+const INSTRUMENTAL_TITLE = /\b(?:instrumental|karaoke|off[\s-]?vocal)\b|伴奏|インスト(?:ゥルメンタル)?/iu;
+
+function lyricsFormat(path: string, content: string): 'lrc' | 'ttml' | 'plain' {
+  if (extOf(path) === 'ttml' || /<tt(?:\s|>)/i.test(content)) return 'ttml';
+  return LRC_SYNCED.test(content) || extOf(path) === 'lrc' ? 'lrc' : 'plain';
+}
+
+function refreshInterval(): number {
+  const days = Number(process.env.APPLE_MUSIC_REFRESH_DAYS ?? 90);
+  const normalized = Number.isFinite(days) ? Math.min(Math.max(days, 1), 365) : 90;
+  return normalized * 24 * 60 * 60 * 1000;
+}
+
+const warningKeys = new Set<string>();
+function warnOnce(key: string, message: string): void {
+  if (warningKeys.has(key)) return;
+  warningKeys.add(key);
+  console.warn(message);
+}
 
 async function addArtwork(
   artworks: Map<string, PreparedArtwork>,
@@ -226,16 +275,58 @@ async function addArtwork(
   }
 }
 
+async function addAppleArtwork(
+  artworks: Map<string, PreparedArtwork>,
+  jobs: Map<string, Promise<string | null>>,
+  artwork: AppleArtwork,
+): Promise<string | null> {
+  const existing = jobs.get(artwork.url);
+  if (existing) return existing;
+
+  const job = (async () => {
+    const variants = await Promise.all(ARTWORK_SIZES.map(async (size): Promise<PreparedArtworkVariant> => {
+      const response = await fetch(appleArtworkUrl(artwork.url, size));
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      let data = Buffer.from(await response.arrayBuffer());
+      let metadata = await sharp(data, { failOn: 'none' }).metadata();
+      if (metadata.format !== 'webp') {
+        data = await sharp(data, { failOn: 'none' }).webp({ quality: size === 512 ? 82 : 86, effort: 4 }).toBuffer();
+        metadata = await sharp(data).metadata();
+      }
+      const width = metadata.width ?? 0;
+      const height = metadata.height ?? 0;
+      if (!width || !height || width > size || height > size) throw new Error(`${size}px 藝人照片尺寸無效`);
+      return {
+        size,
+        width,
+        height,
+        checksum: sha256(data),
+        data: data.toString('base64'),
+      };
+    }));
+    const id = sha1(Buffer.from(variants[0].data, 'base64'));
+    if (!artworks.has(id)) artworks.set(id, { id, variants });
+    return id;
+  })().catch((error) => {
+    warnOnce(`artist-art:${artwork.url}`, `  略過 Apple Music 藝人照片：${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  });
+  jobs.set(artwork.url, job);
+  return job;
+}
+
 async function withReadRetry<T>(label: string, operation: () => Promise<T>): Promise<T> {
   let lastError: unknown;
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < 5; attempt++) {
     try {
       return await operation();
     } catch (error) {
       lastError = error;
       const message = error instanceof Error ? error.message : String(error);
-      if (!transientHttpError.test(message) || attempt === 3) throw error;
-      const delay = 750 * 2 ** attempt;
+      if (!transientHttpError.test(message) || attempt === 4) throw error;
+      const delay = /HTTP 404\b/.test(message)
+        ? Math.min(4_000 * 2 ** attempt, 30_000) + Math.floor(Math.random() * 500)
+        : 750 * 2 ** attempt + Math.floor(Math.random() * 250);
       console.warn(`  ${label} 暫時失敗，${delay}ms 後重試：${message}`);
       await new Promise((resolveDelay) => setTimeout(resolveDelay, delay));
     }
@@ -254,10 +345,80 @@ async function prepare(): Promise<SyncManifest> {
   };
   const dav = new WebDAV(env as never);
   const root = normalizePath(env.MUSIC_ROOT);
+  const appleLyricsRoot = normalizePath(process.env.APPLE_MUSIC_LYRICS_PATH?.trim() || '/ascooo-music/lyrics');
   const concurrency = concurrencyFromEnvironment();
   const folders: string[] = [root];
   const seenFolders = new Set(folders);
   const contents: { dir: string; files: DavEntry[] }[] = [];
+
+  let apple: AppleMusicClient | null = null;
+  if (!/^(?:0|false|off)$/i.test(process.env.APPLE_MUSIC_ENABLED?.trim() || 'true')) {
+    const candidate = new AppleMusicClient({
+      developerToken: process.env.APPLE_MUSIC_DEVELOPER_TOKEN,
+      mediaUserToken: process.env.APPLE_MUSIC_USER_TOKEN,
+      storefront: process.env.APPLE_MUSIC_STOREFRONT || 'jp',
+      lyricsStorefront: process.env.APPLE_MUSIC_LYRICS_STOREFRONT,
+      language: process.env.APPLE_MUSIC_LANGUAGE || 'ja-JP',
+    });
+    try {
+      await candidate.initialize();
+      apple = candidate;
+      console.log(`Apple Music 已啟用（目錄 ${candidate.storefront}/${candidate.language}；歌詞 ${candidate.lyricsStorefront}${candidate.hasMediaUserToken ? '，含訂閱權限' : '，未設定訂閱 Token'}）`);
+    } catch (error) {
+      console.warn(`Apple Music 暫時無法使用，將保留既有資料：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  const appleLyricsFiles = new Map<string, DavEntry>();
+  try {
+    const entries = await withReadRetry(`掃描 ${appleLyricsRoot}`, () => dav.list(appleLyricsRoot));
+    for (const entry of entries) if (!entry.isDir && extOf(entry.name) === 'ttml') appleLyricsFiles.set(entry.name.toLowerCase(), entry);
+    console.log(`  PikPak 歌詞庫：${appleLyricsFiles.size} 份 TTML`);
+  } catch (error) {
+    warnOnce('lyrics-root', `  無法讀取 ${appleLyricsRoot}：${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  const appleLyricsJobs = new Map<string, Promise<{
+    content: string;
+    path: string;
+    signature: string | null;
+  } | null>>();
+  const resolveAppleLyrics = (
+    songId: string,
+    audioLocale: string | null,
+    hasTimeSyncedLyrics: boolean,
+  ) => {
+    const existingJob = appleLyricsJobs.get(songId);
+    if (existingJob) return existingJob;
+    const job = (async () => {
+      const destination = normalizePath(`${appleLyricsRoot}/${songId}.ttml`);
+      const existingFile = appleLyricsFiles.get(`${songId}.ttml`.toLowerCase());
+      if (existingFile) {
+        try {
+          const content = (await withReadRetry(
+            `讀取歌詞 ${existingFile.path}`,
+            () => dav.readText(existingFile.path),
+          )).trim();
+          if (content) {
+            return { content, path: existingFile.path, signature: entrySignature(existingFile) };
+          }
+        } catch (error) {
+          console.warn(`  既有 TTML 暫時無法讀取，將嘗試重新取得 ${songId}：${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      if (!apple || !hasTimeSyncedLyrics) return null;
+      const content = await apple.fetchLyrics(songId, audioLocale);
+      if (!content) return null;
+      await withReadRetry(
+        `上傳歌詞 ${destination}`,
+        () => dav.writeText(destination, content, 'application/ttml+xml; charset=utf-8'),
+      );
+      console.log(`  已保存 TTML：${destination}`);
+      return { content, path: destination, signature: sha256(Buffer.from(content)) };
+    })();
+    appleLyricsJobs.set(songId, job);
+    return job;
+  };
 
   console.log(`本機掃描 ${root}（並行 ${concurrency}）`);
   while (folders.length) {
@@ -283,6 +444,7 @@ async function prepare(): Promise<SyncManifest> {
   const previousByPath = new Map(previous?.tracks.map((track) => [track.path, track]) ?? []);
   const artworks = new Map(previous?.artworks.map((artwork) => [artwork.id, artwork]) ?? []);
   const artworkJobs = new Map<string, Promise<string>>();
+  const appleArtworkJobs = new Map<string, Promise<string | null>>();
   const tracks: PreparedTrack[] = [];
   const audioCount = contents.reduce(
     (count, folder) => count + folder.files.filter((file) => AUDIO_EXTENSIONS.includes(extOf(file.name))).length,
@@ -295,7 +457,8 @@ async function prepare(): Promise<SyncManifest> {
   const jobs = contents.flatMap((folder) => {
     const audioFiles = folder.files.filter((file) => AUDIO_EXTENSIONS.includes(extOf(file.name)));
     if (!audioFiles.length) return [];
-    const lrcByStem = new Map(folder.files.filter((file) => extOf(file.name) === 'lrc').map((file) => [stem(file.name), file]));
+    const lyricsByStem = new Map(folder.files.filter((file) => extOf(file.name) === 'lrc').map((file) => [stem(file.name), file]));
+    for (const file of folder.files.filter((entry) => extOf(entry.name) === 'ttml')) lyricsByStem.set(stem(file.name), file);
     const cover = folderCover(folder.files);
     const coverSignature = entrySignature(cover);
     const cachedFolderArtworkId = audioFiles
@@ -322,25 +485,43 @@ async function prepare(): Promise<SyncManifest> {
       })();
       return folderArtworkPromise;
     };
-    return audioFiles.map((file) => ({ file, lrcByStem, cover, coverSignature, getFolderArtwork }));
+    return audioFiles.map((file) => ({ file, lyricsByStem, cover, coverSignature, getFolderArtwork }));
   });
 
   const preparedTracks = await mapConcurrent(jobs, concurrency, async ({
     file,
-    lrcByStem,
+    lyricsByStem,
     cover,
     coverSignature,
     getFolderArtwork,
   }): Promise<PreparedTrack> => {
-      const lrcFile = lrcByStem.get(stem(file.name)) ?? null;
-      const lrcPath = lrcFile?.path ?? null;
-      const lrcSignature = entrySignature(lrcFile);
       const cached = previousByPath.get(file.path);
-      const unchanged = cached && !cached.metadataError &&
-        hasStableSignature(file) && hasStableSignature(lrcFile) && hasStableSignature(cover) &&
+      const adjacentLyrics = lyricsByStem.get(stem(file.name)) ?? null;
+      const cachedLyricsIds = [cached?.appleMusic?.lyricsSongId, cached?.appleMusic?.songId]
+        .filter((id): id is string => !!id);
+      const cachedAppleLyrics = cachedLyricsIds
+        .map((id) => appleLyricsFiles.get(`${id}.ttml`.toLowerCase()))
+        .find((file): file is DavEntry => !!file) ?? null;
+      const currentLyricsFile = adjacentLyrics ?? cachedAppleLyrics;
+      const currentLyricsPath = currentLyricsFile?.path ?? null;
+      const currentLyricsSignature = entrySignature(currentLyricsFile);
+      const audioUnchanged = !!cached && !cached.metadataError &&
+        hasStableSignature(file) && hasStableSignature(cover) &&
         trackSignature(cached) === entrySignature(file) &&
-        cached.lrcPath === lrcPath && cached.lrcSignature === lrcSignature &&
         cached.coverPath === (cover?.path ?? null) && cached.coverSignature === coverSignature;
+      const cachedGuess = cached ? guessFromFilename(cached.path) : null;
+      const cachedNeedsArtistRecovery = !!cached && !cached.appleMusic &&
+        !(cached.metadata.artist || cached.metadata.albumArtist || cachedGuess?.artist);
+      const appleFresh = !apple || !cachedNeedsArtistRecovery &&
+        !!cached?.appleCheckedAt && Date.now() - cached.appleCheckedAt < refreshInterval();
+      const cachedLyricsReusable = !!cached?.lyrics && cached.lrcPath === currentLyricsPath;
+      const lyricsReady = !apple?.hasMediaUserToken || !!cached?.lyrics || !!currentLyricsFile ||
+        !cached?.appleMusic?.hasTimeSyncedLyrics || !!cached.appleLyricsCheckedAt;
+      const unchanged = audioUnchanged && appleFresh && lyricsReady &&
+        (cachedLyricsReusable || (
+          hasStableSignature(currentLyricsFile) && cached!.lrcPath === currentLyricsPath &&
+          cached!.lrcSignature === currentLyricsSignature
+        ));
       if (unchanged) {
         completed++;
         reused++;
@@ -348,18 +529,34 @@ async function prepare(): Promise<SyncManifest> {
         return { ...cached, scanId };
       }
 
-      const folderArtworkId = await getFolderArtwork();
+      const folderArtworkId = audioUnchanged ? cached!.folderArtworkId : await getFolderArtwork();
       let metadata: AudioMetadata = {};
       let metadataError: string | null = null;
-      try {
-        metadata = await withReadRetry(`解析 ${file.path}`, () => extractMetadata(dav, file.path, file.size));
-      } catch (error) {
-        metadataError = error instanceof Error ? error.message : String(error);
+      let embeddedLyrics: string | undefined;
+      if (audioUnchanged) {
+        metadata = { ...cached!.metadata };
+        metadataError = cached!.metadataError;
+        if (cached!.lyrics?.source === 'embedded') embeddedLyrics = cached!.lyrics.content;
+      } else {
+        try {
+          metadata = await withReadRetry(`解析 ${file.path}`, () => extractMetadata(dav, file.path, file.size));
+        } catch (error) {
+          metadataError = error instanceof Error ? error.message : String(error);
+          // Never replace known-good metadata with empty fields after an
+          // upstream read failure. metadataError forces another attempt next run.
+          if (cached) {
+            metadata = { ...cached.metadata };
+            if (cached.lyrics?.source === 'embedded') embeddedLyrics = cached.lyrics.content;
+          }
+        }
       }
 
-      const { picture, lyrics: embeddedLyrics, ...preparedMetadata } = metadata;
-      let trackArtworkId: string | null = null;
-      if (picture?.data.length) {
+      const { picture, lyrics: parsedEmbeddedLyrics, ...preparedMetadata } = metadata;
+      embeddedLyrics ??= parsedEmbeddedLyrics;
+      let trackArtworkId: string | null = audioUnchanged || metadataError
+        ? cached?.trackArtworkId ?? null
+        : null;
+      if (!audioUnchanged && picture?.data.length) {
         try {
           trackArtworkId = await addArtwork(artworks, artworkJobs, picture.data);
         } catch (error) {
@@ -367,17 +564,140 @@ async function prepare(): Promise<SyncManifest> {
         }
       }
 
-      let lyrics: PreparedTrack['lyrics'] = null;
-      if (lrcPath) {
+      let appleMusic = cached?.appleMusic ?? null;
+      let appleCheckedAt = cached?.appleCheckedAt ?? null;
+      let appleLyricsCheckedAt = cached?.appleLyricsCheckedAt ?? null;
+      if (apple && (!appleFresh || !audioUnchanged)) {
+        const guess = guessFromFilename(file.path);
+        const sourceTitle = preparedMetadata.title || guess.title;
+        const sourceArtist = preparedMetadata.artist || guess.artist || preparedMetadata.albumArtist || '';
         try {
-          const content = (await withReadRetry(`讀取歌詞 ${lrcPath}`, () => dav.readText(lrcPath))).trim();
-          if (content) lyrics = { content, source: 'lrc' };
+          const matchInput = {
+            title: sourceTitle,
+            artist: sourceArtist,
+            album: preparedMetadata.album,
+            duration: preparedMetadata.duration,
+            isrc: preparedMetadata.isrc,
+          };
+          let match = await apple.matchTrack(matchInput);
+          if (!match && !sourceArtist && apple.storefront !== apple.lyricsStorefront) {
+            match = await apple.matchLyricsTrack(matchInput);
+          }
+          let artistArtworkId: string | null = null;
+          if (match?.artistArtwork) artistArtworkId = await addAppleArtwork(artworks, appleArtworkJobs, match.artistArtwork);
+          if (!trackArtworkId && match?.songArtwork) {
+            trackArtworkId = await addAppleArtwork(artworks, appleArtworkJobs, match.songArtwork);
+          }
+          if (match) {
+            appleMusic = {
+              songId: match.songId,
+              isrc: match.isrc,
+              title: match.title,
+              artistName: match.artistName,
+              artistId: match.artistId,
+              audioLocale: match.audioLocale,
+              displayTitle: match.displayTitle,
+              displayArtist: match.displayArtist,
+              confidence: match.confidence,
+              hasLyrics: match.hasLyrics,
+              hasTimeSyncedLyrics: match.hasTimeSyncedLyrics,
+              artistArtworkId,
+              lyricsSongId: null,
+              lyricsAudioLocale: null,
+              lyricsHasTimeSyncedLyrics: null,
+            };
+          } else {
+            appleMusic = null;
+          }
+          appleCheckedAt = Date.now();
+          if (cached?.appleMusic?.songId !== appleMusic?.songId) appleLyricsCheckedAt = null;
         } catch (error) {
-          console.warn(`  略過歌詞 ${lrcPath}：${error instanceof Error ? error.message : String(error)}`);
+          warnOnce('apple-match', `  Apple Music 配對暫停，本次保留既有結果：${error instanceof Error ? error.message : String(error)}`);
         }
       }
-      if (!lyrics && embeddedLyrics) lyrics = { content: embeddedLyrics, source: 'embedded' };
 
+      let lyricsFile = adjacentLyrics;
+      if (!lyricsFile && appleMusic) {
+        const lyricsIds = [appleMusic.lyricsSongId, appleMusic.songId].filter((id): id is string => !!id);
+        lyricsFile = lyricsIds
+          .map((id) => appleLyricsFiles.get(`${id}.ttml`.toLowerCase()))
+          .find((file): file is DavEntry => !!file) ?? null;
+      }
+      let lrcPath = lyricsFile?.path ?? null;
+      let lrcSignature = entrySignature(lyricsFile);
+      let lyrics: PreparedTrack['lyrics'] = null;
+      const sourceTitle = preparedMetadata.title || guessFromFilename(file.path).title;
+      const isInstrumental = INSTRUMENTAL_TITLE.test(sourceTitle);
+      if (lyricsFile) {
+        try {
+          const content = (await withReadRetry(`讀取歌詞 ${lyricsFile.path}`, () => dav.readText(lyricsFile.path))).trim();
+          const format = lyricsFormat(lyricsFile.path, content);
+          if (content) lyrics = {
+            content,
+            format,
+            source: format === 'ttml' ? (lyricsFile.path.startsWith(`${appleLyricsRoot}/`) ? 'apple-music' : 'ttml') : 'lrc',
+          };
+        } catch (error) {
+          console.warn(`  略過歌詞 ${lyricsFile.path}：${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      if (!lyrics && cached?.lyrics) {
+        lyrics = cached.lyrics;
+        lrcPath = cached.lrcPath;
+        lrcSignature = cached.lrcSignature;
+      }
+      if (!lyrics && !isInstrumental && apple?.hasMediaUserToken && appleMusic?.songId && appleMusic.hasLyrics) {
+        try {
+          let lyricsSongId = appleMusic.lyricsSongId ?? appleMusic.songId;
+          let lyricsAudioLocale = appleMusic.lyricsAudioLocale ?? appleMusic.audioLocale;
+          let lyricsHasTimeSyncedLyrics = appleMusic.lyricsHasTimeSyncedLyrics ?? appleMusic.hasTimeSyncedLyrics;
+
+          // Catalog IDs are not guaranteed to be identical between Japan and
+          // the subscriber storefront. Resolve the account-region ID before
+          // fetching so an existing TTML can be reused without another Apple
+          // request or another PikPak file.
+          if (apple.storefront !== apple.lyricsStorefront && !appleMusic.lyricsSongId) {
+            const guess = guessFromFilename(file.path);
+            const lyricsMatch = await apple.matchLyricsTrack({
+              title: preparedMetadata.title || guess.title,
+              artist: preparedMetadata.artist || guess.artist || preparedMetadata.albumArtist || appleMusic.artistName,
+              album: preparedMetadata.album,
+              duration: preparedMetadata.duration,
+              isrc: preparedMetadata.isrc || appleMusic.isrc || undefined,
+            });
+            if (lyricsMatch) {
+              lyricsSongId = lyricsMatch.songId;
+              lyricsAudioLocale = lyricsMatch.audioLocale;
+              lyricsHasTimeSyncedLyrics = lyricsMatch.hasTimeSyncedLyrics;
+              appleMusic.lyricsSongId = lyricsSongId;
+              appleMusic.lyricsAudioLocale = lyricsAudioLocale;
+              appleMusic.lyricsHasTimeSyncedLyrics = lyricsHasTimeSyncedLyrics;
+            }
+          }
+
+          const resolved = await resolveAppleLyrics(
+            lyricsSongId,
+            lyricsAudioLocale,
+            lyricsHasTimeSyncedLyrics,
+          );
+          appleLyricsCheckedAt = Date.now();
+          if (resolved) {
+            appleMusic.lyricsSongId = lyricsSongId;
+            appleMusic.lyricsAudioLocale = lyricsAudioLocale;
+            appleMusic.lyricsHasTimeSyncedLyrics = lyricsHasTimeSyncedLyrics;
+            lyrics = { content: resolved.content, source: 'apple-music', format: 'ttml' };
+            lrcPath = resolved.path;
+            lrcSignature = resolved.signature;
+          }
+        } catch (error) {
+          console.warn(`  Apple Music 歌詞略過 ${file.name}：${error instanceof Error ? error.message : String(error)}`);
+        }
+      } else if (apple?.hasMediaUserToken && appleMusic && (isInstrumental || !appleMusic.hasTimeSyncedLyrics)) {
+        appleLyricsCheckedAt = Date.now();
+      }
+      if (!lyrics && embeddedLyrics) {
+        lyrics = { content: embeddedLyrics, source: 'embedded', format: lyricsFormat('', embeddedLyrics) };
+      }
       const track: PreparedTrack = {
         scanId,
         path: file.path,
@@ -391,6 +711,9 @@ async function prepare(): Promise<SyncManifest> {
         metadata: preparedMetadata,
         metadataError,
         lyrics,
+        appleMusic,
+        appleCheckedAt,
+        appleLyricsCheckedAt,
         trackArtworkId,
         folderArtworkId,
       };
@@ -400,11 +723,15 @@ async function prepare(): Promise<SyncManifest> {
   });
   tracks.push(...preparedTracks);
 
-  const referencedArtwork = new Set(tracks.flatMap((track) => [track.trackArtworkId, track.folderArtworkId]).filter((id): id is string => !!id));
+  const referencedArtwork = new Set(tracks.flatMap((track) => [
+    track.trackArtworkId,
+    track.folderArtworkId,
+    track.appleMusic?.artistArtworkId,
+  ]).filter((id): id is string => !!id));
   console.log(`本機解析完成：${audioCount} 首；沿用 ${reused} 首，重新解析 ${audioCount - reused} 首`);
 
   return {
-    version: 3,
+    version: 5,
     createdAt: new Date().toISOString(),
     root,
     scanId,
@@ -473,6 +800,16 @@ async function upload(manifest: SyncManifest) {
   if (!manifest.tracks.length) {
     throw new Error('本機掃描沒有找到任何音訊；為避免誤刪線上音樂庫，已停止上傳');
   }
+  const failedTracks = manifest.tracks.filter((track) => !!track.metadataError);
+  if (failedTracks.length) {
+    const examples = failedTracks
+      .slice(0, 3)
+      .map((track) => track.path.slice(track.path.lastIndexOf('/') + 1))
+      .join('、');
+    throw new Error(
+      `仍有 ${failedTracks.length} 首音訊解析失敗（例如：${examples}），為避免覆蓋既有歌手與封面，已停止上傳；請重新執行 --prepare-only`,
+    );
+  }
   const baseUrl = (process.env.SYNC_TARGET_URL?.trim() || 'https://music.ascooo.com').replace(/\/$/, '');
   const target = new URL(baseUrl);
   if (target.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(target.hostname)) {
@@ -518,7 +855,7 @@ async function main() {
   let manifest: SyncManifest;
   if (uploadOnly) {
     const cached = JSON.parse(await readFile(cacheFile, 'utf8')) as SyncManifest & { version: number };
-    if (cached.version !== 3) throw new Error('本機同步快取版本不支援，請重新執行準備');
+    if (cached.version !== 5) throw new Error('本機同步快取版本不支援，請重新執行準備');
     manifest = cached;
     console.log(`載入本機快取：${manifest.tracks.length} 首歌曲`);
   } else {

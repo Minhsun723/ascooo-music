@@ -117,8 +117,23 @@ npm run deploy
 SYNC_TARGET_URL=https://music.ascooo.com
 SYNC_ADMIN_USERNAME=管理員帳號
 SYNC_ADMIN_PASSWORD=管理員密碼
-SYNC_PARSE_CONCURRENCY=4
+SYNC_PARSE_CONCURRENCY=1
+
+# Apple Music 只在本機同步階段使用
+APPLE_MUSIC_ENABLED=true
+APPLE_MUSIC_USER_TOKEN=你的-media-user-token
+APPLE_MUSIC_STOREFRONT=jp
+APPLE_MUSIC_LYRICS_STOREFRONT=tw
+APPLE_MUSIC_LANGUAGE=ja-JP
+APPLE_MUSIC_LYRICS_PATH=/ascooo-music/lyrics
+APPLE_MUSIC_REFRESH_DAYS=90
 ```
+
+`APPLE_MUSIC_USER_TOKEN` 必須來自你本人已登入且具有有效訂閱的 Apple Music 網頁工作階段。在瀏覽器開發者工具的 Network 面板播放一首歌或開啟歌詞，從 `amp-api.music.apple.com` 請求中複製 `media-user-token` 標頭值。它等同敏感的帳號工作階段憑證，只能放在已被 Git 忽略的 `.dev.vars`，不要放進 Worker secrets、D1、PikPak 或提交到 Git。公開的開發者 Bearer Token 預設會由同步器自動從 Apple Music 網頁取得；只有自動取得失效時才需要設定 `APPLE_MUSIC_DEVELOPER_TOKEN`。
+
+歌詞使用的是 Apple Music 網頁播放器的未公開端點，沒有穩定性保證；同步器因此把它限制在本機、允許失敗降級，並以 PikPak 中既有的 TTML 作為後續同步來源。請只對自己的訂閱與私人音樂庫使用，公開提供歌詞前仍需自行確認授權。
+
+同步器以日本 storefront 搜尋歌曲，並用歌曲時長、ISRC（音檔有提供時）、歌名、藝人與版本標記評分。只有 Apple 將歌曲標記為日文，且原始欄位是拉丁字母、日文結果包含日文文字時，才會套用日文顯示名稱；英文歌曲與原本已是中文／日文的名稱會保留。`APPLE_MUSIC_LYRICS_STOREFRONT` 則要設成 Apple Music 訂閱帳號的區域（台灣帳號使用 `tw`），與用來日文化名稱的 `jp` 分開。原始音檔標籤不會被修改。
 
 部署含匯入 API 的最新版 Worker 後，在專案根目錄執行：
 
@@ -129,10 +144,12 @@ npm run sync:local
 這個指令會依序：
 
 1. 在本機並行掃描 PikPak WebDAV，解析新增或變動的音訊標籤、歌詞與封面。
-2. 使用 Sharp 將每張封面壓成最長邊 512 px（品質 80）與 2000 px（品質 84）的 WebP；不放大較小的原圖，也不修改 PikPak 原始音訊。
-3. 將完整結果寫到被 Git 忽略的 `.sync-cache/library.json`。
-4. 登入部署站台，將兩種封面上傳到 R2、逐首寫入 D1 中繼資料。
-5. 所有歌曲上傳完成後，才清理由 PikPak 移除的遠端索引。
+2. 以 Apple Music 日本目錄配對歌曲，補上日文顯示名稱與藝人照片；配對結果只快取在本機及必要的 D1 欄位。
+3. 使用你的訂閱 Token 取得 TTML。原始檔會以訂閱 storefront 的 Apple Music song ID 命名並寫入 PikPak `/ascooo-music/lyrics`，例如 `1446781787.ttml`；已存在的 TTML 會直接重用，同一輪有多首歌曲配到相同 ID 時也只會讀取或下載一次。
+4. 專輯封面由 Sharp 產生 512 px 與 2000 px WebP；Apple CDN 已提供 WebP 的藝人照片則直接保存，只有 CDN 未回傳 WebP 時才轉檔。
+5. 將完整結果寫到被 Git 忽略的 `.sync-cache/library.json`。
+6. 登入部署站台，將圖片上傳到 R2、逐首寫入 D1 中繼資料及歌詞副本。
+7. 所有歌曲上傳完成後，才清理由 PikPak 移除的遠端索引。
 
 本機準備或上傳中斷都不會先清空線上音樂庫；重跑上傳具有冪等性。也可以分兩段執行：
 
@@ -142,7 +159,9 @@ npm run sync:local -- --upload-only
 ```
 
 上傳遇到 `429` 或 `5xx` 會自動退避重試最多五次。同步會保留既有歌曲 ID、顯示／隱藏狀態、收藏、播放紀錄及播放清單。
-解析預設同時處理 4 首，`SYNC_PARSE_CONCURRENCY` 可設為 `1` 到 `8`；網路穩定時可提高到 `6` 或 `8`，若 PikPak 開始回應 `429`／`503` 則調低。第二次以後會依音訊、LRC 與資料夾封面的簽章沿用未變動歌曲，不再重讀其音訊內容。
+解析預設一次處理 1 首，避免 PikPak 在密集 Range 請求時暫時回傳 404。`SYNC_PARSE_CONCURRENCY` 可設為 `1` 到 `8`，但使用 PikPak 時建議維持 `1`；若提高後出現 `404`、`429` 或 `503`，請立即降回 `1`。第二次以後會依音訊、LRC／TTML 與資料夾封面的簽章沿用未變動歌曲，不再重讀其音訊內容。Apple 配對預設 90 天才重新確認一次；修改 `APPLE_MUSIC_REFRESH_DAYS` 可調整週期。
+
+網站不會在播放期間呼叫 Apple Music。D1 仍維持每首歌曲一筆中繼資料與一筆可選歌詞，藝人照片本體放在 R2，完整 Apple 配對結果保留在本機同步快取，因此不會為每次播放增加 D1 寫入。TTML 在前端解析，可顯示逐行及逐字／音節高亮；同名的本地 `.ttml` 仍優先於自動下載結果，接著才是 `.lrc` 與音檔內嵌歌詞。
 
 封面網址帶有轉檔版本，Worker 會先讀 Cloudflare Edge Cache，再讀 R2；清單、播放列與網格共用 512 px，專輯主視覺與全螢幕播放使用 2000 px。內容雜湊相同的封面只會保存一組。從舊版同步快取第一次升級時會重新解析一次，之後恢復增量同步。
 

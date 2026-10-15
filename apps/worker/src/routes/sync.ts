@@ -237,9 +237,77 @@ interface ImportedTrack {
   coverSignature: string | null;
   metadata: Omit<AudioMetadata, 'picture' | 'lyrics'>;
   metadataError: string | null;
-  lyrics: { content: string; source: 'lrc' | 'embedded' } | null;
+  lyrics: {
+    content: string;
+    source: 'lrc' | 'ttml' | 'embedded' | 'apple-music';
+    format: 'lrc' | 'ttml' | 'plain';
+  } | null;
+  appleMusic: {
+    songId: string;
+    isrc: string | null;
+    artistName: string;
+    displayTitle: string | null;
+    displayArtist: string | null;
+    artistId: string | null;
+    artistArtworkId: string | null;
+    confidence: number;
+  } | null;
   trackArtworkId: string | null;
   folderArtworkId: string | null;
+}
+
+interface ArtistEnrichment {
+  appleMusicId: string;
+  appleMusicName: string;
+  displayName: string | null;
+  artworkId: string | null;
+}
+
+/**
+ * Apple artist IDs identify the first/primary artist on a song, so the ID by
+ * itself is not unique for collaborations. Pair it with Apple's full artist
+ * credit: aliases such as "Riria." / "りりあ。" then converge, while
+ * "9Lana" / "9Lana & AKUGETSU" remain separate artist pages.
+ */
+async function upsertArtist(
+  db: D1Database,
+  name: string,
+  enrichment: ArtistEnrichment | null = null,
+): Promise<{ id: number }> {
+  if (enrichment) {
+    const existing = await db.prepare(
+      `UPDATE artists
+       SET display_name = COALESCE(?3, display_name),
+         artwork_id = COALESCE(?4, artwork_id)
+       WHERE apple_music_id = ?1 AND apple_music_name = ?2 COLLATE NOCASE
+       RETURNING id`,
+    ).bind(
+      enrichment.appleMusicId,
+      enrichment.appleMusicName,
+      enrichment.displayName,
+      enrichment.artworkId,
+    ).first<{ id: number }>();
+    if (existing) return existing;
+  }
+
+  const row = await db.prepare(
+    `INSERT INTO artists (name, display_name, apple_music_id, apple_music_name, artwork_id)
+     VALUES (?1, ?2, ?3, ?4, ?5)
+     ON CONFLICT DO UPDATE SET
+       display_name = COALESCE(excluded.display_name, artists.display_name),
+       apple_music_id = COALESCE(artists.apple_music_id, excluded.apple_music_id),
+       apple_music_name = COALESCE(artists.apple_music_name, excluded.apple_music_name),
+       artwork_id = COALESCE(excluded.artwork_id, artists.artwork_id)
+     RETURNING id`,
+  ).bind(
+    name,
+    enrichment?.displayName ?? null,
+    enrichment?.appleMusicId ?? null,
+    enrichment?.appleMusicName ?? null,
+    enrichment?.artworkId ?? null,
+  ).first<{ id: number }>();
+  if (!row) throw new Error(`無法建立藝人：${name}`);
+  return row;
 }
 
 function decodeBase64(value: string): Uint8Array {
@@ -351,23 +419,49 @@ sync.post('/import/track', async (c) => {
   if (!item.scanId) throw new HTTPException(400, { message: '缺少 scanId' });
   const path = assertInRoot(c.env, item.path);
   if (!Number.isFinite(item.size) || item.size < 0) throw new HTTPException(400, { message: '音訊大小格式錯誤' });
+  if (item.lyrics) {
+    if (!['lrc', 'ttml', 'plain'].includes(item.lyrics.format) ||
+        !['lrc', 'ttml', 'embedded', 'apple-music'].includes(item.lyrics.source)) {
+      throw new HTTPException(400, { message: '歌詞格式錯誤' });
+    }
+    if (!item.lyrics.content || new TextEncoder().encode(item.lyrics.content).length > 1_500_000) {
+      throw new HTTPException(400, { message: '歌詞內容為空或超過 1.5 MB' });
+    }
+  }
+  if (item.appleMusic) {
+    if (!/^\d+$/.test(item.appleMusic.songId) ||
+        item.appleMusic.artistId !== null && !/^\d+$/.test(item.appleMusic.artistId) ||
+        item.appleMusic.artistArtworkId !== null && !/^[a-f0-9]{40}$/.test(item.appleMusic.artistArtworkId) ||
+        !Number.isInteger(item.appleMusic.confidence) || item.appleMusic.confidence < 0 || item.appleMusic.confidence > 100) {
+      throw new HTTPException(400, { message: 'Apple Music 配對資料格式錯誤' });
+    }
+  }
 
   const meta = item.metadata ?? {};
   const guess = guessFromFilename(path);
+  const apple = item.appleMusic;
   const folder = parentDir(path);
   const folderName = folder === normalizePath(c.env.MUSIC_ROOT || '/') ? '' : folder.slice(folder.lastIndexOf('/') + 1);
   const title = meta.title || guess.title;
-  const artist = meta.artist || guess.artist || meta.albumArtist || '未知歌手';
+  const artist = meta.artist || guess.artist || meta.albumArtist || apple?.artistName?.trim() || '未知歌手';
   const albumArtist = meta.albumArtist || artist;
   const albumTitle = meta.album || folderName || '未知專輯';
   const db = c.env.DB;
+  const displayTitle = apple?.displayTitle?.trim().slice(0, 500) || null;
+  const displayArtist = apple?.displayArtist?.trim().slice(0, 500) || null;
+  const artistEnrichment = apple?.artistId && apple.artistName.trim()
+    ? {
+        appleMusicId: apple.artistId,
+        appleMusicName: apple.artistName.trim().slice(0, 500),
+        displayName: displayArtist,
+        artworkId: apple.artistArtworkId,
+      }
+    : null;
 
-  const upsertArtist = (name: string) =>
-    db.prepare('INSERT INTO artists (name) VALUES (?) ON CONFLICT(name) DO UPDATE SET name = artists.name RETURNING id')
-      .bind(name)
-      .first<{ id: number }>();
-  const artistRow = await upsertArtist(artist);
-  const albumArtistRow = albumArtist.toLowerCase() === artist.toLowerCase() ? artistRow : await upsertArtist(albumArtist);
+  const artistRow = await upsertArtist(db, artist, artistEnrichment);
+  const albumArtistRow = albumArtist.toLowerCase() === artist.toLowerCase()
+    ? artistRow
+    : await upsertArtist(db, albumArtist);
   const album = await db.prepare(
     `INSERT INTO albums (title, artist_id, year, created_at) VALUES (?, ?, ?, ?)
      ON CONFLICT(title, artist_id) DO UPDATE SET year = COALESCE(albums.year, excluded.year)
@@ -380,9 +474,10 @@ sync.post('/import/track', async (c) => {
        path, lrc_path, cover_path, cover_signature, size, etag, mtime, scan_id, status, error,
        title, artist, artist_id, album_id, track_no, disc_no, year, genre, record_label,
        duration, codec, bitrate, sample_rate, bit_depth, channels, artwork_id, has_lyrics,
+       display_title, display_artist, apple_music_id, apple_isrc,
        metadata_version, added_at, updated_at
      ) VALUES (
-       ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?
+       ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?
      )
      ON CONFLICT(path) DO UPDATE SET
        lrc_path = excluded.lrc_path, cover_path = excluded.cover_path,
@@ -394,6 +489,10 @@ sync.post('/import/track', async (c) => {
        duration = excluded.duration, codec = excluded.codec, bitrate = excluded.bitrate,
        sample_rate = excluded.sample_rate, bit_depth = excluded.bit_depth, channels = excluded.channels,
        artwork_id = excluded.artwork_id, has_lyrics = excluded.has_lyrics,
+       display_title = COALESCE(excluded.display_title, tracks.display_title),
+       display_artist = COALESCE(excluded.display_artist, tracks.display_artist),
+       apple_music_id = COALESCE(excluded.apple_music_id, tracks.apple_music_id),
+       apple_isrc = COALESCE(excluded.apple_isrc, tracks.apple_isrc),
        metadata_version = 1, updated_at = excluded.updated_at
      RETURNING id`,
   ).bind(
@@ -423,16 +522,27 @@ sync.post('/import/track', async (c) => {
     meta.channels ?? null,
     item.trackArtworkId,
     item.lyrics ? 1 : 0,
+    displayTitle,
+    displayArtist,
+    apple?.songId ?? null,
+    apple?.isrc ?? null,
     now,
     now,
   ).first<{ id: number }>();
 
   const statements = item.lyrics
-    ? [db.prepare('INSERT OR REPLACE INTO lyrics (track_id, content, synced, source) VALUES (?, ?, ?, ?)').bind(
+    ? [db.prepare(
+        `INSERT INTO lyrics (track_id, content, synced, source, format) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(track_id) DO UPDATE SET content = excluded.content, synced = excluded.synced,
+           source = excluded.source, format = excluded.format
+         WHERE lyrics.content IS NOT excluded.content OR lyrics.synced IS NOT excluded.synced
+           OR lyrics.source IS NOT excluded.source OR lyrics.format IS NOT excluded.format`,
+      ).bind(
         row!.id,
         item.lyrics.content,
-        LRC_SYNCED.test(item.lyrics.content) ? 1 : 0,
+        item.lyrics.format !== 'plain' || LRC_SYNCED.test(item.lyrics.content) ? 1 : 0,
         item.lyrics.source,
+        item.lyrics.format,
       )]
     : [db.prepare('DELETE FROM lyrics WHERE track_id = ?').bind(row!.id)];
   const albumArtworkId = item.folderArtworkId ?? album!.artwork_id ?? item.trackArtworkId;
@@ -440,7 +550,7 @@ sync.post('/import/track', async (c) => {
     statements.push(db.prepare('UPDATE albums SET artwork_id = ? WHERE id = ?').bind(albumArtworkId, album!.id));
   }
   await db.batch(statements);
-  return c.json({ id: row!.id, title });
+  return c.json({ id: row!.id, title: displayTitle ?? title });
 });
 
 async function saveTrack(
@@ -460,13 +570,10 @@ async function saveTrack(
   const albumArtist = meta.albumArtist || artist;
   const albumTitle = meta.album || folderName || '未知專輯';
 
-  const upsertArtist = (name: string) =>
-    db.prepare('INSERT INTO artists (name) VALUES (?) ON CONFLICT(name) DO UPDATE SET name = artists.name RETURNING id')
-      .bind(name)
-      .first<{ id: number }>();
-
-  const artistRow = await upsertArtist(artist);
-  const albumArtistRow = albumArtist.toLowerCase() === artist.toLowerCase() ? artistRow : await upsertArtist(albumArtist);
+  const artistRow = await upsertArtist(db, artist);
+  const albumArtistRow = albumArtist.toLowerCase() === artist.toLowerCase()
+    ? artistRow
+    : await upsertArtist(db, albumArtist);
 
   const album = await db
     .prepare(
@@ -544,11 +651,12 @@ async function saveTrack(
       t.id,
     ),
     lyrics
-      ? db.prepare('INSERT OR REPLACE INTO lyrics (track_id, content, synced, source) VALUES (?, ?, ?, ?)').bind(
+      ? db.prepare('INSERT OR REPLACE INTO lyrics (track_id, content, synced, source, format) VALUES (?, ?, ?, ?, ?)').bind(
           t.id,
           lyrics.content,
           LRC_SYNCED.test(lyrics.content) ? 1 : 0,
           lyrics.source,
+          LRC_SYNCED.test(lyrics.content) ? 'lrc' : 'plain',
         )
       : db.prepare('DELETE FROM lyrics WHERE track_id = ?').bind(t.id),
   ];
