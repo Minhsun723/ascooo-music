@@ -319,12 +319,18 @@ if (audio) {
 
 function updateMediaSession(t: Track) {
   if (!('mediaSession' in navigator)) return;
-  const art = artUrl(t.artworkId);
+  const artwork = t.artworkId
+    ? ([2000, 512] as const).map((size) => ({
+        src: new URL(artUrl(t.artworkId, size)!, location.origin).toString(),
+        sizes: `${size}x${size}`,
+        type: 'image/webp',
+      }))
+    : [];
   navigator.mediaSession.metadata = new MediaMetadata({
     title: t.title,
     artist: t.artist,
     album: t.album,
-    artwork: art ? [{ src: new URL(art, location.origin).toString(), sizes: '512x512' }] : [],
+    artwork,
   });
 }
 

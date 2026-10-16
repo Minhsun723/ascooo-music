@@ -130,11 +130,25 @@ async function previousManifest(root: string): Promise<SyncManifest | null> {
   }
 }
 
+// On Windows, Defender, the search indexer or editor file watchers can hold the
+// destination open for a moment, making an atomic replace fail with EPERM.
+async function replaceFile(source: string, destination: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await rename(source, destination);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (!['EPERM', 'EACCES', 'EBUSY'].includes(code ?? '') || attempt === 9) throw error;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 50 * 2 ** Math.min(attempt, 5)));
+    }
+  }
+}
+
 async function persistManifest(manifest: SyncManifest): Promise<void> {
   await mkdir(dirname(cacheFile), { recursive: true });
   const temporaryCache = `${cacheFile}.tmp`;
   await writeFile(temporaryCache, JSON.stringify(manifest), { mode: 0o600 });
-  await rename(temporaryCache, cacheFile);
+  await replaceFile(temporaryCache, cacheFile);
   await chmod(cacheFile, 0o600);
 }
 
@@ -152,7 +166,7 @@ async function persistUploadState(state: UploadState): Promise<void> {
   await mkdir(dirname(uploadStateFile), { recursive: true });
   const temporaryState = `${uploadStateFile}.tmp`;
   await writeFile(temporaryState, JSON.stringify(state), { mode: 0o600 });
-  await rename(temporaryState, uploadStateFile);
+  await replaceFile(temporaryState, uploadStateFile);
 }
 
 async function clearUploadState(): Promise<void> {
