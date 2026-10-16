@@ -190,7 +190,7 @@ h1, h2, h3 { font-family: var(--font-display); letter-spacing: -.035em; }
 .media-card__meta { margin-top: 4px; overflow: hidden; color: var(--muted); font-size: .73rem; text-overflow: ellipsis; white-space: nowrap; }
 .media-card__badge { position: absolute; top: 9px; left: 9px; padding: 5px 7px; border: 1px solid rgba(255,255,255,.2); border-radius: 5px; color: #fff; background: rgba(0,0,0,.54); backdrop-filter: blur(8px); font: 500 .48rem/1 var(--font-mono); letter-spacing: .08em; }
 .media-card__badge--dolby { display: grid; place-items: center; min-width: 18px; min-height: 14px; padding: 0; border: 0; background: transparent; box-shadow: none; backdrop-filter: none; }
-.media-card--artist { text-align: center; align-items: center; }
+.media-card--artist { text-align: center; }
 .media-card--artist .artwork { width: 100%; }
 
 /* Track lists */
