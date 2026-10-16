@@ -319,12 +319,11 @@ if (audio) {
 
 function updateMediaSession(t: Track) {
   if (!('mediaSession' in navigator)) return;
-  const artwork = t.artworkId
-    ? ([2000, 512] as const).map((size) => ({
-        src: new URL(artUrl(t.artworkId, size)!, location.origin).toString(),
-        sizes: `${size}x${size}`,
-        type: 'image/webp',
-      }))
+  // Offer only the 2000px variant: WebKit scores candidates against a 512px ideal
+  // and would otherwise pick the 512 version, which looks blurry on the lock screen.
+  const art = artUrl(t.artworkId, 2000);
+  const artwork = art
+    ? [{ src: new URL(art, location.origin).toString(), sizes: '2000x2000', type: 'image/webp' }]
     : [];
   navigator.mediaSession.metadata = new MediaMetadata({
     title: t.title,
