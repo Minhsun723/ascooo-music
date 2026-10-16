@@ -283,13 +283,26 @@ export class AppleMusicClient {
     const best = ranked[0];
     if (!best || best.score < 45) return null;
 
-    const attrs = best.song.attributes ?? {};
-    const artist = best.song.relationships?.artists?.data?.[0];
+    let song = best.song;
+    const japanese = (song.attributes?.audioLocale ?? '').toLowerCase().startsWith('ja');
+    // A ja-JP catalog request transliterates Western credits into katakana
+    // ("Camila Cabello" -> "カミラ・カベロ"). Only Japanese songs should carry
+    // localized names, so re-read everything else in English.
+    if (!japanese && language.toLowerCase().startsWith('ja')) {
+      const original = await this.get(`catalog/${storefront}/songs/${song.id}`, {
+        l: 'en-US',
+        include: 'artists',
+      }).catch(() => null);
+      const originalSong = (original?.data as unknown as AppleSong[] | undefined)?.[0];
+      if (originalSong?.attributes) song = originalSong;
+    }
+
+    const attrs = song.attributes ?? {};
+    const artist = song.relationships?.artists?.data?.[0];
     const title = attrs.name?.trim() || input.title;
     const artistName = attrs.artistName?.trim() || artist?.attributes?.name?.trim() || input.artist;
-    const japanese = (attrs.audioLocale ?? '').toLowerCase().startsWith('ja');
     return {
-      songId: best.song.id,
+      songId: song.id,
       isrc: attrs.isrc?.trim() || null,
       title,
       artistName,

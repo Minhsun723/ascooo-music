@@ -526,7 +526,11 @@ async function prepare(): Promise<SyncManifest> {
       const cachedGuess = cached ? guessFromFilename(cached.path) : null;
       const cachedNeedsArtistRecovery = !!cached && !cached.appleMusic &&
         !(cached.metadata.artist || cached.metadata.albumArtist || cachedGuess?.artist);
-      const appleFresh = !apple || !cachedNeedsArtistRecovery &&
+      // Earlier syncs stored ja-JP transliterations for non-Japanese songs.
+      const cachedAppleNameLocalized = !!cached?.appleMusic &&
+        !(cached.appleMusic.audioLocale ?? '').toLowerCase().startsWith('ja') &&
+        /\p{Script=Katakana}/u.test(`${cached.appleMusic.artistName}${cached.appleMusic.title}`);
+      const appleFresh = !apple || !cachedNeedsArtistRecovery && !cachedAppleNameLocalized &&
         !!cached?.appleCheckedAt && Date.now() - cached.appleCheckedAt < refreshInterval();
       const cachedLyricsReusable = !!cached?.lyrics && cached.lrcPath === currentLyricsPath;
       const lyricsReady = !apple?.hasMediaUserToken || !!cached?.lyrics || !!currentLyricsFile ||
