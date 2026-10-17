@@ -1,5 +1,5 @@
 .agents/
-.claude/skills
+.claude/
 .codex/
 .impeccable/
 node_modules/
