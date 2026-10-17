@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperti
 import { api, artUrl } from '../api/client';
 import type { Lyrics } from '../api/types';
 import { DEFAULT_PALETTE, extractPalette, type Palette } from '../lib/color';
-import { activeIndex, parseLrc, parseTtml, plainLines, type LyricWord } from '../lib/lrc';
+import { parseLrc, parseTtml, plainLines } from '../lib/lrc';
 import { formatTime, isDolbyAtmos, qualityLabel } from '../lib/format';
 import { useCurrentTrack, usePlayer } from '../store/player';
 import { Artwork } from './Artwork';
@@ -25,6 +25,7 @@ import {
   IconVolumeLow,
   IconWave,
 } from './Icons';
+import { SyncedLyrics } from './SyncedLyrics';
 import { LikeButton } from './TrackList';
 
 const MARQUEE_GAP = 32;
@@ -33,12 +34,6 @@ const PLAYER_DRAG_DISMISS_MAX = 96;
 const PLAYER_DRAG_DISMISS_RATIO = 0.12;
 const PLAYER_FLICK_VELOCITY = 0.2;
 const PLAYER_FLICK_MIN_DISTANCE = 24;
-
-function wordState(word: LyricWord, currentTime: number): 'future' | 'active' | 'past' {
-  if (currentTime + 0.06 < word.time) return 'future';
-  if (currentTime < word.end) return 'active';
-  return 'past';
-}
 
 function transformTranslateY(transform: string) {
   if (!transform || transform === 'none') return 0;
@@ -301,7 +296,6 @@ export function NowPlaying() {
   const [shouldRender, setShouldRender] = useState(open);
   const nowPlayingRef = useRef<HTMLElement | null>(null);
   const lyricsPanelRef = useRef<HTMLDivElement | null>(null);
-  const lineRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const settleAnimationRef = useRef<Animation | null>(null);
   const dragRef = useRef<{
     pointerId: number;
@@ -328,7 +322,6 @@ export function NowPlaying() {
   }, [shouldRender, track]);
 
   useLayoutEffect(() => {
-    lineRefs.current = [];
     lyricsPanelRef.current?.scrollTo({ top: 0, behavior: 'instant' });
   }, [track?.id]);
 
@@ -352,19 +345,6 @@ export function NowPlaying() {
     return lyrics.format === 'ttml' ? parseTtml(lyrics.content) : parseLrc(lyrics.content);
   }, [lyrics]);
   const plain = useMemo(() => lyrics && !lyrics.synced ? plainLines(lyrics.content) : [], [lyrics]);
-  const active = timed.length ? activeIndex(timed, currentTime) : -1;
-
-  useEffect(() => {
-    if (!open || queueOpen) return;
-    const panel = lyricsPanelRef.current;
-    const line = active >= 0 ? lineRefs.current[active] : null;
-    if (!panel || !line) return;
-
-    const panelRect = panel.getBoundingClientRect();
-    const lineRect = line.getBoundingClientRect();
-    const top = panel.scrollTop + lineRect.top - panelRect.top - (panel.clientHeight - lineRect.height) / 2;
-    panel.scrollTo({ top: Math.max(0, top) });
-  }, [active, open, queueOpen, timed]);
 
   useEffect(() => {
     if (!open) return;
@@ -494,7 +474,11 @@ export function NowPlaying() {
           <div className="now-playing__meta">
             <h1><OverflowMarquee key={track.id} text={track.title} /></h1>
             <div className="now-playing__artist-row">
-              <p><OverflowMarquee key={`${track.id}-album`} text={`${track.artist} · ${track.album}`} /></p>
+              <p>
+                <span className="now-playing__artist-name">{track.artist}</span>
+                <span className="now-playing__artist-sep" aria-hidden="true">·</span>
+                <span className="now-playing__album-name"><OverflowMarquee key={`${track.id}-album`} text={track.album} /></span>
+              </p>
               <div className="now-playing__meta-actions">
                 <button type="button" className={`icon-button ${!queueOpen ? 'is-active' : ''}`} aria-label="顯示歌詞" aria-pressed={!queueOpen} onClick={() => setQueueOpen(false)}><IconLyrics size={19} /></button>
                 <LikeButton track={track} className="now-playing__like" />
@@ -519,21 +503,7 @@ export function NowPlaying() {
             <div className="lyrics-panel__heading"><h2>歌詞</h2></div>
             {loading ? <div className="lyrics-skeleton"><span /><span /><span /><span /></div> : null}
             {!loading && !lyrics ? <div className="lyrics-empty"><IconLyrics size={28} /><p>這首歌還沒有歌詞</p></div> : null}
-            {timed.length ? <div className="lyrics-lines">{timed.map((line, index) => (
-              <button type="button" key={`${line.time}-${index}`} ref={(node) => { lineRefs.current[index] = node; }} className={index === active ? 'is-active' : ''} aria-label={line.text || '♪'} onClick={() => seek(line.time)}>
-                <span className={`lyrics-lines__text${line.words?.length ? ' lyrics-lines__text--timed' : ''}`} aria-hidden="true">
-                  {line.words?.length
-                    ? line.words.map((word, wordIndex) => (
-                        <span
-                          className="lyrics-word"
-                          data-state={index === active ? wordState(word, currentTime) : undefined}
-                          key={`${word.time}-${wordIndex}`}
-                        >{word.text}</span>
-                      ))
-                    : line.text || '♪'}
-                </span>
-              </button>
-            ))}</div> : null}
+            {timed.length ? <SyncedLyrics lines={timed} panelRef={lyricsPanelRef} onSeek={seek} /> : null}
             {plain.length ? <div className="lyrics-lines lyrics-lines--plain">{plain.map((line, index) => <p key={`${line}-${index}`}>{line || <br />}</p>)}</div> : null}
           </div>
         )}

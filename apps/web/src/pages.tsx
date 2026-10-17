@@ -4,6 +4,7 @@ import { api } from './api/client';
 import type { Album, Artist, HomeData, ManagedTrack, ManagedTrackStats, ManagedUser, Track } from './api/types';
 import { formatLongDuration } from './lib/format';
 import { usePlayer } from './store/player';
+import { LYRICS_FONTS, usePreferences } from './store/preferences';
 import { useSession } from './store/session';
 import { useLibrarySync } from './store/sync';
 import { toast } from './store/toast';
@@ -596,6 +597,8 @@ export function SettingsPage() {
   const runSync = useLibrarySync((s) => s.run);
   const [passwords, setPasswords] = useState({ current: '', next: '' });
   const [savingPassword, setSavingPassword] = useState(false);
+  const lyricsFont = usePreferences((s) => s.lyricsFont);
+  const setLyricsFont = usePreferences((s) => s.setLyricsFont);
 
   useEffect(() => { if (user.role === 'admin') void loadStatus().catch(() => {}); }, [loadStatus, user.role]);
 
@@ -630,6 +633,25 @@ export function SettingsPage() {
         {user.role === 'admin' ? <MusicVisibilityManager /> : null}
 
         {user.role === 'admin' ? <UserManagement currentUserId={user.id} /> : null}
+
+        <section className="settings-card">
+          <h2>歌詞設定</h2>
+          <div className="font-options" role="radiogroup" aria-label="歌詞字型">
+            {LYRICS_FONTS.map((font) => (
+              <button
+                type="button"
+                role="radio"
+                key={font.value}
+                aria-checked={lyricsFont === font.value}
+                className={`font-option font-option--${font.value}${lyricsFont === font.value ? ' is-active' : ''}`}
+                onClick={() => setLyricsFont(font.value)}
+              >
+                <span>{font.label}</span>
+                <strong>{font.sample}</strong>
+              </button>
+            ))}
+          </div>
+        </section>
 
         <section className="settings-card">
           <h2>變更密碼</h2>
