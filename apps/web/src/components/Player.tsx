@@ -5,6 +5,7 @@ import { DEFAULT_PALETTE, extractPalette, type Palette } from '../lib/color';
 import { parseLrc, parseTtml, plainLines } from '../lib/lrc';
 import { formatTime, isDolbyAtmos, qualityLabel } from '../lib/format';
 import { useCurrentTrack, usePlayer } from '../store/player';
+import { usePreferences } from '../store/preferences';
 import { Artwork } from './Artwork';
 import { DolbyLogo } from './DolbyLogo';
 import {
@@ -25,6 +26,7 @@ import {
   IconVolumeLow,
   IconWave,
 } from './Icons';
+import { ImmersiveLyrics } from './ImmersiveLyrics';
 import { SyncedLyrics } from './SyncedLyrics';
 import { LikeButton } from './TrackList';
 
@@ -290,6 +292,8 @@ export function NowPlaying() {
   const toggleMute = usePlayer((s) => s.toggleMute);
   const setQueueOpen = usePlayer((s) => s.setQueueOpen);
   const setOpen = usePlayer((s) => s.setNowPlaying);
+  const lyricsMode = usePreferences((s) => s.lyricsMode);
+  const immersiveStyle = usePreferences((s) => s.immersiveStyle);
   const [lyrics, setLyrics] = useState<Lyrics | null>(null);
   const [loading, setLoading] = useState(false);
   const [palette, setPalette] = useState<Palette>(DEFAULT_PALETTE);
@@ -440,6 +444,7 @@ export function NowPlaying() {
   if (!shouldRender || !track) return null;
   const style = { '--now-accent': palette.accent, '--now-deep': palette.deep, '--now-glow': palette.glow } as CSSProperties;
   const quality = qualityLabel(track);
+  const immersive = lyricsMode === 'immersive' && timed.length > 0;
 
   return (
     <section
@@ -499,11 +504,11 @@ export function NowPlaying() {
           </div>
         </div>
         {queueOpen ? <NowPlayingQueue /> : (
-          <div ref={lyricsPanelRef} className="lyrics-panel" data-lenis-prevent>
-            <div className="lyrics-panel__heading"><h2>歌詞</h2></div>
+          <div ref={lyricsPanelRef} className={`lyrics-panel${immersive ? ' lyrics-panel--immersive' : ''}`} data-lenis-prevent>
+            {immersive ? null : <div className="lyrics-panel__heading"><h2>歌詞</h2></div>}
             {loading ? <div className="lyrics-skeleton"><span /><span /><span /><span /></div> : null}
             {!loading && !lyrics ? <div className="lyrics-empty"><IconLyrics size={28} /><p>這首歌還沒有歌詞</p></div> : null}
-            {timed.length ? <SyncedLyrics lines={timed} panelRef={lyricsPanelRef} onSeek={seek} /> : null}
+            {immersive ? <ImmersiveLyrics key={immersiveStyle} lines={timed} styleName={immersiveStyle} onSeek={seek} /> : timed.length ? <SyncedLyrics lines={timed} panelRef={lyricsPanelRef} onSeek={seek} /> : null}
             {plain.length ? <div className="lyrics-lines lyrics-lines--plain">{plain.map((line, index) => <p key={`${line}-${index}`}>{line || <br />}</p>)}</div> : null}
           </div>
         )}

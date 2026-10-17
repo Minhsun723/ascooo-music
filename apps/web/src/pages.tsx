@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type DependencyList, type FormEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type DependencyList, type FormEvent } from 'react';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import { api } from './api/client';
 import type { Album, Artist, HomeData, ManagedTrack, ManagedTrackStats, ManagedUser, Track } from './api/types';
 import { formatLongDuration } from './lib/format';
 import { usePlayer } from './store/player';
-import { LYRICS_FONTS, usePreferences } from './store/preferences';
+import { IMMERSIVE_STYLES, LYRICS_FONTS, LYRICS_MODES, usePreferences, type LyricsMode } from './store/preferences';
 import { useSession } from './store/session';
 import { useLibrarySync } from './store/sync';
 import { toast } from './store/toast';
@@ -13,7 +13,7 @@ import { DolbyLogo } from './components/DolbyLogo';
 import { AlbumGrid, ArtistGrid, PlaylistGrid } from './components/MediaGrid';
 import { RubberSegment } from './components/RubberSegment';
 import { TrackList } from './components/TrackList';
-import { IconChevronLeft, IconDisc, IconEye, IconEyeOff, IconHeart, IconLogout, IconMusic, IconPlay, IconPlus, IconSearch, IconShuffle, IconSync, IconTrash, IconUser, IconWave } from './components/Icons';
+import { IconChevronLeft, IconDisc, IconEye, IconEyeOff, IconFont, IconHeart, IconLogout, IconMusic, IconPlay, IconPlus, IconSearch, IconShuffle, IconSparkle, IconSync, IconTrash, IconUser, IconWave } from './components/Icons';
 
 interface RequestState<T> {
   data: T | null;
@@ -587,6 +587,13 @@ function UserManagement({ currentUserId }: { currentUserId: number }) {
   );
 }
 
+type LyricsTab = 'font' | 'effect';
+
+const LYRICS_TABS: { value: LyricsTab; label: string; icon: typeof IconFont }[] = [
+  { value: 'font', label: '字型', icon: IconFont },
+  { value: 'effect', label: '歌詞效果', icon: IconSparkle },
+];
+
 export function SettingsPage() {
   const user = useSession((s) => s.user)!;
   const logout = useSession((s) => s.logout);
@@ -599,6 +606,43 @@ export function SettingsPage() {
   const [savingPassword, setSavingPassword] = useState(false);
   const lyricsFont = usePreferences((s) => s.lyricsFont);
   const setLyricsFont = usePreferences((s) => s.setLyricsFont);
+  const lyricsMode = usePreferences((s) => s.lyricsMode);
+  const setLyricsMode = usePreferences((s) => s.setLyricsMode);
+  const immersiveStyle = usePreferences((s) => s.immersiveStyle);
+  const setImmersiveStyle = usePreferences((s) => s.setImmersiveStyle);
+  const [lyricsTab, setLyricsTab] = useState<LyricsTab>('font');
+  const lyricsPanelRef = useRef<HTMLDivElement | null>(null);
+  const [lyricsOverflow, setLyricsOverflow] = useState({ above: false, below: false });
+
+  // The card has a fixed height and hides its scrollbar, so fade whichever edge has content cut off.
+  const measureLyricsPanel = useCallback(() => {
+    const panel = lyricsPanelRef.current;
+    if (!panel) return;
+    const above = panel.scrollTop > 2;
+    const below = panel.scrollTop + panel.clientHeight < panel.scrollHeight - 2;
+    setLyricsOverflow((current) => current.above === above && current.below === below ? current : { above, below });
+  }, []);
+
+  useLayoutEffect(() => {
+    const panel = lyricsPanelRef.current;
+    if (!panel) return;
+    measureLyricsPanel();
+    const resize = new ResizeObserver(measureLyricsPanel);
+    resize.observe(panel);
+    if (panel.firstElementChild) resize.observe(panel.firstElementChild);
+    return () => resize.disconnect();
+  }, [lyricsTab, lyricsMode, measureLyricsPanel]);
+
+  // Arrow keys move between the icon tabs, as a tablist should.
+  function moveLyricsTab(event: React.KeyboardEvent<HTMLDivElement>) {
+    const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    const index = LYRICS_TABS.findIndex((tab) => tab.value === lyricsTab);
+    const next = LYRICS_TABS[(index + step + LYRICS_TABS.length) % LYRICS_TABS.length].value;
+    setLyricsTab(next);
+    document.getElementById(`lyrics-tab-${next}`)?.focus();
+  }
 
   useEffect(() => { if (user.role === 'admin') void loadStatus().catch(() => {}); }, [loadStatus, user.role]);
 
@@ -634,22 +678,81 @@ export function SettingsPage() {
 
         {user.role === 'admin' ? <UserManagement currentUserId={user.id} /> : null}
 
-        <section className="settings-card">
-          <h2>歌詞設定</h2>
-          <div className="font-options" role="radiogroup" aria-label="歌詞字型">
-            {LYRICS_FONTS.map((font) => (
-              <button
-                type="button"
-                role="radio"
-                key={font.value}
-                aria-checked={lyricsFont === font.value}
-                className={`font-option font-option--${font.value}${lyricsFont === font.value ? ' is-active' : ''}`}
-                onClick={() => setLyricsFont(font.value)}
-              >
-                <span>{font.label}</span>
-                <strong>{font.sample}</strong>
-              </button>
-            ))}
+        <section className="settings-card settings-card--lyrics">
+          <div className="settings-card__heading">
+            <h2>歌詞設定</h2>
+            <div className="settings-tabs" role="tablist" aria-label="歌詞設定分頁" onKeyDown={moveLyricsTab}>
+              {LYRICS_TABS.map((tab) => (
+                <button
+                  type="button"
+                  role="tab"
+                  key={tab.value}
+                  id={`lyrics-tab-${tab.value}`}
+                  aria-controls="lyrics-tab-panel"
+                  aria-selected={lyricsTab === tab.value}
+                  aria-label={tab.label}
+                  title={tab.label}
+                  tabIndex={lyricsTab === tab.value ? 0 : -1}
+                  className="icon-button"
+                  onClick={() => setLyricsTab(tab.value)}
+                >
+                  <tab.icon size={18} />
+                </button>
+              ))}
+            </div>
+          </div>
+          <div id="lyrics-tab-panel" role="tabpanel" aria-labelledby={`lyrics-tab-${lyricsTab}`} className="settings-tab-panel" key={lyricsTab}>
+            {lyricsTab === 'font' ? (
+              <div ref={lyricsPanelRef} className="settings-scroll" data-more-above={lyricsOverflow.above || undefined} data-more-below={lyricsOverflow.below || undefined} onScroll={measureLyricsPanel}>
+                <div className="font-options" role="radiogroup" aria-label="歌詞字型">
+                  {LYRICS_FONTS.map((font) => (
+                    <button
+                      type="button"
+                      role="radio"
+                      key={font.value}
+                      aria-checked={lyricsFont === font.value}
+                      className={`font-option font-option--${font.value}${lyricsFont === font.value ? ' is-active' : ''}`}
+                      onClick={() => setLyricsFont(font.value)}
+                    >
+                      <span>{font.label}</span>
+                      <strong>{font.sample}</strong>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="settings-field">
+                  <span className="settings-field__label">顯示模式</span>
+                  <div className="segmented-tabs">
+                    <RubberSegment items={LYRICS_MODES} value={lyricsMode} onChange={(mode) => setLyricsMode(mode as LyricsMode)} trackColor="transparent" thumbColor="#fff" textColor="var(--text-soft)" activeTextColor="#090909" radius={999} inset={0} equalSlots stretch={100} squash={3} speed={1} glide={75} draggable className="library-segment" aria-label="歌詞顯示模式" />
+                  </div>
+                </div>
+                {lyricsMode === 'immersive' ? (
+                  <div className="settings-field settings-field--fill">
+                    <span className="settings-field__label">沉浸樣式</span>
+                    {/* Only the style list scrolls; the display mode above stays put. */}
+                    <div ref={lyricsPanelRef} className="settings-scroll" data-more-above={lyricsOverflow.above || undefined} data-more-below={lyricsOverflow.below || undefined} onScroll={measureLyricsPanel}>
+                      <div className="style-options" role="radiogroup" aria-label="沉浸樣式">
+                        {IMMERSIVE_STYLES.map((style) => (
+                          <button
+                            type="button"
+                            role="radio"
+                            key={style.value}
+                            aria-checked={immersiveStyle === style.value}
+                            className={`style-option${immersiveStyle === style.value ? ' is-active' : ''}`}
+                            onClick={() => setImmersiveStyle(style.value)}
+                          >
+                            <strong>{style.label}</strong>
+                            <span>{style.description}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            )}
           </div>
         </section>
 

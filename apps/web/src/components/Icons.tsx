@@ -37,6 +37,8 @@ export const IconVolumeLow = icon(<><path d="M4 9.5h3l4.5-4v13l-4.5-4H4z" /><pat
 export const IconMute = icon(<><path d="M4 9.5h3l4.5-4v13l-4.5-4H4z" /><path d="m16 9.5 5 5M21 9.5l-5 5" /></>);
 export const IconQueue = icon(<><path d="M4 6h12M4 11h12M4 16h7" /><path d="M15.5 14.5v5.5l4.5-2.75z" fill="currentColor" stroke="none" /></>);
 export const IconLyrics = icon(<><path d="M5 5.5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8l-4.5 3.5v-3.5H5a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z" /><path d="M8 9.5h8M8 12.5h5" /></>);
+export const IconFont = icon(<><path d="M3 18 8 6l5 12M4.9 13.5h6.2" /><circle cx="17.5" cy="15.5" r="2.5" /><path d="M20 12.5V18" /></>);
+export const IconSparkle = icon(<><path d="m11 3.5 1.9 5.1 5.1 1.9-5.1 1.9L11 17.5l-1.9-5.1L4 10.5l5.1-1.9z" /><path d="m18.5 15 .7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z" /></>);
 export const IconChevronDown = icon(<path d="m6 9 6 6 6-6" />);
 export const IconChevronLeft = icon(<path d="m15 6-6 6 6 6" />);
 export const IconChevronRight = icon(<path d="m9 6 6 6-6 6" />);
