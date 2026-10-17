@@ -332,7 +332,10 @@ h1, h2, h3 { font-family: var(--font-display); letter-spacing: -.035em; }
   padding: .3em .25em;
   margin: -.3em -.25em;
   background-image: linear-gradient(90deg, #fff calc(var(--p, 0) * 130% - 30%), rgba(255,255,255,.34) calc(var(--p, 0) * 130%));
-  background-origin: content-box;
+  /* Fill spans the full padded height (so descenders like g/y get painted) but only the content width (so fill timing stays on the word). */
+  background-origin: padding-box;
+  background-size: calc(100% - .5em) 100%;
+  background-position: .25em 0;
   background-repeat: no-repeat;
   -webkit-background-clip: text;
   background-clip: text;
