@@ -1,12 +1,13 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-export type LyricsFont = 'sans' | 'serif' | 'wenkai';
+export type LyricsFont = 'sans' | 'serif' | 'wenkai' | 'decol';
 
 export const LYRICS_FONTS: { value: LyricsFont; label: string; sample: string }[] = [
   { value: 'sans', label: 'Noto Sans', sample: '歌詞預覽 うた Aa' },
   { value: 'serif', label: 'Noto Serif', sample: '歌詞預覽 うた Aa' },
   { value: 'wenkai', label: 'LXGW WenKai Mono', sample: '歌詞預覽 うた Aa' },
+  { value: 'decol', label: 'Kaisei Decol', sample: '歌詞預覽 うた Aa' },
 ];
 
 interface PreferencesState {

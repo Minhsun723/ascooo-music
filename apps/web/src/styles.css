@@ -1,11 +1,12 @@
 :root {
   color-scheme: dark;
-  font-family: "Noto Sans TC", "Noto Sans JP", "Noto Sans SC", sans-serif;
+  font-family: "Noto Sans TC", "Noto Sans JP", "Noto Sans SC", "Noto Sans KR", sans-serif;
   font-synthesis: none;
-  --font-display: "Noto Sans TC", "Noto Sans JP", "Noto Sans SC", sans-serif;
-  --font-mono: "Noto Sans TC", "Noto Sans JP", "Noto Sans SC", sans-serif;
-  --font-serif: "Noto Serif TC", "Noto Serif JP", "Noto Serif SC", serif;
-  --font-wenkai: "LXGW WenKai Mono TC", "Klee One", "Noto Sans JP", monospace;
+  --font-display: "Noto Sans TC", "Noto Sans JP", "Noto Sans SC", "Noto Sans KR", sans-serif;
+  --font-mono: "Noto Sans TC", "Noto Sans JP", "Noto Sans SC", "Noto Sans KR", sans-serif;
+  --font-serif: "Noto Serif TC", "Noto Serif JP", "Noto Serif SC", "Noto Serif KR", serif;
+  --font-wenkai: "LXGW WenKai Mono TC", "Klee One", "Noto Sans JP", "Noto Sans KR", monospace;
+  --font-decol: "Kaisei Decol", "Noto Serif TC", "Noto Serif SC", "Noto Serif KR", serif;
   --font-lyrics: var(--font-display);
   --bg: #080808;
   --bg-soft: #0f0f11;
@@ -32,6 +33,7 @@
 }
 :root[data-lyrics-font="serif"] { --font-lyrics: var(--font-serif); }
 :root[data-lyrics-font="wenkai"] { --font-lyrics: var(--font-wenkai); }
+:root[data-lyrics-font="decol"] { --font-lyrics: var(--font-decol); }
 
 * { box-sizing: border-box; }
 .sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
@@ -238,6 +240,9 @@ h1, h2, h3 { font-family: var(--font-display); letter-spacing: -.035em; }
 .player-track__copy strong { display: block; min-width: 0; }
 .player-track__copy small, .queue-item small { overflow: hidden; margin-top: 3px; color: var(--muted); font-size: .68rem; text-overflow: ellipsis; white-space: nowrap; }
 .marquee { display: block; width: 100%; min-width: 0; max-width: 100%; overflow: hidden; }
+/* overflow: hidden clips descenders (g, y) on tight line-heights; pad the clip box and cancel it with negative margin. */
+.marquee, .now-playing__meta h1, .now-playing__artist-row p, .player-track__copy strong, .player-track__copy small { padding-block: .2em; margin-block: -.2em; }
+.player-track__copy small { margin-top: calc(3px - .2em); }
 .marquee__track { display: flex; width: max-content; min-width: 0; gap: 32px; white-space: nowrap; }
 .marquee[data-overflow="true"][data-play="true"] .marquee__track { animation: marquee-scroll var(--marquee-duration) linear 1s infinite; will-change: transform; }
 .marquee__text { display: block; flex: none; width: max-content; }
@@ -429,6 +434,7 @@ h1, h2, h3 { font-family: var(--font-display); letter-spacing: -.035em; }
 .font-option strong { font-size: 1.35rem; font-weight: 700; line-height: 1.3; }
 .font-option--serif strong { font-family: var(--font-serif); }
 .font-option--wenkai strong { font-family: var(--font-wenkai); }
+.font-option--decol strong { font-family: var(--font-decol); }
 
 .music-manager { position: relative; overflow: hidden; background: linear-gradient(145deg, rgba(30,30,34,.96), rgba(18,18,21,.96)); }
 .music-manager::before { content: ""; position: absolute; top: 0; right: 0; width: min(34vw, 420px); height: 180px; pointer-events: none; background: radial-gradient(circle at 100% 0, rgba(0,198,255,.12), transparent 68%); }
