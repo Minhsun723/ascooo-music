@@ -6,6 +6,7 @@ import { useSession } from '../store/session';
 import { toast } from '../store/toast';
 import {
   IconChevronLeft,
+  IconClose,
   IconDisc,
   IconHeart,
   IconHome,
@@ -24,6 +25,11 @@ const mainNav = [
   { to: '/library', label: '音樂庫', icon: IconLibrary },
   { to: '/favorites', label: '喜愛的歌曲', icon: IconHeart },
 ];
+
+const searchShortcutLabel = typeof navigator !== 'undefined'
+  && /Mac|iPhone|iPad|iPod/i.test((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform)
+  ? '⌘ K'
+  : 'Ctrl K';
 
 const legalLinks = [
   { href: 'https://ascooo.com/privacy', label: '隱私權政策' },
@@ -48,8 +54,10 @@ function getDocumentTitle(pathname: string, search: string) {
   return `${pageTitle} · Ascooo Music`;
 }
 
-function isInteractiveTarget(target: EventTarget | null) {
-  return target instanceof Element && Boolean(target.closest('input, textarea, select, button, a, [contenteditable="true"], [role="button"], [role="textbox"]'));
+function isTextEntryTarget(target: EventTarget | null) {
+  if (!(target instanceof Element)) return false;
+  const field = target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]');
+  return Boolean(field) && !field?.matches('input[type="range"], input[type="checkbox"], input[type="radio"], input[type="button"], input[type="submit"]');
 }
 
 function Brand() {
@@ -149,7 +157,7 @@ function CreatePlaylistDialog({ open, onClose }: { open: boolean; onClose: () =>
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="dialog" role="dialog" aria-modal="true" aria-labelledby="playlist-dialog-title">
-        <span className="eyebrow">NEW PLAYLIST</span><h2 id="playlist-dialog-title">建立播放清單</h2>
+        <h2 id="playlist-dialog-title">建立播放清單</h2>
         <form onSubmit={submit}><label><span>名稱</span><input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：週日午後" maxLength={100} /></label><div className="dialog__actions"><button type="button" className="text-button" onClick={onClose}>取消</button><button type="submit" className="primary-button" disabled={!name.trim() || pending}>{pending ? '建立中…' : '建立'}</button></div></form>
       </section>
     </div>
@@ -170,6 +178,7 @@ export function Shell() {
   const activeLocationKey = useRef(location.key);
   const previousPathname = useRef<string | null>(null);
   const [query, setQuery] = useState(new URLSearchParams(location.search).get('q') ?? '');
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [dynamicPageTitle, setDynamicPageTitle] = useState<{ pathname: string; title: string } | null>(null);
   const isHomePage = location.pathname === '/';
@@ -231,7 +240,7 @@ export function Shell() {
     const focusSearch = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
-        document.querySelector<HTMLInputElement>('.global-search input')?.focus();
+        searchInputRef.current?.focus();
       }
     };
     window.addEventListener('keydown', focusSearch);
@@ -239,6 +248,17 @@ export function Shell() {
   }, []);
 
   useEffect(() => {
+    // Remember which element got focus from a mouse/touch press. Space should control
+    // playback there instead of re-activating whatever was last clicked, while
+    // elements reached with the keyboard keep their native Space behaviour.
+    let pointerPressed = false;
+    let pointerFocused: Element | null = null;
+    const markPointer = () => { pointerPressed = true; };
+    const markKeyboard = () => { pointerPressed = false; };
+    const trackFocus = (event: FocusEvent) => {
+      pointerFocused = pointerPressed && event.target instanceof Element ? event.target : null;
+    };
+
     const togglePlayback = (event: KeyboardEvent) => {
       if (
         event.code !== 'Space'
@@ -248,17 +268,31 @@ export function Shell() {
         || event.altKey
         || event.shiftKey
         || event.defaultPrevented
-        || isInteractiveTarget(event.target)
+        || isTextEntryTarget(event.target)
       ) return;
+
+      const focused = document.activeElement;
+      const hasKeyboardFocus = focused instanceof HTMLElement && focused !== document.body && focused !== pointerFocused;
+      if (hasKeyboardFocus) return;
 
       const player = usePlayer.getState();
       if (!player.queue[player.index]) return;
       event.preventDefault();
+      // Drop focus from the clicked element so the Space keyup can't activate it.
+      if (focused instanceof HTMLElement && focused !== document.body) focused.blur();
       player.toggle();
     };
 
+    window.addEventListener('pointerdown', markPointer, true);
+    window.addEventListener('keydown', markKeyboard, true);
+    document.addEventListener('focusin', trackFocus, true);
     window.addEventListener('keydown', togglePlayback);
-    return () => window.removeEventListener('keydown', togglePlayback);
+    return () => {
+      window.removeEventListener('pointerdown', markPointer, true);
+      window.removeEventListener('keydown', markKeyboard, true);
+      document.removeEventListener('focusin', trackFocus, true);
+      window.removeEventListener('keydown', togglePlayback);
+    };
   }, []);
 
   function search(event: FormEvent) {
@@ -289,7 +323,7 @@ export function Shell() {
         <header className={`topbar${isSearchPage ? ' topbar--search' : ''}`}>
           <div className="history-controls">{!isHomePage && <button type="button" className="round-button" aria-label="返回" onClick={() => navigate(-1)}><IconChevronLeft size={19} /></button>}</div>
           <NavLink to="/" className="topbar__mobile-brand" aria-label="Ascooo Music 首頁"><img src="/brand-logo/music-logo.png" width="1000" height="1000" alt="" aria-hidden="true" draggable={false} /></NavLink>
-          <form className="global-search" role="search" onSubmit={search}><IconSearch size={19} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜尋歌曲、專輯或藝人" aria-label="搜尋音樂庫" /><kbd>⌘ K</kbd></form>
+          <form className="global-search" role="search" onSubmit={search}><IconSearch size={19} /><input ref={searchInputRef} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') event.currentTarget.blur(); }} placeholder="搜尋歌曲、專輯或藝人" aria-label="搜尋音樂庫" />{query ? <button type="button" className="global-search__clear" onClick={() => { setQuery(''); searchInputRef.current?.focus(); }} aria-label="清除搜尋文字"><IconClose size={16} /></button> : <kbd>{searchShortcutLabel}</kbd>}</form>
           <NavLink to="/settings" className="topbar__profile"><span>{user.username.slice(0, 1).toUpperCase()}</span><b>{user.username}</b></NavLink>
         </header>
         <main className={`page${isRestoringHistory ? ' page--history' : ''}`} key={location.pathname}><Outlet context={setPageTitle} /></main>

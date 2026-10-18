@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from 'react';
+import { useMatch, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import type { Track } from '../api/types';
 import { formatTime, isDolbyAtmos, qualityLabel } from '../lib/format';
@@ -9,6 +10,8 @@ import { toast } from '../store/toast';
 import { Artwork } from './Artwork';
 import { DolbyLogo } from './DolbyLogo';
 import {
+  IconCheck,
+  IconDisc,
   IconHeart,
   IconHeartFill,
   IconMore,
@@ -22,6 +25,25 @@ import {
 
 function closeMenu(event: MouseEvent<HTMLElement>) {
   event.currentTarget.closest('details')?.removeAttribute('open');
+}
+
+const MENU_OFFSET = 36;
+
+function visibleEdge(selector: string, edge: 'top' | 'bottom') {
+  const rect = document.querySelector(selector)?.getBoundingClientRect();
+  return rect && rect.height > 0 ? rect[edge] : undefined;
+}
+
+function menuPlacement(details: HTMLElement, popover: HTMLElement): 'above' | 'below' {
+  const trigger = details.getBoundingClientRect();
+  const limitTop = visibleEdge('.topbar', 'bottom') ?? 0;
+  const limitBottom = Math.min(
+    window.innerHeight,
+    ...['.player-bar', '.mobile-nav'].map((selector) => visibleEdge(selector, 'top') ?? Infinity),
+  );
+  const spaceAbove = trigger.bottom - MENU_OFFSET - limitTop;
+  const spaceBelow = limitBottom - (trigger.top + MENU_OFFSET);
+  return spaceAbove >= popover.offsetHeight || spaceAbove >= spaceBelow ? 'above' : 'below';
 }
 
 export function LikeButton({ track, className = '' }: { track: Track; className?: string }) {
@@ -43,10 +65,20 @@ export function LikeButton({ track, className = '' }: { track: Track; className?
 function TrackMenu({ track, onRemove }: { track: Track; onRemove?: () => void }) {
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const [open, setOpen] = useState(false);
+  const [placement, setPlacement] = useState<'above' | 'below' | null>(null);
   const playlists = useSession((s) => s.playlists);
   const refreshPlaylists = useSession((s) => s.refreshPlaylists);
   const playNext = usePlayer((s) => s.playNext);
   const addToQueue = usePlayer((s) => s.addToQueue);
+  const navigate = useNavigate();
+  const albumMatch = useMatch('/album/:id');
+  const showGoToAlbum = track.albumId !== null && albumMatch?.params.id !== String(track.albumId);
+
+  useLayoutEffect(() => {
+    const details = detailsRef.current;
+    const popover = details?.querySelector<HTMLElement>('.menu-popover');
+    setPlacement(open && details && popover ? menuPlacement(details, popover) : null);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -84,7 +116,7 @@ function TrackMenu({ track, onRemove }: { track: Track; onRemove?: () => void })
   }
 
   return (
-    <details ref={detailsRef} className="track-menu" onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <details ref={detailsRef} className="track-menu" data-placement={placement ?? undefined} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary className="icon-button" aria-label={`${track.title} 的更多選項`}><IconMore size={19} /></summary>
       <div className="menu-popover">
         <button type="button" onClick={(event) => { closeMenu(event); playNext([track]); toast('下一首播放'); }}>
@@ -93,12 +125,20 @@ function TrackMenu({ track, onRemove }: { track: Track; onRemove?: () => void })
         <button type="button" onClick={(event) => { closeMenu(event); addToQueue([track]); toast('已加入佇列'); }}>
           <IconQueue size={18} />加入播放佇列
         </button>
-        {playlists.length ? <span className="menu-popover__label">加入播放清單</span> : null}
-        {playlists.slice(0, 8).map((playlist) => (
-          <button type="button" key={playlist.id} onClick={(event) => void addToPlaylist(playlist.id, event)}>
-            <IconPlaylistAdd size={18} />{playlist.name}
+        {showGoToAlbum ? (
+          <button type="button" onClick={(event) => { closeMenu(event); navigate(`/album/${track.albumId}`); }}>
+            <IconDisc size={18} />前往專輯
           </button>
-        ))}
+        ) : null}
+        {playlists.length ? <span className="menu-popover__label">加入播放清單</span> : null}
+        {playlists.slice(0, 8).map((playlist) => {
+          const added = playlist.trackIds?.includes(track.id) ?? false;
+          return (
+            <button type="button" key={playlist.id} disabled={added} aria-label={added ? `已加入「${playlist.name}」` : undefined} onClick={(event) => void addToPlaylist(playlist.id, event)}>
+              {added ? <IconCheck size={18} /> : <IconPlaylistAdd size={18} />}{playlist.name}
+            </button>
+          );
+        })}
         {onRemove ? (
           <button type="button" className="menu-popover__danger" onClick={(event) => { closeMenu(event); onRemove(); }}>
             <IconTrash size={18} />從清單移除

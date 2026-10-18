@@ -6,6 +6,7 @@ import { Shell } from './components/Shell';
 import {
   AlbumPage,
   ArtistPage,
+  ArtistTracksPage,
   FavoritesPage,
   HomePage,
   LibraryPage,
@@ -57,6 +58,7 @@ export default function App() {
           <Route path="favorites" element={<FavoritesPage />} />
           <Route path="album/:id" element={<AlbumPage />} />
           <Route path="artist/:id" element={<ArtistPage />} />
+          <Route path="artist/:id/tracks" element={<ArtistTracksPage />} />
           <Route path="playlist/:id" element={<PlaylistPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<NotFoundPage />} />

@@ -204,10 +204,15 @@ library.get('/artists', async (c) => {
   });
 });
 
-library.get('/artists/:id', async (c) => {
-  const uid = c.get('user').id;
-  const id = Number(c.req.param('id'));
-  const db = c.env.DB;
+const ARTIST_TRACK_IDS = `artist_track_ids AS (
+  SELECT t.id FROM tracks t
+  WHERE t.artist_id = ? AND t.status = 'ready' AND t.visible = 1
+  UNION
+  SELECT t.id FROM albums artist_albums CROSS JOIN tracks t ON t.album_id = artist_albums.id
+  WHERE artist_albums.artist_id = ? AND t.status = 'ready' AND t.visible = 1
+)`;
+
+async function findArtist(db: D1Database, id: number) {
   const artist = await db.prepare(
     `SELECT ar.id, COALESCE(ar.display_name, ar.name) AS name, ar.artwork_id FROM artists ar WHERE ar.id = ? AND (
        EXISTS (SELECT 1 FROM tracks t
@@ -217,16 +222,18 @@ library.get('/artists/:id', async (c) => {
      )`,
   ).bind(id).first<{ id: number; name: string; artwork_id: string | null }>();
   if (!artist) throw new HTTPException(404, { message: '找不到這位歌手' });
+  return artist;
+}
+
+library.get('/artists/:id', async (c) => {
+  const uid = c.get('user').id;
+  const id = Number(c.req.param('id'));
+  const db = c.env.DB;
+  const artist = await findArtist(db, id);
   const [albums, top] = await db.batch([
     db.prepare(`SELECT ${ALBUM_SELECT} ${ALBUM_FROM} WHERE al.artist_id = ? GROUP BY al.id ORDER BY al.year DESC, al.title`).bind(id),
     db.prepare(
-      `WITH artist_track_ids AS (
-         SELECT t.id FROM tracks t
-         WHERE t.artist_id = ? AND t.status = 'ready' AND t.visible = 1
-         UNION
-         SELECT t.id FROM albums artist_albums CROSS JOIN tracks t ON t.album_id = artist_albums.id
-         WHERE artist_albums.artist_id = ? AND t.status = 'ready' AND t.visible = 1
-       )
+      `WITH ${ARTIST_TRACK_IDS}
        SELECT ${TRACK_SELECT}, COALESCE(SUM(ps.play_count), 0) AS plays
        FROM artist_track_ids ati JOIN tracks t ON t.id = ati.id ${TRACK_JOINS}
        LEFT JOIN play_stats ps ON ps.track_id = t.id
@@ -243,6 +250,28 @@ library.get('/artists/:id', async (c) => {
     },
     albums: albumList,
     tracks: (top.results as TrackRow[]).map(toTrack),
+  });
+});
+
+library.get('/artists/:id/tracks', async (c) => {
+  const uid = c.get('user').id;
+  const id = Number(c.req.param('id'));
+  const db = c.env.DB;
+  const artist = await findArtist(db, id);
+  const { results } = await db.prepare(
+    `WITH ${ARTIST_TRACK_IDS}
+     SELECT ${TRACK_SELECT}
+     FROM artist_track_ids ati JOIN tracks t ON t.id = ati.id ${TRACK_JOINS}
+     ORDER BY COALESCE(t.display_title, t.title) COLLATE NOCASE, t.id`,
+  ).bind(id, id, uid).all<TrackRow>();
+  const tracks = results.map(toTrack);
+  return c.json({
+    artist: {
+      id: artist.id,
+      name: artist.name,
+      artworkId: artist.artwork_id ?? tracks.find((t) => t.artworkId)?.artworkId ?? null,
+    },
+    tracks,
   });
 });
 

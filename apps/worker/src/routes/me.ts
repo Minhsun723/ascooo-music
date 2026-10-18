@@ -67,7 +67,7 @@ async function ownPlaylist(c: { env: AppEnv['Bindings'] }, id: number, uid: numb
 me.get('/playlists', async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT p.id, p.name, p.description, p.updated_at, COUNT(t.id) AS track_count,
-       COALESCE(SUM(t.duration), 0) AS duration,
+       COALESCE(SUM(t.duration), 0) AS duration, GROUP_CONCAT(DISTINCT t.id) AS track_ids,
        (SELECT COALESCE(t2.artwork_id, al2.artwork_id) FROM playlist_tracks pt2
           JOIN tracks t2 ON t2.id = pt2.track_id LEFT JOIN albums al2 ON al2.id = t2.album_id
           WHERE pt2.playlist_id = p.id AND t2.status = 'ready' AND t2.visible = 1 ORDER BY pt2.position LIMIT 4) AS artwork_id
@@ -77,7 +77,7 @@ me.get('/playlists', async (c) => {
      WHERE p.user_id = ? GROUP BY p.id ORDER BY p.updated_at DESC`,
   )
     .bind(c.get('user').id)
-    .all<{ id: number; name: string; description: string | null; updated_at: number; track_count: number; duration: number; artwork_id: string | null }>();
+    .all<{ id: number; name: string; description: string | null; updated_at: number; track_count: number; duration: number; track_ids: string | null; artwork_id: string | null }>();
   return c.json({
     playlists: results.map((p) => ({
       id: p.id,
@@ -87,6 +87,7 @@ me.get('/playlists', async (c) => {
       trackCount: p.track_count,
       duration: p.duration,
       artworkId: p.artwork_id,
+      trackIds: p.track_ids ? p.track_ids.split(',').map(Number) : [],
     })),
   });
 });
@@ -111,10 +112,13 @@ async function appendTracks(db: D1Database, playlistId: number, trackIds: number
   let pos = max?.m ?? 0;
   const now = Date.now();
   const stmt = db.prepare(
-    "INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) SELECT ?, id, ?, ? FROM tracks WHERE id = ? AND status = 'ready' AND visible = 1",
+    `INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) SELECT ?, id, ?, ? FROM tracks
+     WHERE id = ? AND status = 'ready' AND visible = 1
+       AND NOT EXISTS (SELECT 1 FROM playlist_tracks WHERE playlist_id = ? AND track_id = tracks.id)`,
   );
+  const uniqueIds = [...new Set(trackIds.slice(0, 500).map(Number))];
   await db.batch([
-    ...trackIds.slice(0, 500).map((id) => stmt.bind(playlistId, ++pos, now, Number(id))),
+    ...uniqueIds.map((id) => stmt.bind(playlistId, ++pos, now, id, playlistId)),
     db.prepare('UPDATE playlists SET updated_at = ? WHERE id = ?').bind(now, playlistId),
   ]);
 }

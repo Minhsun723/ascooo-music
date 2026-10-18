@@ -69,6 +69,7 @@ export const api = {
   album: (id: number) => get<{ album: Album; tracks: Track[]; moreByArtist: Album[] }>(`/albums/${id}`),
   artists: () => get<{ artists: Artist[] }>('/artists?limit=500'),
   artist: (id: number) => get<{ artist: Artist; albums: Album[]; tracks: Track[] }>(`/artists/${id}`),
+  artistTracks: (id: number) => get<{ artist: Artist; tracks: Track[] }>(`/artists/${id}/tracks`),
   search: (q: string, signal?: AbortSignal) =>
     request<{ tracks: Track[]; albums: Album[]; artists: Artist[] }>(`/search?q=${encodeURIComponent(q)}`, { signal }),
   lyrics: (id: number) => get<{ lyrics: Lyrics | null }>(`/tracks/${id}/lyrics`),
@@ -85,7 +86,7 @@ export const api = {
   history: (trackId: number) => post('/me/history', { trackId }),
 
   playlists: () => get<{ playlists: Playlist[] }>('/me/playlists'),
-  playlist: (id: number) => get<{ playlist: Omit<Playlist, 'trackCount' | 'duration' | 'artworkId'>; tracks: Track[] }>(`/me/playlists/${id}`),
+  playlist: (id: number) => get<{ playlist: Omit<Playlist, 'trackCount' | 'duration' | 'artworkId' | 'trackIds'>; tracks: Track[] }>(`/me/playlists/${id}`),
   createPlaylist: (name: string, trackIds?: number[]) => post<{ id: number; name: string }>('/me/playlists', { name, trackIds }),
   updatePlaylist: (id: number, data: { name?: string; description?: string }) =>
     request(`/me/playlists/${id}`, { method: 'PATCH', json: data }),

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type DependencyList, type FormEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import { api } from './api/client';
 import type { Album, Artist, HomeData, ManagedTrack, ManagedTrackStats, ManagedUser, Track } from './api/types';
@@ -13,7 +14,7 @@ import { DolbyLogo } from './components/DolbyLogo';
 import { AlbumGrid, ArtistGrid, PlaylistGrid } from './components/MediaGrid';
 import { RubberSegment } from './components/RubberSegment';
 import { TrackList } from './components/TrackList';
-import { IconChevronLeft, IconDisc, IconEye, IconEyeOff, IconFont, IconHeart, IconLogout, IconMusic, IconPlay, IconPlus, IconSearch, IconShuffle, IconSparkle, IconSync, IconTrash, IconUser, IconWave } from './components/Icons';
+import { IconChevronLeft, IconDisc, IconEye, IconEyeOff, IconFont, IconHeart, IconLogout, IconMore, IconMusic, IconPlay, IconPlus, IconSearch, IconShuffle, IconSparkle, IconSync, IconTrash, IconUser, IconWave } from './components/Icons';
 
 interface RequestState<T> {
   data: T | null;
@@ -53,8 +54,8 @@ function EmptyState({ icon = <IconMusic />, title, copy, action }: { icon?: Reac
   return <div className="empty-state"><span>{icon}</span><h2>{title}</h2>{copy ? <p>{copy}</p> : null}{action}</div>;
 }
 
-function SectionHeading({ title, link }: { title: string; link?: string }) {
-  return <div className="section-heading"><div><h2>{title}</h2></div>{link ? <Link to={link}>查看全部 <span aria-hidden="true">↗</span></Link> : null}</div>;
+function SectionHeading({ title, link, linkLabel = '查看全部' }: { title: string; link?: string; linkLabel?: string }) {
+  return <div className="section-heading"><div><h2>{title}</h2></div>{link ? <Link to={link}>{linkLabel} <span aria-hidden="true">↗</span></Link> : null}</div>;
 }
 
 const HOME_CACHE_TTL = 30_000;
@@ -150,10 +151,10 @@ export function LibraryPage() {
   return <><PageIntro title="音樂庫" /><div className="segmented-tabs"><RubberSegment items={tabs} value={tab} onChange={(nextTab) => setParams({ tab: nextTab })} trackColor="transparent" thumbColor="#fff" textColor="var(--text-soft)" activeTextColor="#090909" radius={999} inset={0} equalSlots stretch={100} squash={3} speed={1} glide={75} draggable className="library-segment" aria-label="音樂庫分類" /></div>{request.loading && !request.data ? <LoadingBlock rows={7} /> : null}{request.error ? <RequestError message={request.error} retry={request.reload} /> : null}{request.data && tab === 'albums' ? request.data.albums.length ? <AlbumGrid albums={request.data.albums} /> : <EmptyState title="還沒有專輯" copy="同步歌曲後，系統會依照內嵌資訊整理專輯。" /> : null}{request.data && tab === 'tracks' ? request.data.tracks.length ? <TrackList tracks={request.data.tracks} /> : <EmptyState title="還沒有歌曲" copy="前往設定頁執行 PikPak 同步。" /> : null}{request.data && tab === 'artists' ? request.data.artists.length ? <ArtistGrid artists={request.data.artists} /> : <EmptyState title="還沒有藝人" copy="同步歌曲後，藝人會自動出現在這裡。" /> : null}{tab === 'playlists' ? playlists.length ? <PlaylistGrid playlists={playlists} /> : <EmptyState icon={<IconDisc />} title="還沒有播放清單" copy="從歌曲選單加入現有清單，或從左側建立新清單。" /> : null}</>;
 }
 
-function CollectionHero({ artworkId, title, subtitle, meta = '', badge, tracks, compactTitle = false, detailLayout = false, mobileBackAction }: { artworkId?: string | null; title: string; subtitle?: string; meta?: string; badge?: React.ReactNode; tracks: Track[]; compactTitle?: boolean; detailLayout?: boolean; mobileBackAction?: React.ReactNode }) {
+function CollectionHero({ artworkId, title, subtitle, meta = '', badge, tracks, compactTitle = false, detailLayout = false, mobileBackAction, menu }: { artworkId?: string | null; title: string; subtitle?: string; meta?: string; badge?: React.ReactNode; tracks: Track[]; compactTitle?: boolean; detailLayout?: boolean; mobileBackAction?: React.ReactNode; menu?: React.ReactNode }) {
   const playList = usePlayer((s) => s.playList);
   const hasMeta = !!(meta || badge);
-  return <header className={`collection-hero${compactTitle ? ' collection-hero--compact-title' : ''}${detailLayout ? ' collection-hero--detail' : ''}`}>{mobileBackAction ? <div className="collection-hero__mobile-back">{mobileBackAction}</div> : null}<Artwork artworkId={artworkId} title={title} artist={subtitle} className="collection-hero__art" loading="eager" size={2000} /><div className="collection-hero__copy"><div className="collection-hero__details"><h1>{title}</h1>{subtitle ? <p>{subtitle}</p> : null}{hasMeta ? <small className="collection-hero__meta">{meta ? <span>{meta}</span> : null}{badge ? <>{meta ? <i aria-hidden="true">·</i> : null}{badge}</> : null}</small> : null}</div><div className="collection-hero__actions"><button type="button" className="primary-button" disabled={!tracks.length} onClick={() => playList(tracks)}><IconPlay size={18} />播放</button><button type="button" className="round-button round-button--outline" disabled={!tracks.length} aria-label="隨機播放" onClick={() => playList(tracks, 0, { shuffle: true })}><IconShuffle size={19} /></button></div></div></header>;
+  return <header className={`collection-hero${compactTitle ? ' collection-hero--compact-title' : ''}${detailLayout ? ' collection-hero--detail' : ''}`}>{mobileBackAction ? <div className="collection-hero__mobile-back">{mobileBackAction}</div> : null}{menu ? <div className="collection-hero__menu">{menu}</div> : null}<Artwork artworkId={artworkId} title={title} artist={subtitle} className="collection-hero__art" loading="eager" size={2000} /><div className="collection-hero__copy"><div className="collection-hero__details"><h1>{title}</h1>{subtitle ? <p>{subtitle}</p> : null}{hasMeta ? <small className="collection-hero__meta">{meta ? <span>{meta}</span> : null}{badge ? <>{meta ? <i aria-hidden="true">·</i> : null}{badge}</> : null}</small> : null}</div><div className="collection-hero__actions"><button type="button" className="primary-button" disabled={!tracks.length} onClick={() => playList(tracks)}><IconPlay size={18} />播放</button><button type="button" className="round-button round-button--outline" disabled={!tracks.length} aria-label="隨機播放" onClick={() => playList(tracks, 0, { shuffle: true })}><IconShuffle size={19} /></button></div></div></header>;
 }
 
 export function AlbumPage() {
@@ -196,7 +197,24 @@ export function ArtistPage() {
     else navigate('/library?tab=artists', { replace: true });
   };
   const mobileBackAction = <button type="button" className="collection-back-button" aria-label="返回" onClick={goBack}><IconChevronLeft size={20} /></button>;
-  return <><CollectionHero artworkId={artist.artworkId} title={artist.name} meta={`${albums.length} 張專輯 · ${tracks.length} 首熱門歌曲`} tracks={tracks} compactTitle detailLayout mobileBackAction={mobileBackAction} /><section className="page-section page-section--tight"><SectionHeading title="熱門歌曲" /><TrackList tracks={tracks.slice(0, 10)} /></section>{albums.length ? <section className="page-section"><SectionHeading title="專輯" /><AlbumGrid albums={albums} /></section> : null}</>;
+  return <><CollectionHero artworkId={artist.artworkId} title={artist.name} meta={`${albums.length} 張專輯 · ${tracks.length} 首熱門歌曲`} tracks={tracks} compactTitle detailLayout mobileBackAction={mobileBackAction} /><section className="page-section page-section--tight"><SectionHeading title="熱門歌曲" link={`/artist/${artist.id}/tracks`} linkLabel="所有歌曲" /><TrackList tracks={tracks.slice(0, 10)} /></section>{albums.length ? <section className="page-section"><SectionHeading title="專輯" /><AlbumGrid albums={albums} /></section> : null}</>;
+}
+
+export function ArtistTracksPage() {
+  const id = Number(useParams().id);
+  const navigate = useNavigate();
+  const request = useRequest(() => api.artistTracks(id), [id]);
+  useDynamicPageTitle(request.data ? `${request.data.artist.name} 的所有歌曲` : undefined);
+  if (request.loading) return <LoadingBlock rows={8} />;
+  if (request.error || !request.data) return <RequestError message={request.error} retry={request.reload} />;
+  const { artist, tracks } = request.data;
+  const goBack = () => {
+    const historyIndex = window.history.state?.idx;
+    if (typeof historyIndex === 'number' && historyIndex > 0) navigate(-1);
+    else navigate(`/artist/${artist.id}`, { replace: true });
+  };
+  const mobileBackAction = <button type="button" className="collection-back-button" aria-label="返回" onClick={goBack}><IconChevronLeft size={20} /></button>;
+  return <><CollectionHero artworkId={artist.artworkId} title={artist.name} subtitle="所有歌曲" meta={`${tracks.length} 首歌曲`} tracks={tracks} compactTitle detailLayout mobileBackAction={mobileBackAction} /><section className="page-section page-section--tight"><TrackList tracks={tracks} /></section></>;
 }
 
 export function FavoritesPage() {
@@ -205,18 +223,99 @@ export function FavoritesPage() {
   return <><PageIntro title="喜愛的歌曲" copy={tracks.length ? `${tracks.length} 首你不想錯過的歌。` : undefined} />{request.loading ? <LoadingBlock rows={6} /> : request.error ? <RequestError message={request.error} retry={request.reload} /> : tracks.length ? <TrackList tracks={tracks} /> : <EmptyState icon={<IconHeart />} title="還沒有喜愛的歌曲" />}</>;
 }
 
+function PlaylistMenu({ name, onDelete }: { name: string; onDelete: () => void }) {
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsidePress = (event: PointerEvent) => {
+      const details = detailsRef.current;
+      if (details && !details.contains(event.target as Node)) details.removeAttribute('open');
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      detailsRef.current?.removeAttribute('open');
+      detailsRef.current?.querySelector('summary')?.focus();
+    };
+    document.addEventListener('pointerdown', closeOnOutsidePress);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePress);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <details ref={detailsRef} className="track-menu" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary className="icon-button" aria-label={`${name} 的更多選項`}><IconMore size={20} /></summary>
+      <div className="menu-popover">
+        <button type="button" className="menu-popover__danger" onClick={() => { detailsRef.current?.removeAttribute('open'); onDelete(); }}>
+          <IconTrash size={18} />刪除播放清單
+        </button>
+      </div>
+    </details>
+  );
+}
+
 export function PlaylistPage() {
   const id = Number(useParams().id);
   const request = useRequest(() => api.playlist(id), [id]);
+  useDynamicPageTitle(request.data?.playlist.name);
+  const navigate = useNavigate();
   const refreshPlaylists = useSession((s) => s.refreshPlaylists);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const remove = useCallback(async (track: Track) => {
     if (!track.entryId) return;
     try { await api.removeFromPlaylist(id, track.entryId); request.reload(); await refreshPlaylists(); toast('已從播放清單移除'); } catch (error) { toast((error as Error).message, 'error'); }
   }, [id, refreshPlaylists, request]);
+
+  useEffect(() => {
+    if (!confirmDelete) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape' && !deleting) setConfirmDelete(false); };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [confirmDelete, deleting]);
+
   if (request.loading) return <LoadingBlock rows={8} />;
   if (request.error || !request.data) return <RequestError message={request.error} retry={request.reload} />;
   const { playlist, tracks } = request.data;
-  return <><CollectionHero artworkId={tracks[0]?.artworkId} title={playlist.name} subtitle={playlist.description ?? undefined} meta={`${tracks.length} 首歌 · 更新於 ${new Date(playlist.updatedAt).toLocaleDateString('zh-TW')}`} tracks={tracks} />{tracks.length ? <section className="page-section page-section--tight"><TrackList tracks={tracks} onRemove={(track) => void remove(track)} /></section> : <EmptyState icon={<IconDisc />} title="這個播放清單是空的" copy="從任一首歌的更多選單，把歌曲加進來。" />}</>;
+
+  async function deletePlaylist() {
+    setDeleting(true);
+    try {
+      await api.deletePlaylist(id);
+      await refreshPlaylists();
+      toast(`已刪除播放清單「${playlist.name}」`);
+      navigate('/library?tab=playlists', { replace: true });
+    } catch (error) {
+      toast((error as Error).message, 'error');
+      setDeleting(false);
+    }
+  }
+
+  const menu = <PlaylistMenu name={playlist.name} onDelete={() => setConfirmDelete(true)} />;
+  return (
+    <>
+      <CollectionHero artworkId={tracks[0]?.artworkId} title={playlist.name} subtitle={playlist.description ?? undefined} meta={`${tracks.length} 首歌 · 更新於 ${new Date(playlist.updatedAt).toLocaleDateString('zh-TW')}`} tracks={tracks} menu={menu} />
+      {tracks.length ? <section className="page-section page-section--tight"><TrackList tracks={tracks} onRemove={(track) => void remove(track)} /></section> : <EmptyState icon={<IconDisc />} title="這個播放清單是空的" />}
+      {confirmDelete ? createPortal(
+        <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !deleting) setConfirmDelete(false); }}>
+          <section className="dialog account-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-playlist-title" aria-describedby="delete-playlist-description">
+            <span className="account-delete-dialog__icon"><IconTrash size={21} /></span>
+            <h2 id="delete-playlist-title">刪除「{playlist.name}」？</h2>
+            <p id="delete-playlist-description">播放清單會被永久移除，歌曲本身不會受影響。這個動作無法復原。</p>
+            <div className="dialog__actions">
+              <button type="button" className="text-button" autoFocus disabled={deleting} onClick={() => setConfirmDelete(false)}>取消</button>
+              <button type="button" className="danger-button" disabled={deleting} onClick={() => void deletePlaylist()}>{deleting ? '刪除中…' : '確認刪除'}</button>
+            </div>
+          </section>
+        </div>,
+        document.body,
+      ) : null}
+    </>
+  );
 }
 
 type VisibilityFilter = 'all' | 'visible' | 'hidden';
@@ -569,7 +668,7 @@ function UserManagement({ currentUserId }: { currentUserId: number }) {
         </div>
       </div>
 
-      {deleteTarget ? (
+      {deleteTarget ? createPortal(
         <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !deleting) setDeleteTarget(null); }}>
           <section className="dialog account-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-account-title" aria-describedby="delete-account-description">
             <span className="account-delete-dialog__icon"><IconTrash size={21} /></span>
@@ -581,7 +680,8 @@ function UserManagement({ currentUserId }: { currentUserId: number }) {
               <button type="button" className="danger-button" disabled={deleting} onClick={() => void deleteUser()}>{deleting ? '刪除中…' : '確認刪除'}</button>
             </div>
           </section>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </section>
   );

@@ -73,6 +73,7 @@ export interface Playlist {
   trackCount: number;
   duration: number;
   artworkId: string | null;
+  trackIds: number[];
 }
 
 export interface LibraryStats {
