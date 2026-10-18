@@ -60,7 +60,8 @@ function pickSource(track: Track): AudioSource {
   if (!track.hasAac51) return 'original';
   const format = usePreferences.getState().surroundFormat;
   if (format === 'aac51') return 'aac51';
-  if (format === 'atmos') return 'original';
+  // A forced Atmos choice saved on this device acts as auto once EC-3 is unavailable.
+  if (format === 'atmos' && canPlayAtmos) return 'original';
   return isDolbyAtmos(track) && !canPlayAtmos ? 'aac51' : 'original';
 }
 
@@ -338,7 +339,7 @@ if (audio) {
     const track = queue[index];
     // canPlayType can promise EC-3 support that decoding then fails to deliver.
     if ((code === 3 || code === 4) && source === 'original' && track?.hasAac51 &&
-        isDolbyAtmos(track) && usePreferences.getState().surroundFormat !== 'atmos') {
+        isDolbyAtmos(track) && !(usePreferences.getState().surroundFormat === 'atmos' && canPlayAtmos)) {
       switchSource('aac51');
       return;
     }

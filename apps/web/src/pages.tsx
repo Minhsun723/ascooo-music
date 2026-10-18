@@ -696,6 +696,12 @@ const LYRICS_TABS: { value: LyricsTab; label: string; icon: typeof IconFont }[] 
   { value: 'effect', label: '歌詞效果', icon: IconSparkle },
 ];
 
+// The Atmos option shows the logo, masked so it follows the segment's text colour,
+// and cannot be chosen in a browser that does not decode EC-3.
+const SURROUND_SEGMENTS = SURROUND_FORMATS.map((format) => format.value === 'atmos'
+  ? { ...format, label: <span className="segment-atmos-logo" role="img" aria-label={format.label} />, disabled: !canPlayAtmos }
+  : format);
+
 export function SettingsPage() {
   const user = useSession((s) => s.user)!;
   const logout = useSession((s) => s.logout);
@@ -863,16 +869,14 @@ export function SettingsPage() {
         <section className="settings-card">
           <h2>環繞音效</h2>
           <div className="settings-field">
-            <span className="settings-field__label">Dolby Atmos 歌曲的播放版本</span>
             <div className="segmented-tabs">
-              <RubberSegment items={SURROUND_FORMATS} value={surroundFormat} onChange={(format) => setSurroundFormat(format as SurroundFormat)} trackColor="transparent" thumbColor="#fff" textColor="var(--text-soft)" activeTextColor="#090909" radius={999} inset={0} equalSlots stretch={100} squash={3} speed={1} glide={75} draggable className="library-segment" aria-label="環繞音效版本" />
+              <RubberSegment items={SURROUND_SEGMENTS} value={surroundFormat === 'atmos' && !canPlayAtmos ? 'auto' : surroundFormat} onChange={(format) => setSurroundFormat(format as SurroundFormat)} trackColor="transparent" thumbColor="#fff" textColor="var(--text-soft)" activeTextColor="#090909" radius={999} inset={0} equalSlots stretch={100} squash={3} speed={1} glide={75} draggable className="library-segment" aria-label="環繞音效版本" />
             </div>
           </div>
           <p className="settings-note">
             {canPlayAtmos
               ? '這個瀏覽器可以播放 Dolby Atmos，「自動」會優先播放杜比版本。'
               : '這個瀏覽器無法播放 Dolby Atmos，「自動」會改播 AAC 5.1 版本。'}
-            {' '}沒有 AAC 5.1 版本的歌曲一律播放原始檔案。
           </p>
         </section>
 

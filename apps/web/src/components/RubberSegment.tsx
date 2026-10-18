@@ -35,6 +35,8 @@ type SegmentOption = {
   value: string;
   label: ReactNode;
   icon?: ReactNode;
+  /** Shown dimmed; taps, drags and arrow keys skip over it. */
+  disabled?: boolean;
 };
 
 type RubberSegmentItem = string | SegmentOption;
@@ -88,12 +90,13 @@ const velocityOf = (history: Array<[number, number]>, now: number) => {
   const [t1, x1] = recent[recent.length - 1];
   return t1 - t0 >= 8 ? ((x1 - x0) / (t1 - t0)) * 1000 : 0;
 };
-const nearestSlot = (slots: Slot[], x: number) => {
-  let best = 0;
-  for (let index = 1; index < slots.length; index += 1) {
-    if (Math.abs((slots[index].l + slots[index].r) / 2 - x) < Math.abs((slots[best].l + slots[best].r) / 2 - x)) best = index;
+const nearestSlot = (slots: Slot[], x: number, allowed: (index: number) => boolean) => {
+  let best = -1;
+  for (let index = 0; index < slots.length; index += 1) {
+    if (!allowed(index)) continue;
+    if (best < 0 || Math.abs((slots[index].l + slots[index].r) / 2 - x) < Math.abs((slots[best].l + slots[best].r) / 2 - x)) best = index;
   }
-  return best;
+  return Math.max(0, best);
 };
 
 export function RubberSegment({
@@ -123,6 +126,14 @@ export function RubberSegment({
   const current = value !== undefined ? value : inner;
   const index = Math.max(0, list.findIndex((item) => item.value === current));
   const reduce = useReducedMotion();
+  const enabled = (itemIndex: number) => !!list[itemIndex] && !list[itemIndex].disabled;
+  /** The next enabled item from `from` in `direction`, or `from` itself when there is none. */
+  const step = (from: number, direction: number) => {
+    for (let next = from + direction; next >= 0 && next < list.length; next += direction) {
+      if (enabled(next)) return next;
+    }
+    return from;
+  };
 
   const trackRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -246,7 +257,7 @@ export function RubberSegment({
   const localX = (event: ReactPointerEvent) => event.clientX - (box.current ? box.current.left : 0) - inset;
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>, itemIndex: number) => {
-    if (disabled || drag.current || event.button !== 0) return;
+    if (disabled || !enabled(itemIndex) || drag.current || event.button !== 0) return;
     if (!trackRef.current) return;
     box.current = trackRef.current.getBoundingClientRect();
     try {
@@ -314,7 +325,7 @@ export function RubberSegment({
     release();
     const x = localX(event);
     if (!currentDrag.live) {
-      if (Math.abs(x - currentDrag.x0) <= SLOP && currentDrag.slot !== committed.current) {
+      if (Math.abs(x - currentDrag.x0) <= SLOP && currentDrag.slot !== committed.current && enabled(currentDrag.slot)) {
         const from = committed.current;
         commit(currentDrag.slot);
         travel(from, currentDrag.slot);
@@ -323,8 +334,8 @@ export function RubberSegment({
     }
     const velocity = velocityOf(currentDrag.hist, event.timeStamp);
     const flick = Math.abs(velocity) > FLICK;
-    let to = nearestSlot(slots.current, (edgeL.get() + edgeR.get()) / 2 + project(velocity, glide));
-    if (flick && to === committed.current) to = clamp(to + Math.sign(velocity), 0, list.length - 1);
+    let to = nearestSlot(slots.current, (edgeL.get() + edgeR.get()) / 2 + project(velocity, glide), enabled);
+    if (flick && to === committed.current) to = step(to, Math.sign(velocity));
     commit(to);
     if (reduce) jumpTo(to);
     else land(to, velocity, flick, flick);
@@ -341,13 +352,12 @@ export function RubberSegment({
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (disabled) return;
-    const last = list.length - 1;
     let next: number | null = null;
-    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = Math.min(last, index + 1);
-    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = Math.max(0, index - 1);
-    else if (event.key === 'Home') next = 0;
-    else if (event.key === 'End') next = last;
-    if (next === null) return;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = step(index, 1);
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = step(index, -1);
+    else if (event.key === 'Home') next = step(-1, 1);
+    else if (event.key === 'End') next = step(list.length, -1);
+    if (next === null || !enabled(next)) return;
     event.preventDefault();
     if (next === index) return;
     commit(next);
@@ -395,7 +405,7 @@ export function RubberSegment({
           role="radio"
           aria-checked={itemIndex === index}
           tabIndex={itemIndex === index ? 0 : -1}
-          disabled={disabled}
+          disabled={disabled || item.disabled}
           className="rubber-segment__item"
           onPointerDown={(event) => handlePointerDown(event, itemIndex)}
           onKeyDown={handleKeyDown}

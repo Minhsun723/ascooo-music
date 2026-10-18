@@ -544,6 +544,7 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
 .dolby-logo--compact img { position: absolute; top: 50%; width: 18px; height: 18px; transform: translateY(-50%); }
 .dolby-logo--atmos { width: 96px; height: 20px; }
 .dolby-logo--atmos img { width: 96px; height: auto; }
+.segment-atmos-logo { display: block; width: 64px; height: 24px; background: currentColor; -webkit-mask: url("/dolby-atmos-vertical.png") center / contain no-repeat; mask: url("/dolby-atmos-vertical.png") center / contain no-repeat; }
 
 .segmented-tabs { position: sticky; top: 90px; z-index: 15; width: fit-content; display: flex; gap: 4px; margin: 0 0 32px; padding: 4px; border: 1px solid var(--border); border-radius: 999px; background: rgba(17,17,19,.9); backdrop-filter: blur(14px); }
 .segmented-tabs .library-segment, .segmented-tabs .rubber-segment__thumb { gap: 4px; }
@@ -821,7 +822,9 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
   .segmented-tabs { width: 100%; overflow-x: auto; border-radius: 999px; }
   .segmented-tabs .library-segment { width: 100%; min-width: max-content; }
   .segmented-tabs .rubber-segment__item { min-width: 72px; padding-inline: 10px; }
-  .settings-grid { grid-template-columns: 1fr; }
+  .segment-atmos-logo { width: 53px; height: 20px; }
+  /* minmax(0, …) so a wide card scrolls inside itself instead of widening the page. */
+  .settings-grid { grid-template-columns: minmax(0, 1fr); }
   .settings-card--wide { grid-column: auto; }
   .sync-summary { grid-template-columns: 1fr; }
   .sync-summary div { border-right: 0; border-bottom: 1px solid var(--border); }

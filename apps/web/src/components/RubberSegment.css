@@ -69,6 +69,11 @@
   cursor: default;
 }
 
+.rubber-segment__item:disabled {
+  opacity: .3;
+  cursor: not-allowed;
+}
+
 .rubber-segment[data-draggable] .rubber-segment__item[aria-checked='true'] {
   cursor: grab;
 }
@@ -88,7 +93,7 @@
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .rubber-segment__item[aria-checked='false']:hover {
+  .rubber-segment__item[aria-checked='false']:not(:disabled):hover {
     opacity: var(--rs-hover);
   }
 }
