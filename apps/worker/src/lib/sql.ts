@@ -77,7 +77,8 @@ export const ALBUM_SELECT = `
   MAX(NULLIF(t.genre, '')) AS genre,
   MAX(NULLIF(t.record_label, '')) AS record_label,
   MAX(CASE WHEN t.codec IN ('flac','alac','wav') THEN 1 ELSE 0 END) AS lossless,
-  MAX(CASE WHEN LOWER(t.codec) IN ('ec-3','eac3','e-ac-3') THEN 1 ELSE 0 END) AS atmos
+  MAX(CASE WHEN LOWER(t.codec) IN ('ec-3','eac3','e-ac-3') THEN 1 ELSE 0 END) AS atmos,
+  MAX(CASE WHEN LOWER(t.codec) IN ('ec-3','eac3','e-ac-3') AND t.alt_path IS NOT NULL THEN 1 ELSE 0 END) AS aac51
 `;
 
 /** Keep album filters ahead of track aggregation so artist/id lookups stay indexed. */
@@ -101,6 +102,7 @@ export interface AlbumRow {
   record_label: string | null;
   lossless: number;
   atmos: number;
+  aac51: number;
 }
 
 export function toAlbum(r: AlbumRow) {
@@ -118,6 +120,7 @@ export function toAlbum(r: AlbumRow) {
     recordLabel: r.record_label,
     lossless: !!r.lossless,
     atmos: !!r.atmos,
+    aac51: !!r.aac51,
   };
 }
 

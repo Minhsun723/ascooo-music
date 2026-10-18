@@ -8,7 +8,7 @@ import { useCurrentTrack, usePlayer } from '../store/player';
 import { useSession } from '../store/session';
 import { toast } from '../store/toast';
 import { Artwork } from './Artwork';
-import { DolbyLogo } from './DolbyLogo';
+import { AtmosMark, hasAtmosMark } from './DolbyLogo';
 import {
   IconCheck,
   IconDisc,
@@ -188,7 +188,7 @@ export function TrackList({ tracks, numbered = true, compact = false, showMetada
             </button>
             <span className="track-row__quality">
               {isDolbyAtmos(track)
-                ? <span className="quality-badge quality-badge--dolby"><DolbyLogo /></span>
+                ? hasAtmosMark(track.hasAac51) ? <span className="quality-badge quality-badge--dolby"><AtmosMark hasAac51={track.hasAac51} /></span> : null
                 : quality ? <span className="quality-badge">{quality}</span> : null}
             </span>
             <span className="track-row__duration">{formatTime(track.duration)}</span>

@@ -10,7 +10,7 @@ import { useSession } from './store/session';
 import { useLibrarySync } from './store/sync';
 import { toast } from './store/toast';
 import { Artwork } from './components/Artwork';
-import { DolbyLogo } from './components/DolbyLogo';
+import { AtmosMark, hasAtmosMark } from './components/DolbyLogo';
 import { AlbumGrid, ArtistGrid, PlaylistGrid } from './components/MediaGrid';
 import { RubberSegment } from './components/RubberSegment';
 import { TrackList } from './components/TrackList';
@@ -182,7 +182,7 @@ export function AlbumPage() {
     else navigate('/library?tab=albums', { replace: true });
   };
   const mobileBackAction = <button type="button" className="collection-back-button" aria-label="返回" onClick={goBack}><IconChevronLeft size={20} /></button>;
-  return <><CollectionHero artworkId={album.artworkId} title={album.title} subtitle={album.artist} meta={heroMeta} badge={album.atmos ? <DolbyLogo variant="atmos" /> : album.lossless ? <span className="quality-badge">LOSSLESS</span> : undefined} tracks={tracks} compactTitle detailLayout mobileBackAction={mobileBackAction} /><section className="page-section page-section--tight"><TrackList tracks={tracks} showMetadata={false} /><footer className="album-summary">{album.year ? <span>{album.year} 年</span> : null}<span>{album.trackCount} 首歌曲 · {formatLongDuration(album.duration)}</span>{album.recordLabel ? <span>℗ {album.year ? `${album.year} ` : ''}{album.recordLabel}</span> : null}</footer></section>{moreByArtist.length ? <section className="page-section"><SectionHeading title={`更多 ${album.artist}`} /><AlbumGrid albums={moreByArtist} /></section> : null}</>;
+  return <><CollectionHero artworkId={album.artworkId} title={album.title} subtitle={album.artist} meta={heroMeta} badge={album.atmos ? hasAtmosMark(album.aac51) ? <AtmosMark hasAac51={album.aac51} variant="atmos" /> : undefined : album.lossless ? <span className="quality-badge">LOSSLESS</span> : undefined} tracks={tracks} compactTitle detailLayout mobileBackAction={mobileBackAction} /><section className="page-section page-section--tight"><TrackList tracks={tracks} showMetadata={false} /><footer className="album-summary">{album.year ? <span>{album.year} 年</span> : null}<span>{album.trackCount} 首歌曲 · {formatLongDuration(album.duration)}</span>{album.recordLabel ? <span>℗ {album.year ? `${album.year} ` : ''}{album.recordLabel}</span> : null}</footer></section>{moreByArtist.length ? <section className="page-section"><SectionHeading title={`更多 ${album.artist}`} /><AlbumGrid albums={moreByArtist} /></section> : null}</>;
 }
 
 export function ArtistPage() {

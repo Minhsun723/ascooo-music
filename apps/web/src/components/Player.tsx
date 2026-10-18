@@ -8,7 +8,7 @@ import { formatTime, isDolbyAtmos, qualityLabel } from '../lib/format';
 import { useCurrentTrack, usePlayer } from '../store/player';
 import { usePreferences } from '../store/preferences';
 import { Artwork } from './Artwork';
-import { DolbyLogo } from './DolbyLogo';
+import { DolbyLogo, SurroundLogo } from './DolbyLogo';
 import {
   IconChevronDown,
   IconClose,
@@ -226,7 +226,7 @@ export function PlayerBar() {
 
   if (!track) return null;
   const playingAtmos = isDolbyAtmos(track) && source === 'original';
-  const quality = source === 'aac51' ? '5.1' : qualityLabel(track);
+  const quality = qualityLabel(track);
 
   return (
     <footer className="player-bar" aria-label="音樂播放器">
@@ -247,7 +247,7 @@ export function PlayerBar() {
         {error ? <span className="player-error" role="status">{error}</span> : null}
       </div>
       <div className="player-bar__tools">
-        {playingAtmos ? <DolbyLogo variant="atmos" className="player-dolby" /> : null}
+        {playingAtmos ? <DolbyLogo variant="atmos" className="player-dolby" /> : source === 'aac51' ? <SurroundLogo variant="atmos" className="player-dolby" /> : null}
         {quality ? <span className="quality-badge player-quality">{quality}</span> : null}
         {track.hasLyrics ? <button type="button" className="icon-button" aria-label="顯示歌詞" onClick={() => setNowPlaying(true)}><IconLyrics size={19} /></button> : null}
         <LikeButton track={track} className="player-like" />
@@ -508,7 +508,7 @@ export function NowPlaying() {
   if (!shouldRender || !track) return null;
   const style = { '--now-accent': palette.accent, '--now-deep': palette.deep, '--now-glow': palette.glow } as CSSProperties;
   const playingAtmos = isDolbyAtmos(track) && source === 'original';
-  const quality = source === 'aac51' ? '5.1' : qualityLabel(track);
+  const quality = qualityLabel(track);
   const immersive = lyricsMode === 'immersive' && timed.length > 0;
 
   return (
@@ -535,7 +535,7 @@ export function NowPlaying() {
         <button type="button" className="icon-button now-playing__close" aria-label="關閉正在播放" onClick={() => setOpen(false)}><IconChevronDown /></button>
         <span className="now-playing__label">
           <span>NOW PLAYING</span>
-          {playingAtmos ? <DolbyLogo variant="atmos" className="now-playing__dolby" /> : quality ? <span className="quality-badge">{quality}</span> : null}
+          {playingAtmos ? <DolbyLogo variant="atmos" className="now-playing__dolby" /> : source === 'aac51' ? <SurroundLogo variant="atmos" className="now-playing__dolby" /> : quality ? <span className="quality-badge">{quality}</span> : null}
         </span>
       </header>
       <div className="now-playing__layout">

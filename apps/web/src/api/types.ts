@@ -58,6 +58,8 @@ export interface Album {
   recordLabel: string | null;
   lossless: boolean;
   atmos: boolean;
+  /** Some Atmos track on the album has an AAC 5.1 copy. Missing on responses cached before it existed. */
+  aac51?: boolean;
 }
 
 export interface Artist {

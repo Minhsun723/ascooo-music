@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import type { Album, Artist, Playlist } from '../api/types';
 import { formatLongDuration } from '../lib/format';
 import { Artwork } from './Artwork';
-import { DolbyLogo } from './DolbyLogo';
+import { AtmosMark, hasAtmosMark } from './DolbyLogo';
 
 type MediaItem =
   | { kind: 'album'; data: Album }
@@ -42,7 +42,7 @@ export function MediaCard({ item }: { item: MediaItem }) {
       <div className="media-card__art">
         <Artwork artworkId={album.artworkId} title={album.title} artist={album.artist} />
         {album.atmos
-          ? <span className="media-card__badge media-card__badge--dolby"><DolbyLogo /></span>
+          ? hasAtmosMark(album.aac51) ? <span className="media-card__badge media-card__badge--dolby"><AtmosMark hasAac51={album.aac51} /></span> : null
           : album.lossless ? <span className="media-card__badge quality-badge">LOSSLESS</span> : null}
       </div>
       <span className="media-card__title">{album.title}</span>
