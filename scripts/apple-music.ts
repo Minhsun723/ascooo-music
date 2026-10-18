@@ -30,6 +30,8 @@ interface SearchInput {
   album?: string;
   duration?: number;
   isrc?: string;
+  /** The local file is a Dolby Atmos (E-AC-3) stream. */
+  atmos?: boolean;
 }
 
 interface AppleSong {
@@ -41,6 +43,7 @@ interface AppleSong {
     durationInMillis?: number;
     isrc?: string;
     audioLocale?: string;
+    audioTraits?: string[];
     contentRating?: string;
     artwork?: AppleArtwork;
     hasLyrics?: boolean;
@@ -138,24 +141,32 @@ function versionPenalty(input: string, candidate: string): number {
   );
 }
 
+/**
+ * Unbounded score so near-identical candidates stay distinguishable. A single
+ * and its album re-release often share one ISRC but carry separately timed
+ * TTML, so ISRC is a strong signal rather than an immediate win.
+ */
 function scoreSong(input: SearchInput, song: AppleSong, rank: number): number {
   const attrs = song.attributes ?? {};
-  if (input.isrc && attrs.isrc && compact(input.isrc) === compact(attrs.isrc)) return 100;
-
   let score = Math.max(0, 18 - rank * 2);
+  if (input.isrc && attrs.isrc) score += compact(input.isrc) === compact(attrs.isrc) ? 60 : -20;
   score += similarity(input.title, attrs.name) * 38;
   score += similarity(input.artist, attrs.artistName) * 24;
   score += similarity(input.album, attrs.albumName) * 10;
+  if (input.album && compact(input.album) === compact(attrs.albumName)) score += 16;
 
   if (input.duration && attrs.durationInMillis) {
     const difference = Math.abs(input.duration - attrs.durationInMillis / 1000);
-    score += difference <= 2.5 ? 38 : difference <= 5 ? 27 : difference <= 10 ? 12 : difference <= 20 ? 2 : -24;
+    score += difference <= 2.5 ? 38 - difference * 4 : difference <= 5 ? 27 : difference <= 10 ? 12 : difference <= 20 ? 2 : -24;
   }
+  // A stereo file can come from an Atmos-capable release, but an Atmos file
+  // cannot come from a release Apple has no Atmos mix for.
+  if (input.atmos) score += attrs.audioTraits?.includes('atmos') ? 14 : -14;
   score -= versionPenalty(input.title, attrs.name ?? '');
   const compactTitle = compact(input.title);
   if (compactTitle.includes('explicit') && attrs.contentRating !== 'explicit') score -= 36;
   if (compactTitle.includes('clean') && attrs.contentRating === 'explicit') score -= 48;
-  return Math.max(0, Math.min(99, Math.round(score)));
+  return score;
 }
 
 function localizedValue(original: string, localized: string, japanese: boolean): string | null {
@@ -312,7 +323,7 @@ export class AppleMusicClient {
       audioLocale: attrs.audioLocale?.trim() || null,
       displayTitle: localizedValue(input.title, title, japanese),
       displayArtist: localizedValue(input.artist, artistName, japanese),
-      confidence: best.score,
+      confidence: Math.min(100, Math.round(best.score)),
       hasLyrics: !!attrs.hasLyrics,
       hasTimeSyncedLyrics: !!attrs.hasTimeSyncedLyrics,
     };

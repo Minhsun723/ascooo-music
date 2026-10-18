@@ -4,6 +4,7 @@ import type { AppEnv, Env } from '../env';
 import { requireAdmin, requireSessionAdmin } from '../lib/auth';
 import { ARTWORK_SIZES, artworkObjectKey, isArtworkSize, type ArtworkSize } from '../lib/artwork';
 import { AUDIO_EXTENSIONS, type AudioMetadata, extOf, extractMetadata, guessFromFilename } from '../lib/metadata';
+import { artistSearchKey, searchKey, trackSearchKey } from '../lib/search';
 import { type DavEntry, WebDAV, normalizePath, parentDir } from '../lib/webdav';
 
 /**
@@ -174,9 +175,12 @@ sync.post('/process', async (c) => {
   const limit = Math.min(Math.max(Number(body.limit) || 4, 1), 10);
   const db = c.env.DB;
   const { results } = await db
-    .prepare(`SELECT id, path, size, lrc_path, cover_path FROM tracks WHERE status = 'pending' ORDER BY id LIMIT ?`)
+    .prepare(
+      `SELECT id, path, size, lrc_path, cover_path, display_title, display_artist
+       FROM tracks WHERE status = 'pending' ORDER BY id LIMIT ?`,
+    )
     .bind(limit + 1)
-    .all<{ id: number; path: string; size: number; lrc_path: string | null; cover_path: string | null }>();
+    .all<PendingTrack>();
   const hasMore = results.length > limit;
 
   const dav = new WebDAV(c.env);
@@ -280,34 +284,55 @@ async function upsertArtist(
        SET display_name = COALESCE(?3, display_name),
          artwork_id = COALESCE(?4, artwork_id)
        WHERE apple_music_id = ?1 AND apple_music_name = ?2 COLLATE NOCASE
-       RETURNING id`,
+       RETURNING id, name, display_name, search_key`,
     ).bind(
       enrichment.appleMusicId,
       enrichment.appleMusicName,
       enrichment.displayName,
       enrichment.artworkId,
-    ).first<{ id: number }>();
-    if (existing) return existing;
+    ).first<ArtistRow>();
+    if (existing) return syncArtistSearchKey(db, existing);
   }
 
   const row = await db.prepare(
-    `INSERT INTO artists (name, display_name, apple_music_id, apple_music_name, artwork_id)
-     VALUES (?1, ?2, ?3, ?4, ?5)
+    `INSERT INTO artists (name, display_name, apple_music_id, apple_music_name, artwork_id, search_key)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
      ON CONFLICT DO UPDATE SET
        display_name = COALESCE(excluded.display_name, artists.display_name),
        apple_music_id = COALESCE(artists.apple_music_id, excluded.apple_music_id),
        apple_music_name = COALESCE(artists.apple_music_name, excluded.apple_music_name),
        artwork_id = COALESCE(excluded.artwork_id, artists.artwork_id)
-     RETURNING id`,
+     RETURNING id, name, display_name, search_key`,
   ).bind(
     name,
     enrichment?.displayName ?? null,
     enrichment?.appleMusicId ?? null,
     enrichment?.appleMusicName ?? null,
     enrichment?.artworkId ?? null,
-  ).first<{ id: number }>();
+    artistSearchKey(name, enrichment?.displayName),
+  ).first<ArtistRow>();
   if (!row) throw new Error(`無法建立藝人：${name}`);
-  return row;
+  return syncArtistSearchKey(db, row);
+}
+
+interface ArtistRow {
+  id: number;
+  name: string;
+  display_name: string | null;
+  search_key: string | null;
+}
+
+/**
+ * An upsert may land on an existing row whose stored name differs from the
+ * one passed in (Apple aliases, NOCASE matches), so derive the key from the
+ * row as stored. Only writes when the key actually changed.
+ */
+async function syncArtistSearchKey(db: D1Database, row: ArtistRow): Promise<{ id: number }> {
+  const key = artistSearchKey(row.name, row.display_name);
+  if (key !== row.search_key) {
+    await db.prepare('UPDATE artists SET search_key = ? WHERE id = ?').bind(key, row.id).run();
+  }
+  return { id: row.id };
 }
 
 function decodeBase64(value: string): Uint8Array {
@@ -442,13 +467,13 @@ sync.post('/import/track', async (c) => {
   const apple = item.appleMusic;
   const folder = parentDir(path);
   const folderName = folder === normalizePath(c.env.MUSIC_ROOT || '/') ? '' : folder.slice(folder.lastIndexOf('/') + 1);
-  const title = meta.title || guess.title;
-  const artist = meta.artist || guess.artist || meta.albumArtist || apple?.artistName?.trim() || '未知歌手';
-  const albumArtist = meta.albumArtist || artist;
-  const albumTitle = meta.album || folderName || '未知專輯';
+  const title = nfc(meta.title || guess.title);
+  const artist = nfc(meta.artist || guess.artist || meta.albumArtist || apple?.artistName?.trim() || '未知歌手');
+  const albumArtist = nfc(meta.albumArtist) || artist;
+  const albumTitle = nfc(meta.album || folderName || '未知專輯');
   const db = c.env.DB;
-  const displayTitle = apple?.displayTitle?.trim().slice(0, 500) || null;
-  const displayArtist = apple?.displayArtist?.trim().slice(0, 500) || null;
+  const displayTitle = nfc(apple?.displayTitle?.trim().slice(0, 500)) || null;
+  const displayArtist = nfc(apple?.displayArtist?.trim().slice(0, 500)) || null;
   const artistEnrichment = apple?.artistId && apple.artistName.trim()
     ? {
         appleMusicId: apple.artistId,
@@ -462,11 +487,19 @@ sync.post('/import/track', async (c) => {
   const albumArtistRow = albumArtist.toLowerCase() === artist.toLowerCase()
     ? artistRow
     : await upsertArtist(db, albumArtist);
-  const album = await db.prepare(
-    `INSERT INTO albums (title, artist_id, year, created_at) VALUES (?, ?, ?, ?)
-     ON CONFLICT(title, artist_id) DO UPDATE SET year = COALESCE(albums.year, excluded.year)
-     RETURNING id, artwork_id`,
-  ).bind(albumTitle, albumArtistRow!.id, meta.year ?? null, Date.now()).first<{ id: number; artwork_id: string | null }>();
+  const album = await upsertAlbum(db, albumTitle, albumArtistRow!.id, meta.year);
+
+  // Display names survive a sync without an Apple match (COALESCE below), so
+  // the search key has to be built from the values the row will end up with.
+  const previous = await db.prepare('SELECT display_title, display_artist FROM tracks WHERE path = ?')
+    .bind(path)
+    .first<{ display_title: string | null; display_artist: string | null }>();
+  const key = trackSearchKey({
+    title,
+    artist,
+    displayTitle: displayTitle ?? previous?.display_title,
+    displayArtist: displayArtist ?? previous?.display_artist,
+  });
 
   const now = Date.now();
   const row = await db.prepare(
@@ -474,10 +507,10 @@ sync.post('/import/track', async (c) => {
        path, lrc_path, cover_path, cover_signature, size, etag, mtime, scan_id, status, error,
        title, artist, artist_id, album_id, track_no, disc_no, year, genre, record_label,
        duration, codec, bitrate, sample_rate, bit_depth, channels, artwork_id, has_lyrics,
-       display_title, display_artist, apple_music_id, apple_isrc,
+       display_title, display_artist, apple_music_id, apple_isrc, search_key,
        metadata_version, added_at, updated_at
      ) VALUES (
-       ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?
+       ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?
      )
      ON CONFLICT(path) DO UPDATE SET
        lrc_path = excluded.lrc_path, cover_path = excluded.cover_path,
@@ -493,6 +526,7 @@ sync.post('/import/track', async (c) => {
        display_artist = COALESCE(excluded.display_artist, tracks.display_artist),
        apple_music_id = COALESCE(excluded.apple_music_id, tracks.apple_music_id),
        apple_isrc = COALESCE(excluded.apple_isrc, tracks.apple_isrc),
+       search_key = excluded.search_key,
        metadata_version = 1, updated_at = excluded.updated_at
      RETURNING id`,
   ).bind(
@@ -526,6 +560,7 @@ sync.post('/import/track', async (c) => {
     displayArtist,
     apple?.songId ?? null,
     apple?.isrc ?? null,
+    key,
     now,
     now,
   ).first<{ id: number }>();
@@ -553,10 +588,35 @@ sync.post('/import/track', async (c) => {
   return c.json({ id: row!.id, title: displayTitle ?? title });
 });
 
+/** Tag text is stored composed so equal names share one artist/album row. */
+const nfc = (value: string | null | undefined) => (value ?? '').normalize('NFC');
+
+async function upsertAlbum(db: D1Database, title: string, artistId: number, year: number | undefined) {
+  return db
+    .prepare(
+      `INSERT INTO albums (title, artist_id, year, created_at, search_key) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(title, artist_id) DO UPDATE SET year = COALESCE(albums.year, excluded.year),
+         search_key = excluded.search_key
+       RETURNING id, artwork_id`,
+    )
+    .bind(title, artistId, year ?? null, Date.now(), searchKey(title))
+    .first<{ id: number; artwork_id: string | null }>();
+}
+
+interface PendingTrack {
+  id: number;
+  path: string;
+  size: number;
+  lrc_path: string | null;
+  cover_path: string | null;
+  display_title: string | null;
+  display_artist: string | null;
+}
+
 async function saveTrack(
   env: Env,
   dav: WebDAV,
-  t: { id: number; path: string; size: number; lrc_path: string | null; cover_path: string | null },
+  t: PendingTrack,
   meta: AudioMetadata,
   error: string | null,
 ): Promise<string> {
@@ -565,24 +625,17 @@ async function saveTrack(
   const folder = parentDir(t.path);
   const folderName = folder === normalizePath(env.MUSIC_ROOT || '/') ? '' : folder.slice(folder.lastIndexOf('/') + 1);
 
-  const title = meta.title || guess.title;
-  const artist = meta.artist || guess.artist || meta.albumArtist || '未知歌手';
-  const albumArtist = meta.albumArtist || artist;
-  const albumTitle = meta.album || folderName || '未知專輯';
+  const title = nfc(meta.title || guess.title);
+  const artist = nfc(meta.artist || guess.artist || meta.albumArtist || '未知歌手');
+  const albumArtist = nfc(meta.albumArtist) || artist;
+  const albumTitle = nfc(meta.album || folderName || '未知專輯');
 
   const artistRow = await upsertArtist(db, artist);
   const albumArtistRow = albumArtist.toLowerCase() === artist.toLowerCase()
     ? artistRow
     : await upsertArtist(db, albumArtist);
 
-  const album = await db
-    .prepare(
-      `INSERT INTO albums (title, artist_id, year, created_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT(title, artist_id) DO UPDATE SET year = COALESCE(albums.year, excluded.year)
-       RETURNING id, artwork_id`,
-    )
-    .bind(albumTitle, albumArtistRow!.id, meta.year ?? null, Date.now())
-    .first<{ id: number; artwork_id: string | null }>();
+  const album = await upsertAlbum(db, albumTitle, albumArtistRow!.id, meta.year);
 
   // Artwork: keep per-track embedded art, while an explicit folder cover is
   // authoritative for the album and may replace an older album image.
@@ -626,7 +679,8 @@ async function saveTrack(
     db.prepare(
       `UPDATE tracks SET status = 'ready', error = ?, title = ?, artist = ?, artist_id = ?, album_id = ?,
          track_no = ?, disc_no = ?, year = ?, genre = ?, record_label = ?, duration = ?, codec = ?, bitrate = ?,
-         sample_rate = ?, bit_depth = ?, channels = ?, artwork_id = ?, has_lyrics = ?, metadata_version = 1, updated_at = ?
+         sample_rate = ?, bit_depth = ?, channels = ?, artwork_id = ?, has_lyrics = ?, search_key = ?,
+         metadata_version = 1, updated_at = ?
        WHERE id = ?`,
     ).bind(
       error,
@@ -647,6 +701,7 @@ async function saveTrack(
       meta.channels ?? null,
       trackArt,
       lyrics ? 1 : 0,
+      trackSearchKey({ title, artist, displayTitle: t.display_title, displayArtist: t.display_artist }),
       now,
       t.id,
     ),

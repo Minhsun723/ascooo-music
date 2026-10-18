@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import type { AppEnv } from '../env';
 import { requireAdmin } from '../lib/auth';
+import { searchPatterns } from '../lib/search-query';
 import {
   ALBUM_FROM,
   ALBUM_SELECT,
@@ -9,7 +10,6 @@ import {
   TRACK_JOINS,
   TRACK_SELECT,
   type TrackRow,
-  likePattern,
   toAlbum,
   toTrack,
 } from '../lib/sql';
@@ -248,34 +248,34 @@ library.get('/artists/:id', async (c) => {
 
 library.get('/search', async (c) => {
   const uid = c.get('user').id;
-  const q = (c.req.query('q') ?? '').trim();
-  if (!q) return c.json({ tracks: [], albums: [], artists: [] });
-  const like = likePattern(q);
+  const patterns = searchPatterns(c.req.query('q'));
+  if (!patterns) return c.json({ tracks: [], albums: [], artists: [] });
+  const { contains, prefix } = patterns;
   const db = c.env.DB;
   const [tracks, albums, artists] = await db.batch([
     db.prepare(
       `SELECT ${TRACK_SELECT} FROM tracks t ${TRACK_JOINS}
        WHERE t.status = 'ready' AND t.visible = 1 AND (
-         t.title LIKE ?2 ESCAPE '\\' OR t.display_title LIKE ?2 ESCAPE '\\'
-         OR t.artist LIKE ?2 ESCAPE '\\' OR t.display_artist LIKE ?2 ESCAPE '\\'
-         OR al.title LIKE ?2 ESCAPE '\\'
+         t.search_key LIKE ?2 ESCAPE '\\' OR t.search_key LIKE ?3 ESCAPE '\\'
+         OR al.search_key LIKE ?2 ESCAPE '\\' OR al.search_key LIKE ?3 ESCAPE '\\'
        )
-       ORDER BY CASE WHEN COALESCE(t.display_title, t.title) LIKE ?3 ESCAPE '\\' THEN 0 ELSE 1 END,
+       ORDER BY CASE WHEN t.search_key LIKE ?4 ESCAPE '\\' OR t.search_key LIKE ?5 ESCAPE '\\' THEN 0 ELSE 1 END,
          COALESCE(t.display_title, t.title) COLLATE NOCASE LIMIT 50`,
-    ).bind(uid, like, likePattern(q).slice(1)),
+    ).bind(uid, ...contains, ...prefix),
     db.prepare(
       `SELECT ${ALBUM_SELECT} ${ALBUM_FROM}
-       WHERE al.title LIKE ? ESCAPE '\\' OR ar.name LIKE ? ESCAPE '\\' OR ar.display_name LIKE ? ESCAPE '\\'
+       WHERE al.search_key LIKE ?1 ESCAPE '\\' OR al.search_key LIKE ?2 ESCAPE '\\'
+         OR ar.search_key LIKE ?1 ESCAPE '\\' OR ar.search_key LIKE ?2 ESCAPE '\\'
        GROUP BY al.id LIMIT 20`,
-    ).bind(like, like, like),
+    ).bind(...contains),
     db.prepare(
       `SELECT ar.id, COALESCE(ar.display_name, ar.name) AS name,
          COALESCE(ar.artwork_id,
            (SELECT al.artwork_id FROM albums al WHERE al.artist_id = ar.id AND al.artwork_id IS NOT NULL LIMIT 1)) AS artwork_id
-       FROM artists ar WHERE (ar.name LIKE ? ESCAPE '\\' OR ar.display_name LIKE ? ESCAPE '\\')
+       FROM artists ar WHERE (ar.search_key LIKE ?1 ESCAPE '\\' OR ar.search_key LIKE ?2 ESCAPE '\\')
          AND EXISTS (SELECT 1 FROM tracks t WHERE t.artist_id = ar.id AND t.status = 'ready' AND t.visible = 1)
        LIMIT 12`,
-    ).bind(like, like),
+    ).bind(...contains),
   ]);
   return c.json({
     tracks: (tracks.results as TrackRow[]).map(toTrack),
@@ -290,7 +290,7 @@ library.get('/search', async (c) => {
 
 library.get('/admin/tracks', requireAdmin, async (c) => {
   const uid = c.get('user').id;
-  const q = (c.req.query('q') ?? '').trim();
+  const patterns = searchPatterns(c.req.query('q'));
   const visibility = c.req.query('visibility') ?? 'all';
   const limit = int(c.req.query('limit'), 100, 200);
   const offset = int(c.req.query('offset'), 0, 1e9);
@@ -301,10 +301,12 @@ library.get('/admin/tracks', requireAdmin, async (c) => {
   else if (visibility === 'hidden') conditions.push('t.visible = 0');
   else if (visibility !== 'all') throw new HTTPException(400, { message: '無效的顯示篩選條件' });
 
-  if (q) {
-    const like = likePattern(q);
-    conditions.push("(t.title LIKE ? ESCAPE '\\' OR t.display_title LIKE ? ESCAPE '\\' OR t.artist LIKE ? ESCAPE '\\' OR t.display_artist LIKE ? ESCAPE '\\' OR al.title LIKE ? ESCAPE '\\')");
-    trackBindings.push(like, like, like, like, like);
+  if (patterns) {
+    const [key, reading] = patterns.contains;
+    conditions.push(
+      "(t.search_key LIKE ? ESCAPE '\\' OR t.search_key LIKE ? ESCAPE '\\' OR al.search_key LIKE ? ESCAPE '\\' OR al.search_key LIKE ? ESCAPE '\\')",
+    );
+    trackBindings.push(key, reading, key, reading);
   }
 
   const where = conditions.join(' AND ');

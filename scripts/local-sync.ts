@@ -54,6 +54,7 @@ interface PreparedTrack {
     lyricsHasTimeSyncedLyrics: boolean | null;
   }) | null;
   appleCheckedAt: number | null;
+  appleMatchVersion?: number;
   appleLyricsCheckedAt: number | null;
   trackArtworkId: string | null;
   folderArtworkId: string | null;
@@ -232,6 +233,10 @@ const sha1 = (data: Uint8Array) => createHash('sha1').update(data).digest('hex')
 const sha256 = (data: Uint8Array) => createHash('sha256').update(data).digest('hex');
 const LRC_SYNCED = /^\s*\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]/m;
 const INSTRUMENTAL_TITLE = /\b(?:instrumental|karaoke|off[\s-]?vocal)\b|伴奏|インスト(?:ゥルメンタル)?/iu;
+const DOLBY_ATMOS_CODECS = new Set(['ec-3', 'eac3', 'e-ac-3']);
+// Bump when Apple Music scoring changes so cached matches (and the TTML they
+// selected) are re-resolved once instead of waiting for the refresh interval.
+const APPLE_MATCH_VERSION = 2;
 
 function lyricsFormat(path: string, content: string): 'lrc' | 'ttml' | 'plain' {
   if (extOf(path) === 'ttml' || /<tt(?:\s|>)/i.test(content)) return 'ttml';
@@ -530,7 +535,8 @@ async function prepare(): Promise<SyncManifest> {
       const cachedAppleNameLocalized = !!cached?.appleMusic &&
         !(cached.appleMusic.audioLocale ?? '').toLowerCase().startsWith('ja') &&
         /\p{Script=Katakana}/u.test(`${cached.appleMusic.artistName}${cached.appleMusic.title}`);
-      const appleFresh = !apple || !cachedNeedsArtistRecovery && !cachedAppleNameLocalized &&
+      const cachedAppleMatchCurrent = cached?.appleMatchVersion === APPLE_MATCH_VERSION;
+      const appleFresh = !apple || !cachedNeedsArtistRecovery && !cachedAppleNameLocalized && cachedAppleMatchCurrent &&
         !!cached?.appleCheckedAt && Date.now() - cached.appleCheckedAt < refreshInterval();
       const cachedLyricsReusable = !!cached?.lyrics && cached.lrcPath === currentLyricsPath;
       const lyricsReady = !apple?.hasMediaUserToken || !!cached?.lyrics || !!currentLyricsFile ||
@@ -584,7 +590,12 @@ async function prepare(): Promise<SyncManifest> {
 
       let appleMusic = cached?.appleMusic ?? null;
       let appleCheckedAt = cached?.appleCheckedAt ?? null;
+      let appleMatchVersion = cached?.appleMatchVersion;
       let appleLyricsCheckedAt = cached?.appleLyricsCheckedAt ?? null;
+      // Set when the Apple lyrics song must be resolved again, so a TTML timed
+      // for a different release is not carried over from the cache.
+      let appleLyricsStale = false;
+      const atmos = DOLBY_ATMOS_CODECS.has((preparedMetadata.codec ?? '').toLowerCase());
       if (apple && (!appleFresh || !audioUnchanged)) {
         const guess = guessFromFilename(file.path);
         const sourceTitle = preparedMetadata.title || guess.title;
@@ -596,6 +607,7 @@ async function prepare(): Promise<SyncManifest> {
             album: preparedMetadata.album,
             duration: preparedMetadata.duration,
             isrc: preparedMetadata.isrc,
+            atmos,
           };
           let match = await apple.matchTrack(matchInput);
           if (!match && !sourceArtist && apple.storefront !== apple.lyricsStorefront) {
@@ -606,6 +618,9 @@ async function prepare(): Promise<SyncManifest> {
           if (!trackArtworkId && match?.songArtwork) {
             trackArtworkId = await addAppleArtwork(artworks, appleArtworkJobs, match.songArtwork);
           }
+          const previous = cached?.appleMusic;
+          const keepLyricsSong = !!match && cachedAppleMatchCurrent && previous?.songId === match.songId;
+          appleLyricsStale = !keepLyricsSong;
           if (match) {
             appleMusic = {
               songId: match.songId,
@@ -620,14 +635,15 @@ async function prepare(): Promise<SyncManifest> {
               hasLyrics: match.hasLyrics,
               hasTimeSyncedLyrics: match.hasTimeSyncedLyrics,
               artistArtworkId,
-              lyricsSongId: null,
-              lyricsAudioLocale: null,
-              lyricsHasTimeSyncedLyrics: null,
+              lyricsSongId: keepLyricsSong ? previous!.lyricsSongId : null,
+              lyricsAudioLocale: keepLyricsSong ? previous!.lyricsAudioLocale : null,
+              lyricsHasTimeSyncedLyrics: keepLyricsSong ? previous!.lyricsHasTimeSyncedLyrics : null,
             };
           } else {
             appleMusic = null;
           }
           appleCheckedAt = Date.now();
+          appleMatchVersion = APPLE_MATCH_VERSION;
           if (cached?.appleMusic?.songId !== appleMusic?.songId) appleLyricsCheckedAt = null;
         } catch (error) {
           warnOnce('apple-match', `  Apple Music 配對暫停，本次保留既有結果：${error instanceof Error ? error.message : String(error)}`);
@@ -659,7 +675,7 @@ async function prepare(): Promise<SyncManifest> {
           console.warn(`  略過歌詞 ${lyricsFile.path}：${error instanceof Error ? error.message : String(error)}`);
         }
       }
-      if (!lyrics && cached?.lyrics) {
+      if (!lyrics && cached?.lyrics && !(appleLyricsStale && cached.lyrics.source === 'apple-music')) {
         lyrics = cached.lyrics;
         lrcPath = cached.lrcPath;
         lrcSignature = cached.lrcSignature;
@@ -682,6 +698,7 @@ async function prepare(): Promise<SyncManifest> {
               album: preparedMetadata.album,
               duration: preparedMetadata.duration,
               isrc: preparedMetadata.isrc || appleMusic.isrc || undefined,
+              atmos,
             });
             if (lyricsMatch) {
               lyricsSongId = lyricsMatch.songId;
@@ -713,6 +730,13 @@ async function prepare(): Promise<SyncManifest> {
       } else if (apple?.hasMediaUserToken && appleMusic && (isInstrumental || !appleMusic.hasTimeSyncedLyrics)) {
         appleLyricsCheckedAt = Date.now();
       }
+      // The re-resolved song had no usable TTML (or Apple failed this run):
+      // slightly offset lyrics are still better than none.
+      if (!lyrics && cached?.lyrics?.source === 'apple-music' && appleLyricsStale) {
+        lyrics = cached.lyrics;
+        lrcPath = cached.lrcPath;
+        lrcSignature = cached.lrcSignature;
+      }
       if (!lyrics && embeddedLyrics) {
         lyrics = { content: embeddedLyrics, source: 'embedded', format: lyricsFormat('', embeddedLyrics) };
       }
@@ -731,6 +755,7 @@ async function prepare(): Promise<SyncManifest> {
         lyrics,
         appleMusic,
         appleCheckedAt,
+        appleMatchVersion,
         appleLyricsCheckedAt,
         trackArtworkId,
         folderArtworkId,
