@@ -1,4 +1,4 @@
-import { type AudioMetadata, type RangeReader, clean, latin1, parseNumberPair, parseYear, u24be, u32be, u32le, utf8 } from './reader';
+import { type AudioMetadata, type RangeReader, clean, latin1, parseDate, parseNumberPair, parseYear, u24be, u32be, u32le, utf8 } from './reader';
 
 /** Parse Vorbis comments (shared by FLAC; also used for OGG if added later). */
 export function applyVorbisComments(b: Uint8Array, meta: AudioMetadata): void {
@@ -25,8 +25,10 @@ export function applyVorbisComments(b: Uint8Array, meta: AudioMetadata): void {
   meta.trackNo ??= parseNumberPair(tags.TRACKNUMBER);
   meta.discNo ??= parseNumberPair(tags.DISCNUMBER);
   meta.year ??= parseYear(tags.DATE ?? tags.YEAR ?? tags.ORIGINALDATE);
+  meta.releaseDate ??= parseDate(tags.RELEASEDATE ?? tags.DATE ?? tags.ORIGINALDATE);
   meta.genre ??= clean(tags.GENRE);
   meta.recordLabel ??= clean(tags.LABEL ?? tags.ORGANIZATION ?? tags.PUBLISHER ?? tags.RECORDLABEL ?? tags.RECORD_LABEL);
+  meta.copyright ??= clean(tags.COPYRIGHT);
   meta.isrc ??= clean(tags.ISRC);
   const lyr = tags.LYRICS ?? tags.UNSYNCEDLYRICS ?? tags.SYNCEDLYRICS;
   if (lyr?.trim()) meta.lyrics ??= lyr.trim();

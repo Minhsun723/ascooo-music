@@ -3,6 +3,7 @@ import {
   type RangeReader,
   clean,
   latin1,
+  parseDate,
   parseNumberPair,
   parseYear,
   u32be,
@@ -52,7 +53,7 @@ const termSize = (enc: number) => (enc === 1 || enc === 2 ? 2 : 1);
 
 const V22_MAP: Record<string, string> = {
   TT2: 'TIT2', TP1: 'TPE1', TP2: 'TPE2', TAL: 'TALB', TRK: 'TRCK', TPA: 'TPOS',
-  TYE: 'TYER', TCO: 'TCON', TPB: 'TPUB', TRC: 'TSRC', ULT: 'USLT', SLT: 'SYLT', PIC: 'APIC', TXX: 'TXXX',
+  TYE: 'TYER', TDA: 'TDAT', TCO: 'TCON', TPB: 'TPUB', TCR: 'TCOP', TRC: 'TSRC', ULT: 'USLT', SLT: 'SYLT', PIC: 'APIC', TXX: 'TXXX',
 };
 
 function fmtLrcTime(ms: number): string {
@@ -102,6 +103,8 @@ export function parseID3v2(tag: Uint8Array, meta: AudioMetadata): void {
   const hdrLen = ver === 2 ? 6 : 10;
   let syncedLyrics: string | undefined;
   let plainLyrics: string | undefined;
+  // ID3v2.3 keeps the day apart from the year, as DDMM.
+  let dayMonth: string | undefined;
 
   while (pos + hdrLen <= body.length) {
     let id = latin1(body, pos, pos + idLen);
@@ -143,9 +146,12 @@ export function parseID3v2(tag: Uint8Array, meta: AudioMetadata): void {
         case 'TALB': meta.album ??= text; break;
         case 'TRCK': meta.trackNo ??= parseNumberPair(text); break;
         case 'TPOS': meta.discNo ??= parseNumberPair(text); break;
-        case 'TYER':
+        case 'TYER': meta.year ??= parseYear(text); break;
         case 'TDRC':
-        case 'TDOR': meta.year ??= parseYear(text); break;
+        case 'TDRL':
+        case 'TDOR': meta.year ??= parseYear(text); meta.releaseDate ??= parseDate(text); break;
+        case 'TDAT': if (text && /^\d{4}$/.test(text)) dayMonth ??= text; break;
+        case 'TCOP': meta.copyright ??= text; break;
         case 'TCON': if (text) meta.genre ??= genreName(text); break;
         case 'TPUB': meta.recordLabel ??= text; break;
         case 'TSRC': meta.isrc ??= text; break;
@@ -202,6 +208,7 @@ export function parseID3v2(tag: Uint8Array, meta: AudioMetadata): void {
   }
 
   meta.lyrics ??= syncedLyrics ?? plainLyrics;
+  if (meta.year && dayMonth) meta.releaseDate ??= parseDate(`${meta.year}-${dayMonth.slice(2)}-${dayMonth.slice(0, 2)}`);
 }
 
 // ---------- MPEG audio frame analysis (duration / bitrate) ----------

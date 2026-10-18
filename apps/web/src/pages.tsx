@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import { api } from './api/client';
 import type { Album, Artist, HomeData, ManagedTrack, ManagedTrackStats, ManagedUser, Track } from './api/types';
-import { formatLongDuration } from './lib/format';
+import { formatLongDuration, formatReleaseDate } from './lib/format';
 import { canPlayAtmos, usePlayer } from './store/player';
 import { IMMERSIVE_STYLES, LYRICS_FONTS, LYRICS_MODES, SURROUND_FORMATS, usePreferences, type LyricsMode, type SurroundFormat } from './store/preferences';
 import { useSession } from './store/session';
@@ -182,7 +182,7 @@ export function AlbumPage() {
     else navigate('/library?tab=albums', { replace: true });
   };
   const mobileBackAction = <button type="button" className="collection-back-button" aria-label="返回" onClick={goBack}><IconChevronLeft size={20} /></button>;
-  return <><CollectionHero artworkId={album.artworkId} title={album.title} subtitle={album.artist} meta={heroMeta} badge={album.atmos ? hasAtmosMark(album.aac51) ? <AtmosMark hasAac51={album.aac51} variant="atmos" /> : undefined : album.lossless ? <span className="quality-badge">LOSSLESS</span> : undefined} tracks={tracks} compactTitle detailLayout mobileBackAction={mobileBackAction} /><section className="page-section page-section--tight"><TrackList tracks={tracks} showMetadata={false} /><footer className="album-summary">{album.year ? <span>{album.year} 年</span> : null}<span>{album.trackCount} 首歌曲 · {formatLongDuration(album.duration)}</span>{album.recordLabel ? <span>℗ {album.year ? `${album.year} ` : ''}{album.recordLabel}</span> : null}</footer></section>{moreByArtist.length ? <section className="page-section"><SectionHeading title={`更多 ${album.artist}`} /><AlbumGrid albums={moreByArtist} /></section> : null}</>;
+  return <><CollectionHero artworkId={album.artworkId} title={album.title} subtitle={album.artist} meta={heroMeta} badge={album.atmos ? hasAtmosMark(album.aac51) ? <AtmosMark hasAac51={album.aac51} variant="atmos" /> : undefined : album.lossless ? <span className="quality-badge">LOSSLESS</span> : undefined} tracks={tracks} compactTitle detailLayout mobileBackAction={mobileBackAction} /><section className="page-section page-section--tight"><TrackList tracks={tracks} showMetadata={false} /><footer className="album-summary">{album.releaseDate ? <span>{formatReleaseDate(album.releaseDate)}</span> : album.year ? <span>{album.year} 年</span> : null}<span>{album.trackCount} 首歌曲 · {formatLongDuration(album.duration)}</span>{album.copyright ? <span>{album.copyright}</span> : album.recordLabel ? <span>℗ {album.year ? `${album.year} ` : ''}{album.recordLabel}</span> : null}</footer></section>{moreByArtist.length ? <section className="page-section"><SectionHeading title={`更多 ${album.artist}`} /><AlbumGrid albums={moreByArtist} /></section> : null}</>;
 }
 
 export function ArtistPage() {

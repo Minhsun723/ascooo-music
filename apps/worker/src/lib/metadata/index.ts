@@ -6,6 +6,9 @@ import { type AudioMetadata, RangeReader, latin1 } from './reader';
 
 export type { AudioMetadata } from './reader';
 
+/** Bump when the parsers start reading new fields, so already-synced tracks are parsed again once. */
+export const METADATA_VERSION = 2;
+
 export const AUDIO_EXTENSIONS = ['mp3', 'm4a', 'mp4', 'aac', 'flac', 'alac', 'ogg', 'opus', 'wav'];
 
 export const extOf = (p: string) => p.slice(p.lastIndexOf('.') + 1).toLowerCase();

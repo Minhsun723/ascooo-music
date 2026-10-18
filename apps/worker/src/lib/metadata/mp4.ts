@@ -1,4 +1,4 @@
-import { type AudioMetadata, type RangeReader, clean, latin1, parseYear, u16be, u32be, u64be, utf8 } from './reader';
+import { type AudioMetadata, type RangeReader, clean, latin1, parseDate, parseYear, u16be, u32be, u64be, utf8 } from './reader';
 
 interface Atom {
   type: string;
@@ -58,7 +58,14 @@ function parseIlst(b: Uint8Array, ilst: Atom, meta: AudioMetadata, fileOffset: n
       case '\u00a9ART': meta.artist ??= text(); break;
       case 'aART': meta.albumArtist ??= text(); break;
       case '\u00a9alb': meta.album ??= text(); break;
-      case '\u00a9day': meta.year ??= parseYear(text()); break;
+      case '\u00a9day': {
+        const day = text();
+        meta.year ??= parseYear(day);
+        meta.releaseDate ??= parseDate(day);
+        break;
+      }
+      case 'cprt':
+      case '----:COPYRIGHT': meta.copyright ??= text(); break;
       case '\u00a9gen': meta.genre ??= text(); break;
       case '\u00a9pub':
       case '----:LABEL':

@@ -4,7 +4,7 @@ import type { AppEnv, Env } from '../env';
 import { requireAdmin, requireSessionAdmin } from '../lib/auth';
 import { ARTWORK_ASSET_VERSION, ARTWORK_SIZES, artworkObjectKey, isArtworkSize, type ArtworkSize } from '../lib/artwork';
 import { type AlternateSource, aac51Root, pairAac51 } from '../lib/aac51';
-import { AUDIO_EXTENSIONS, type AudioMetadata, extOf, extractMetadata, guessFromFilename } from '../lib/metadata';
+import { AUDIO_EXTENSIONS, type AudioMetadata, METADATA_VERSION, extOf, extractMetadata, guessFromFilename } from '../lib/metadata';
 import { artistSearchKey, searchKey, trackSearchKey } from '../lib/search';
 import { type DavEntry, WebDAV, normalizePath, parentDir } from '../lib/webdav';
 
@@ -140,7 +140,7 @@ sync.post('/list', async (c) => {
            OR COALESCE(tracks.lrc_path, '') != COALESCE(excluded.lrc_path, '')
            OR COALESCE(tracks.cover_path, '') != COALESCE(excluded.cover_path, '')
            OR COALESCE(tracks.cover_signature, '') != COALESCE(excluded.cover_signature, '')
-          OR tracks.metadata_version < 1
+          OR tracks.metadata_version < ${METADATA_VERSION}
          THEN 'pending' ELSE tracks.status END,
        lrc_path = excluded.lrc_path,
        cover_path = excluded.cover_path,
@@ -534,9 +534,9 @@ sync.post('/import/track', async (c) => {
        title, artist, artist_id, album_id, track_no, disc_no, year, genre, record_label,
        duration, codec, bitrate, sample_rate, bit_depth, channels, artwork_id, has_lyrics,
        display_title, display_artist, apple_music_id, apple_isrc, search_key,
-       alt_path, alt_size, alt_etag, metadata_version, added_at, updated_at
+       alt_path, alt_size, alt_etag, copyright, release_date, metadata_version, added_at, updated_at
      ) VALUES (
-       ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?
+       ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${METADATA_VERSION}, ?, ?
      )
      ON CONFLICT(path) DO UPDATE SET
        lrc_path = excluded.lrc_path, cover_path = excluded.cover_path,
@@ -554,7 +554,8 @@ sync.post('/import/track', async (c) => {
        apple_isrc = COALESCE(excluded.apple_isrc, tracks.apple_isrc),
        search_key = excluded.search_key,
        alt_path = excluded.alt_path, alt_size = excluded.alt_size, alt_etag = excluded.alt_etag,
-       metadata_version = 1, updated_at = excluded.updated_at
+       copyright = excluded.copyright, release_date = excluded.release_date,
+       metadata_version = excluded.metadata_version, updated_at = excluded.updated_at
      RETURNING id`,
   ).bind(
     path,
@@ -591,6 +592,8 @@ sync.post('/import/track', async (c) => {
     aac51?.path ?? null,
     aac51?.size ?? null,
     aac51?.etag ?? null,
+    meta.copyright ?? null,
+    meta.releaseDate ?? null,
     now,
     now,
   ).first<{ id: number }>();
@@ -757,7 +760,7 @@ async function saveTrack(
       `UPDATE tracks SET status = 'ready', error = ?, title = ?, artist = ?, artist_id = ?, album_id = ?,
          track_no = ?, disc_no = ?, year = ?, genre = ?, record_label = ?, duration = ?, codec = ?, bitrate = ?,
          sample_rate = ?, bit_depth = ?, channels = ?, artwork_id = ?, has_lyrics = ?, search_key = ?,
-         metadata_version = 1, updated_at = ?
+         copyright = ?, release_date = ?, metadata_version = ${METADATA_VERSION}, updated_at = ?
        WHERE id = ?`,
     ).bind(
       error,
@@ -779,6 +782,8 @@ async function saveTrack(
       trackArt,
       lyrics ? 1 : 0,
       trackSearchKey({ title, artist, displayTitle: t.display_title, displayArtist: t.display_artist }),
+      meta.copyright ?? null,
+      meta.releaseDate ?? null,
       now,
       t.id,
     ),

@@ -77,6 +77,10 @@ export interface AudioMetadata {
   year?: number;
   genre?: string;
   recordLabel?: string;
+  /** Release day as YYYY-MM-DD, when the tags carry more than a year. */
+  releaseDate?: string;
+  /** The copyright line exactly as tagged, e.g. "℗ 2026 UNIVERSAL MUSIC LLC". */
+  copyright?: string;
   isrc?: string;
   lyrics?: string;
   duration?: number;
@@ -98,6 +102,15 @@ export function parseYear(v: string | undefined): number | undefined {
   if (!v) return undefined;
   const m = v.match(/\d{4}/);
   return m ? Number(m[0]) : undefined;
+}
+
+/** A full YYYY-MM-DD from tags like "2026-03-14" or "2026-03-14T07:00:00Z"; year-only values give undefined. */
+export function parseDate(v: string | undefined): string | undefined {
+  const m = v?.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return undefined;
+  const [, y, mo, d] = m.map(Number);
+  const date = new Date(Date.UTC(y, mo - 1, d));
+  return date.getUTCMonth() === mo - 1 && date.getUTCDate() === d ? m.slice(1).join('-') : undefined;
 }
 
 export function clean(v: string | undefined | null): string | undefined {

@@ -16,6 +16,12 @@ export function formatLongDuration(sec: number): string {
   return `${m} 分鐘`;
 }
 
+/** "2026-07-16" → "2026 年 7 月 16 日". */
+export function formatReleaseDate(date: string): string {
+  const [y, m, d] = date.split('-').map(Number);
+  return `${y} 年 ${m} 月 ${d} 日`;
+}
+
 export const LOSSLESS = new Set(['flac', 'alac', 'wav']);
 export const DOLBY_ATMOS = new Set(['ec-3', 'eac3', 'e-ac-3']);
 

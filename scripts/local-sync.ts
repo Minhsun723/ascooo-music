@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path';
 import sharp from 'sharp';
 import { type Aac51Pairing, type AlternateSource, aac51Root, pairAac51 } from '../apps/worker/src/lib/aac51';
 import { ARTWORK_SIZES, type ArtworkSize } from '../apps/worker/src/lib/artwork';
-import { AUDIO_EXTENSIONS, type AudioMetadata, extOf, extractMetadata, guessFromFilename } from '../apps/worker/src/lib/metadata';
+import { AUDIO_EXTENSIONS, type AudioMetadata, METADATA_VERSION, extOf, extractMetadata, guessFromFilename } from '../apps/worker/src/lib/metadata';
 import { type DavEntry, WebDAV, normalizePath } from '../apps/worker/src/lib/webdav';
 import { AppleMusicClient, appleArtworkUrl, type AppleArtwork, type AppleMusicMatch } from './apple-music';
 
@@ -43,6 +43,8 @@ interface PreparedTrack {
   coverSignature: string | null;
   metadata: Omit<AudioMetadata, 'picture' | 'lyrics'>;
   metadataError: string | null;
+  /** Parser version that produced metadata; older entries are parsed again for the fields added since. */
+  metadataVersion?: number;
   lyrics: {
     content: string;
     source: 'lrc' | 'ttml' | 'embedded' | 'apple-music';
@@ -591,6 +593,8 @@ async function prepare(): Promise<SyncManifest> {
         hasStableSignature(file) && hasStableSignature(cover) &&
         trackSignature(cached) === entrySignature(file) &&
         cached.coverPath === (cover?.path ?? null) && cached.coverSignature === coverSignature;
+      // Re-read the tags of unchanged files once the parsers learn new fields; artwork stays cached.
+      const metadataCurrent = cached?.metadataVersion === METADATA_VERSION;
       const cachedGuess = cached ? guessFromFilename(cached.path) : null;
       const cachedNeedsArtistRecovery = !!cached && !cached.appleMusic &&
         !(cached.metadata.artist || cached.metadata.albumArtist || cachedGuess?.artist);
@@ -604,7 +608,7 @@ async function prepare(): Promise<SyncManifest> {
       const cachedLyricsReusable = !!cached?.lyrics && cached.lrcPath === currentLyricsPath;
       const lyricsReady = !apple?.hasMediaUserToken || !!cached?.lyrics || !!currentLyricsFile ||
         !cached?.appleMusic?.hasTimeSyncedLyrics || !!cached.appleLyricsCheckedAt;
-      const unchanged = audioUnchanged && appleFresh && lyricsReady &&
+      const unchanged = audioUnchanged && metadataCurrent && appleFresh && lyricsReady &&
         (cachedLyricsReusable || (
           hasStableSignature(currentLyricsFile) && cached!.lrcPath === currentLyricsPath &&
           cached!.lrcSignature === currentLyricsSignature
@@ -620,7 +624,7 @@ async function prepare(): Promise<SyncManifest> {
       let metadata: AudioMetadata = {};
       let metadataError: string | null = null;
       let embeddedLyrics: string | undefined;
-      if (audioUnchanged) {
+      if (audioUnchanged && metadataCurrent) {
         metadata = { ...cached!.metadata };
         metadataError = cached!.metadataError;
         if (cached!.lyrics?.source === 'embedded') embeddedLyrics = cached!.lyrics.content;
@@ -815,6 +819,7 @@ async function prepare(): Promise<SyncManifest> {
         coverSignature,
         metadata: preparedMetadata,
         metadataError,
+        metadataVersion: metadataError ? cached?.metadataVersion : METADATA_VERSION,
         lyrics,
         appleMusic,
         appleCheckedAt,

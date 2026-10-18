@@ -60,6 +60,10 @@ export interface Album {
   atmos: boolean;
   /** Some Atmos track on the album has an AAC 5.1 copy. Missing on responses cached before it existed. */
   aac51?: boolean;
+  /** The album's copyright line exactly as tagged. Only on the album detail response. */
+  copyright?: string | null;
+  /** Release day as YYYY-MM-DD. Only on the album detail response. */
+  releaseDate?: string | null;
 }
 
 export interface Artist {
