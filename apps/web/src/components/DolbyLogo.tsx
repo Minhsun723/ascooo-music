@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { canPlayAtmos } from '../store/player';
 
 type LogoVariant = 'compact' | 'atmos';
@@ -24,14 +25,22 @@ export function DolbyLogo({ variant = 'compact', className = '' }: DolbyLogoProp
   );
 }
 
-/** The AAC 5.1 mark, sized to sit where the Dolby logo would. */
+/** The AAC 5.1 mark: a solid badge with the numerals cut out, sized to sit where the Dolby logo would. */
 export function SurroundLogo({ variant = 'compact', className = '' }: DolbyLogoProps) {
+  // Every badge on the page needs its own mask id.
+  const maskId = `surround-${useId().replace(/[^\w-]/g, '')}`;
   return (
     <span className={`surround-logo surround-logo--${variant} ${className}`} role="img" aria-label="AAC 5.1" title="AAC 5.1">
-      <svg viewBox="0 0 19 14" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M8 2.2H3l-.5 4.4c.8-.6 1.7-.8 2.6-.8 2 0 3.3 1.4 3.3 3.2 0 1.9-1.4 3.2-3.4 3.2-1.3 0-2.3-.6-2.9-1.5" />
-        <circle cx="11.2" cy="11.2" r="1.15" fill="currentColor" stroke="none" />
-        <path d="M14 4.2 16.6 2v10.2" />
+      <svg viewBox="0 0 24 16" fill="currentColor" aria-hidden="true">
+        <mask id={maskId}>
+          <rect width="24" height="16" fill="#fff" />
+          <g transform="translate(3.12 1.26) scale(.95)" fill="none" stroke="#000" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M8 2.2H3l-.5 4.4c.8-.6 1.7-.8 2.6-.8 2 0 3.3 1.4 3.3 3.2 0 1.9-1.4 3.2-3.4 3.2-1.3 0-2.3-.6-2.9-1.5" />
+            <circle cx="11.2" cy="11.2" r="1.15" fill="#000" stroke="none" />
+            <path d="M14 4.2 16.6 2v10.2" />
+          </g>
+        </mask>
+        <rect width="24" height="16" rx="3" mask={`url(#${maskId})`} />
       </svg>
     </span>
   );

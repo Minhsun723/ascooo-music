@@ -10,7 +10,7 @@ import { useSession } from './store/session';
 import { useLibrarySync } from './store/sync';
 import { toast } from './store/toast';
 import { Artwork } from './components/Artwork';
-import { AtmosMark, hasAtmosMark } from './components/DolbyLogo';
+import { AtmosMark, hasAtmosMark, SurroundLogo } from './components/DolbyLogo';
 import { AlbumGrid, ArtistGrid, PlaylistGrid } from './components/MediaGrid';
 import { RubberSegment } from './components/RubberSegment';
 import { TrackList } from './components/TrackList';
@@ -696,10 +696,11 @@ const LYRICS_TABS: { value: LyricsTab; label: string; icon: typeof IconFont }[] 
   { value: 'effect', label: '歌詞效果', icon: IconSparkle },
 ];
 
-// The Atmos option shows the logo, masked so it follows the segment's text colour,
-// and cannot be chosen in a browser that does not decode EC-3.
+// The Atmos and AAC 5.1 options show their logos in the segment's text colour.
+// Atmos cannot be chosen in a browser that does not decode EC-3.
 const SURROUND_SEGMENTS = SURROUND_FORMATS.map((format) => format.value === 'atmos'
   ? { ...format, label: <span className="segment-atmos-logo" role="img" aria-label={format.label} />, disabled: !canPlayAtmos }
+  : format.value === 'aac51' ? { ...format, label: <SurroundLogo className="segment-surround-logo" /> }
   : format);
 
 export function SettingsPage() {
