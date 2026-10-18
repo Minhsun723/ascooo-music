@@ -4,6 +4,7 @@ export interface Env {
   ANONYMOUS_LIMITER: RateLimit;
   WEBDAV_URL: string;
   MUSIC_ROOT: string;
+  AAC51_ROOT?: string;
   WEBDAV_USERNAME?: string;
   WEBDAV_PASSWORD?: string;
   WEBDAV_BEARER_TOKEN?: string;

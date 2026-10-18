@@ -7,6 +7,7 @@ export const TRACK_SELECT = `
   COALESCE(aa.display_name, aa.name) AS album_artist,
   t.track_no, t.disc_no, t.year, t.genre, t.duration, t.codec, t.bitrate, t.sample_rate,
   t.bit_depth, t.channels, COALESCE(t.artwork_id, al.artwork_id) AS artwork_id, t.has_lyrics,
+  t.alt_path IS NOT NULL AS has_aac51,
   t.added_at, CASE WHEN f.track_id IS NULL THEN 0 ELSE 1 END AS liked
 `;
 
@@ -37,6 +38,7 @@ export interface TrackRow {
   channels: number | null;
   artwork_id: string | null;
   has_lyrics: number;
+  has_aac51: number;
   added_at: number;
   liked: number;
 }
@@ -61,6 +63,7 @@ export function toTrack(r: TrackRow) {
     channels: r.channels,
     artworkId: r.artwork_id,
     hasLyrics: !!r.has_lyrics,
+    hasAac51: !!r.has_aac51,
     addedAt: r.added_at,
     liked: !!r.liked,
   };

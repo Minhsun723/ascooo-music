@@ -3,6 +3,7 @@ import { HTTPException } from 'hono/http-exception';
 import type { AppEnv, Env } from '../env';
 import { requireAdmin, requireSessionAdmin } from '../lib/auth';
 import { ARTWORK_SIZES, artworkObjectKey, isArtworkSize, type ArtworkSize } from '../lib/artwork';
+import { type AlternateSource, aac51Root } from '../lib/aac51';
 import { AUDIO_EXTENSIONS, type AudioMetadata, extOf, extractMetadata, guessFromFilename } from '../lib/metadata';
 import { artistSearchKey, searchKey, trackSearchKey } from '../lib/search';
 import { type DavEntry, WebDAV, normalizePath, parentDir } from '../lib/webdav';
@@ -258,6 +259,7 @@ interface ImportedTrack {
   } | null;
   trackArtworkId: string | null;
   folderArtworkId: string | null;
+  aac51?: AlternateSource | null;
 }
 
 interface ArtistEnrichment {
@@ -453,6 +455,16 @@ sync.post('/import/track', async (c) => {
       throw new HTTPException(400, { message: '歌詞內容為空或超過 1.5 MB' });
     }
   }
+  const aac51 = item.aac51 ?? null;
+  if (aac51) {
+    const altRoot = aac51Root(c.env.AAC51_ROOT);
+    const altPath = normalizePath(aac51.path);
+    if (altRoot === '/' || !altPath.startsWith(`${altRoot}/`) || altPath.split('/').includes('..') || extOf(altPath) !== 'm4a' ||
+        !Number.isFinite(aac51.size) || aac51.size < 0) {
+      throw new HTTPException(400, { message: `AAC 5.1 檔案必須是位於 ${altRoot} 之內的 m4a` });
+    }
+    aac51.path = altPath;
+  }
   if (item.appleMusic) {
     if (!/^\d+$/.test(item.appleMusic.songId) ||
         item.appleMusic.artistId !== null && !/^\d+$/.test(item.appleMusic.artistId) ||
@@ -508,9 +520,9 @@ sync.post('/import/track', async (c) => {
        title, artist, artist_id, album_id, track_no, disc_no, year, genre, record_label,
        duration, codec, bitrate, sample_rate, bit_depth, channels, artwork_id, has_lyrics,
        display_title, display_artist, apple_music_id, apple_isrc, search_key,
-       metadata_version, added_at, updated_at
+       alt_path, alt_size, alt_etag, metadata_version, added_at, updated_at
      ) VALUES (
-       ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?
+       ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?
      )
      ON CONFLICT(path) DO UPDATE SET
        lrc_path = excluded.lrc_path, cover_path = excluded.cover_path,
@@ -527,6 +539,7 @@ sync.post('/import/track', async (c) => {
        apple_music_id = COALESCE(excluded.apple_music_id, tracks.apple_music_id),
        apple_isrc = COALESCE(excluded.apple_isrc, tracks.apple_isrc),
        search_key = excluded.search_key,
+       alt_path = excluded.alt_path, alt_size = excluded.alt_size, alt_etag = excluded.alt_etag,
        metadata_version = 1, updated_at = excluded.updated_at
      RETURNING id`,
   ).bind(
@@ -561,6 +574,9 @@ sync.post('/import/track', async (c) => {
     apple?.songId ?? null,
     apple?.isrc ?? null,
     key,
+    aac51?.path ?? null,
+    aac51 ? Math.floor(aac51.size) : null,
+    aac51?.etag ?? null,
     now,
     now,
   ).first<{ id: number }>();

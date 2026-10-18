@@ -38,7 +38,9 @@ async function request<T>(path: string, init: RequestInit & { json?: unknown } =
 const get = <T>(p: string) => request<T>(p);
 const post = <T>(p: string, json?: unknown) => request<T>(p, { method: 'POST', json: json ?? {} });
 
-export const streamUrl = (id: number) => `/api/stream/${id}`;
+export type AudioSource = 'original' | 'aac51';
+export const streamUrl = (id: number, source: AudioSource = 'original') =>
+  source === 'aac51' ? `/api/stream/${id}?v=aac51` : `/api/stream/${id}`;
 export type ArtworkSize = 512 | 2000;
 export const artUrl = (id: string | null | undefined, size: ArtworkSize = 512) =>
   (id ? `/api/art/${id}/${size}?v=1` : null);

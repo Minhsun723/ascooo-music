@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import sharp from 'sharp';
+import { type AlternateSource, aac51Key, aac51Root } from '../apps/worker/src/lib/aac51';
 import { ARTWORK_SIZES, type ArtworkSize } from '../apps/worker/src/lib/artwork';
 import { AUDIO_EXTENSIONS, type AudioMetadata, extOf, extractMetadata, guessFromFilename } from '../apps/worker/src/lib/metadata';
 import { type DavEntry, WebDAV, normalizePath } from '../apps/worker/src/lib/webdav';
@@ -58,6 +59,7 @@ interface PreparedTrack {
   appleLyricsCheckedAt: number | null;
   trackArtworkId: string | null;
   folderArtworkId: string | null;
+  aac51?: AlternateSource | null;
 }
 
 interface SyncManifest {
@@ -353,6 +355,56 @@ async function withReadRetry<T>(label: string, operation: () => Promise<T>): Pro
   throw lastError;
 }
 
+/**
+ * Pair each track with the AAC 5.1 file of the same name. A name shared by two
+ * originals cannot be resolved and is skipped rather than guessed. When the
+ * folder could not be read at all, the previous pairing is kept.
+ */
+function attachAac51(
+  tracks: PreparedTrack[],
+  altFiles: DavEntry[] | null,
+  previousByPath: Map<string, PreparedTrack>,
+): void {
+  if (!altFiles) {
+    for (const track of tracks) track.aac51 = previousByPath.get(track.path)?.aac51 ?? null;
+    return;
+  }
+  const altByName = new Map<string, DavEntry[]>();
+  for (const file of altFiles) {
+    const key = aac51Key(file.path);
+    altByName.set(key, [...(altByName.get(key) ?? []), file]);
+  }
+  const tracksByName = new Map<string, PreparedTrack[]>();
+  for (const track of tracks) {
+    const key = aac51Key(track.path);
+    tracksByName.set(key, [...(tracksByName.get(key) ?? []), track]);
+  }
+
+  let paired = 0;
+  const ambiguous: string[] = [];
+  for (const [key, named] of tracksByName) {
+    const candidates = altByName.get(key) ?? [];
+    for (const track of named) track.aac51 = null;
+    if (!candidates.length) continue;
+    if (named.length > 1 || candidates.length > 1) {
+      ambiguous.push(candidates[0].name);
+      continue;
+    }
+    const file = candidates[0];
+    named[0].aac51 = { path: file.path, size: file.size, etag: file.etag };
+    paired++;
+  }
+  const orphans = [...altByName.keys()].filter((key) => !tracksByName.has(key));
+  console.log(`  AAC 5.1 配對：${paired} 首`);
+  if (ambiguous.length) {
+    console.warn(`  AAC 5.1 檔名重複，無法判斷對應哪一首，已略過 ${ambiguous.length} 個：${ambiguous.slice(0, 5).join('、')}`);
+  }
+  if (orphans.length) {
+    const examples = orphans.slice(0, 5).map((key) => altByName.get(key)![0].name).join('、');
+    console.warn(`  AAC 5.1 找不到同名原檔 ${orphans.length} 個：${examples}`);
+  }
+}
+
 async function prepare(): Promise<SyncManifest> {
   const env = {
     WEBDAV_URL: required('WEBDAV_URL'),
@@ -439,6 +491,28 @@ async function prepare(): Promise<SyncManifest> {
     return job;
   };
 
+  const altRoot = aac51Root(process.env.AAC51_ROOT);
+  const insideAltRoot = (path: string) => path === altRoot || path.startsWith(`${altRoot}/`);
+  let altFiles: DavEntry[] | null = null;
+  try {
+    const altFolders = [altRoot];
+    altFiles = [];
+    while (altFolders.length) {
+      const dir = altFolders.shift()!;
+      for (const entry of await withReadRetry(`掃描 ${dir}`, () => dav.list(dir))) {
+        if (entry.isDir) {
+          if (entry.path !== dir) altFolders.push(entry.path);
+        } else if (extOf(entry.name) === 'm4a') {
+          altFiles.push(entry);
+        }
+      }
+    }
+    console.log(`  AAC 5.1 資料夾：${altFiles.length} 個檔案`);
+  } catch (error) {
+    altFiles = null;
+    warnOnce('aac51-root', `  無法讀取 ${altRoot}，本次沿用上次的 AAC 5.1 配對：${error instanceof Error ? error.message : String(error)}`);
+  }
+
   console.log(`本機掃描 ${root}（並行 ${concurrency}）`);
   while (folders.length) {
     const batch = folders.splice(0, concurrency);
@@ -448,6 +522,8 @@ async function prepare(): Promise<SyncManifest> {
     })));
     for (const { dir, entries } of listed) {
       for (const entry of entries) {
+        // AAC 5.1 copies are attached to their originals, never listed as songs of their own.
+        if (entry.isDir && insideAltRoot(entry.path)) continue;
         if (entry.isDir && !seenFolders.has(entry.path)) {
           seenFolders.add(entry.path);
           folders.push(entry.path);
@@ -765,6 +841,7 @@ async function prepare(): Promise<SyncManifest> {
       return track;
   });
   tracks.push(...preparedTracks);
+  attachAac51(tracks, altFiles, previousByPath);
 
   const referencedArtwork = new Set(tracks.flatMap((track) => [
     track.trackArtworkId,

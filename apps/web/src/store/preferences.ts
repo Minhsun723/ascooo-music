@@ -38,13 +38,24 @@ export const IMMERSIVE_STYLES: { value: ImmersiveStyle; label: string; descripti
   { value: 'cappella', label: '聊天室', description: '歌詞變成聊天對話，一句句打字送出' },
 ];
 
+/** Which file plays for a Dolby Atmos track that also has an AAC 5.1 copy. */
+export type SurroundFormat = 'auto' | 'atmos' | 'aac51';
+
+export const SURROUND_FORMATS: { value: SurroundFormat; label: string }[] = [
+  { value: 'auto', label: '自動' },
+  { value: 'atmos', label: 'Dolby Atmos' },
+  { value: 'aac51', label: 'AAC 5.1' },
+];
+
 interface PreferencesState {
   lyricsFont: LyricsFont;
   lyricsMode: LyricsMode;
   immersiveStyle: ImmersiveStyle;
+  surroundFormat: SurroundFormat;
   setLyricsFont: (font: LyricsFont) => void;
   setLyricsMode: (mode: LyricsMode) => void;
   setImmersiveStyle: (style: ImmersiveStyle) => void;
+  setSurroundFormat: (format: SurroundFormat) => void;
 }
 
 export const usePreferences = create<PreferencesState>()(
@@ -53,9 +64,11 @@ export const usePreferences = create<PreferencesState>()(
       lyricsFont: 'sans',
       lyricsMode: 'scroll',
       immersiveStyle: 'scatter',
+      surroundFormat: 'auto',
       setLyricsFont: (lyricsFont) => set({ lyricsFont }),
       setLyricsMode: (lyricsMode) => set({ lyricsMode }),
       setImmersiveStyle: (immersiveStyle) => set({ immersiveStyle }),
+      setSurroundFormat: (surroundFormat) => set({ surroundFormat }),
     }),
     { name: 'ascooo-preferences' },
   ),

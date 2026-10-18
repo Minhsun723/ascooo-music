@@ -4,8 +4,8 @@ import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 
 import { api } from './api/client';
 import type { Album, Artist, HomeData, ManagedTrack, ManagedTrackStats, ManagedUser, Track } from './api/types';
 import { formatLongDuration } from './lib/format';
-import { usePlayer } from './store/player';
-import { IMMERSIVE_STYLES, LYRICS_FONTS, LYRICS_MODES, usePreferences, type LyricsMode } from './store/preferences';
+import { canPlayAtmos, usePlayer } from './store/player';
+import { IMMERSIVE_STYLES, LYRICS_FONTS, LYRICS_MODES, SURROUND_FORMATS, usePreferences, type LyricsMode, type SurroundFormat } from './store/preferences';
 import { useSession } from './store/session';
 import { useLibrarySync } from './store/sync';
 import { toast } from './store/toast';
@@ -712,6 +712,8 @@ export function SettingsPage() {
   const setLyricsMode = usePreferences((s) => s.setLyricsMode);
   const immersiveStyle = usePreferences((s) => s.immersiveStyle);
   const setImmersiveStyle = usePreferences((s) => s.setImmersiveStyle);
+  const surroundFormat = usePreferences((s) => s.surroundFormat);
+  const setSurroundFormat = usePreferences((s) => s.setSurroundFormat);
   const [lyricsTab, setLyricsTab] = useState<LyricsTab>('font');
   const lyricsPanelRef = useRef<HTMLDivElement | null>(null);
   const [lyricsOverflow, setLyricsOverflow] = useState({ above: false, below: false });
@@ -856,6 +858,22 @@ export function SettingsPage() {
               </>
             )}
           </div>
+        </section>
+
+        <section className="settings-card">
+          <h2>環繞音效</h2>
+          <div className="settings-field">
+            <span className="settings-field__label">Dolby Atmos 歌曲的播放版本</span>
+            <div className="segmented-tabs">
+              <RubberSegment items={SURROUND_FORMATS} value={surroundFormat} onChange={(format) => setSurroundFormat(format as SurroundFormat)} trackColor="transparent" thumbColor="#fff" textColor="var(--text-soft)" activeTextColor="#090909" radius={999} inset={0} equalSlots stretch={100} squash={3} speed={1} glide={75} draggable className="library-segment" aria-label="環繞音效版本" />
+            </div>
+          </div>
+          <p className="settings-note">
+            {canPlayAtmos
+              ? '這個瀏覽器可以播放 Dolby Atmos，「自動」會優先播放杜比版本。'
+              : '這個瀏覽器無法播放 Dolby Atmos，「自動」會改播 AAC 5.1 版本。'}
+            {' '}沒有 AAC 5.1 版本的歌曲一律播放原始檔案。
+          </p>
         </section>
 
         <section className="settings-card">

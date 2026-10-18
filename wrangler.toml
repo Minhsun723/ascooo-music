@@ -14,6 +14,8 @@ run_worker_first = ["/api/*"]
 # Folder inside the PikPak WebDAV endpoint that holds your music.
 # Keep account-specific connection values in Worker secrets.
 MUSIC_ROOT = "/Music"
+# Flat folder of AAC 5.1 copies named exactly like their Dolby Atmos originals.
+AAC51_ROOT = "/ascooo-music/Music-Transcode/aac51"
 WEBDAV_AUTH_MODE = "auto"
 
 # Replace this ID after running: npx wrangler d1 create ascooo-music

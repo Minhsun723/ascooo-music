@@ -1,6 +1,8 @@
 # Paste the exact unified endpoint shown by PikPak for Client-1.
 WEBDAV_URL=https://your-account-specific-webdav-endpoint.example
 MUSIC_ROOT=/Music
+# Flat folder of AAC 5.1 copies named exactly like their Dolby Atmos originals.
+AAC51_ROOT=/ascooo-music/Music-Transcode/aac51
 
 # PikPak-generated WebDAV credentials (not the normal account password).
 WEBDAV_USERNAME=generated-client-username

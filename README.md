@@ -166,3 +166,20 @@ npm run sync:local -- --upload-only
 封面網址帶有轉檔版本，Worker 會先讀 Cloudflare Edge Cache，再讀 R2；清單、播放列與網格共用 512 px，專輯主視覺與全螢幕播放使用 2000 px。內容雜湊相同的封面只會保存一組。從舊版同步快取第一次升級時會重新解析一次，之後恢復增量同步。
 
 > Dolby Atmos 是否能呈現取決於音訊檔、瀏覽器、作業系統與實際播放裝置；平台會串流原始檔案，不宣稱對瀏覽器端做 Atmos 解碼。
+
+### AAC 5.1 替代版本
+
+Chrome、Firefox 等瀏覽器無法解碼 Dolby Atmos（EC-3）。可以把轉好的 AAC 5.1 檔案平放在 PikPak 的 `AAC51_ROOT`（預設 `/ascooo-music/Music-Transcode/aac51`），檔名必須與 `/Music` 中的原始檔完全相同，例如：
+
+```
+/Music/Korea/01. Pink Venom.m4a                       ← Dolby Atmos 原始檔
+/ascooo-music/Music-Transcode/aac51/01. Pink Venom.m4a ← AAC 5.1
+```
+
+本機同步會依檔名（不分大小寫）把 AAC 5.1 掛到原始歌曲上，網頁仍只顯示一首歌，歌詞、封面、收藏與播放紀錄共用。播放時依設定頁的「環繞音效」選擇版本：「自動」在瀏覽器支援 EC-3 時播放杜比，否則播放 AAC 5.1；杜比版本解碼失敗時也會自動改播 AAC 5.1 並接續原本的進度。若 `/Music` 中有兩首歌檔名相同，或 AAC 資料夾中有檔案找不到原始檔，同步時會列出警告並略過配對。
+
+轉檔範例（保留標籤與封面）：
+
+```bash
+ffmpeg -i in.m4a -map 0:a -map 0:v? -c copy -c:a aac -b:a 448k -map_metadata 0 -disposition:v attached_pic -movflags +faststart out.m4a
+```

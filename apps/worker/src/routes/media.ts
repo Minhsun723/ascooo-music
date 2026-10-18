@@ -20,12 +20,21 @@ const MIME: Record<string, string> = {
   wav: 'audio/wav',
 };
 
-/** Stream the original file from PikPak, passing Range through so seeking works. */
+/**
+ * Stream the original file from PikPak, passing Range through so seeking works.
+ * `?v=aac51` streams the track's AAC 5.1 copy instead of its Dolby Atmos original.
+ */
 media.get('/stream/:id', async (c) => {
-  const row = await c.env.DB.prepare("SELECT path, size FROM tracks WHERE id = ? AND status = 'ready' AND visible = 1")
+  const variant = c.req.query('v');
+  if (variant !== undefined && variant !== 'aac51') throw new HTTPException(400, { message: '不支援的音訊版本' });
+  const track = await c.env.DB.prepare(
+    "SELECT path, size, alt_path, alt_size FROM tracks WHERE id = ? AND status = 'ready' AND visible = 1",
+  )
     .bind(Number(c.req.param('id')))
-    .first<{ path: string; size: number }>();
-  if (!row) throw new HTTPException(404, { message: '找不到這首歌' });
+    .first<{ path: string; size: number; alt_path: string | null; alt_size: number | null }>();
+  if (!track) throw new HTTPException(404, { message: '找不到這首歌' });
+  if (variant && !track.alt_path) throw new HTTPException(404, { message: '這首歌沒有 AAC 5.1 版本' });
+  const row = variant ? { path: track.alt_path!, size: track.alt_size ?? 0 } : track;
 
   const dav = new WebDAV(c.env);
   const range = c.req.header('range') ?? null;

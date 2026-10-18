@@ -27,6 +27,8 @@ export interface Track {
   channels: number | null;
   artworkId: string | null;
   hasLyrics: boolean;
+  /** An AAC 5.1 copy exists for browsers that cannot decode Dolby Atmos. Missing on queues saved before it existed. */
+  hasAac51?: boolean;
   addedAt: number;
   liked: boolean;
   entryId?: number;

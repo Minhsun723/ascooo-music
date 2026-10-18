@@ -1,9 +1,10 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { api, artUrl, streamUrl } from '../api/client';
+import { api, artUrl, streamUrl, type AudioSource } from '../api/client';
 import type { Track } from '../api/types';
-import { shuffleArray } from '../lib/format';
+import { isDolbyAtmos, shuffleArray } from '../lib/format';
 import { requireLogin } from '../lib/login-gate';
+import { usePreferences } from './preferences';
 
 export type RepeatMode = 'off' | 'all' | 'one';
 
@@ -22,6 +23,8 @@ interface PlayerState {
   shuffle: boolean;
   repeat: RepeatMode;
   error: string | null;
+  /** The file actually streaming for the current track. */
+  source: AudioSource;
   nowPlayingOpen: boolean;
   queueOpen: boolean;
 
@@ -50,6 +53,17 @@ if (audio) {
 }
 export const getAudio = () => audio;
 
+/** Safari and some Edge/Android builds decode EC-3; Chrome and Firefox on desktop do not. */
+export const canPlayAtmos = !!audio && audio.canPlayType('audio/mp4; codecs="ec-3"') !== '';
+
+function pickSource(track: Track): AudioSource {
+  if (!track.hasAac51) return 'original';
+  const format = usePreferences.getState().surroundFormat;
+  if (format === 'aac51') return 'aac51';
+  if (format === 'atmos') return 'original';
+  return isDolbyAtmos(track) && !canPlayAtmos ? 'aac51' : 'original';
+}
+
 let reportedFor: number | null = null;
 let pendingSeek: number | null = null;
 
@@ -61,9 +75,10 @@ export const usePlayer = create<PlayerState>()(
       function load(index: number, autoplay: boolean) {
         const track = get().queue[index];
         if (!track) return;
-        set({ index, currentTime: 0, duration: track.duration || 0, bufferedEnd: 0, error: null });
+        const source = pickSource(track);
+        set({ index, currentTime: 0, duration: track.duration || 0, bufferedEnd: 0, error: null, source });
         reportedFor = null;
-        audio.src = streamUrl(track.id);
+        audio.src = streamUrl(track.id, source);
         if (autoplay) {
           set({ isBuffering: true });
           audio.play().catch((e) => {
@@ -88,6 +103,7 @@ export const usePlayer = create<PlayerState>()(
         shuffle: false,
         repeat: 'off',
         error: null,
+        source: 'original',
         nowPlayingOpen: false,
         queueOpen: false,
 
@@ -216,6 +232,7 @@ export const usePlayer = create<PlayerState>()(
             duration: 0,
             bufferedEnd: 0,
             error: null,
+            source: 'original',
             nowPlayingOpen: false,
             queueOpen: false,
           });
@@ -248,6 +265,22 @@ export const usePlayer = create<PlayerState>()(
     },
   ),
 );
+
+/** Swap the file behind the current track without losing its position or play state. */
+function switchSource(source: AudioSource) {
+  const { queue, index, currentTime, isPlaying, isBuffering } = usePlayer.getState();
+  const track = queue[index];
+  if (!track) return;
+  const resume = !audio.paused || isPlaying || isBuffering;
+  pendingSeek = audio.currentTime || currentTime;
+  usePlayer.setState({ source, error: null, isBuffering: resume });
+  audio.src = streamUrl(track.id, source);
+  if (resume) {
+    audio.play().catch((e) => {
+      if (e?.name !== 'AbortError') usePlayer.setState({ isPlaying: false, isBuffering: false });
+    });
+  }
+}
 
 // ---------- audio element → store ----------
 
@@ -301,7 +334,14 @@ if (audio) {
   });
   audio.addEventListener('error', () => {
     const code = audio.error?.code;
-    const track = usePlayer.getState().queue[usePlayer.getState().index];
+    const { queue, index, source } = usePlayer.getState();
+    const track = queue[index];
+    // canPlayType can promise EC-3 support that decoding then fails to deliver.
+    if ((code === 3 || code === 4) && source === 'original' && track?.hasAac51 &&
+        isDolbyAtmos(track) && usePreferences.getState().surroundFormat !== 'atmos') {
+      switchSource('aac51');
+      return;
+    }
     const msg =
       code === 4
         ? `瀏覽器無法播放此格式${track?.codec === 'alac' ? '（ALAC 僅 Safari 支援）' : ''}`
@@ -319,6 +359,15 @@ if (audio) {
     ms.setActionHandler('seekto', (d) => d.seekTime != null && g().seek(d.seekTime));
   }
 
+  // Changing the surround setting takes effect on the track already playing.
+  usePreferences.subscribe((prefs, previous) => {
+    if (prefs.surroundFormat === previous.surroundFormat || !audio.src) return;
+    const { queue, index, source } = usePlayer.getState();
+    const track = queue[index];
+    if (!track) return;
+    const wanted = pickSource(track);
+    if (wanted !== source) switchSource(wanted);
+  });
 }
 
 function updateMediaSession(t: Track) {
