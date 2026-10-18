@@ -871,5 +871,5 @@ export function SettingsPage() {
 
 export function NotFoundPage() {
   const navigate = useNavigate();
-  return <EmptyState title="這裡沒有音樂" copy="這個頁面可能已移動，回到音樂庫繼續聽吧。" action={<button type="button" className="primary-button" onClick={() => navigate('/')}><IconPlay size={18} />回到首頁</button>} />;
+  return <EmptyState title="這裡沒有音樂" copy="這個頁面可能已移動，回到音樂庫繼續聽吧。" action={<button type="button" className="primary-button" onClick={() => navigate('/discover')}><IconPlay size={18} />回到首頁</button>} />;
 }

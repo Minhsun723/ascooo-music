@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { setUnauthorizedHandler } from './api/client';
 import { AuthGate } from './components/Auth';
 import { Shell } from './components/Shell';
@@ -51,8 +51,10 @@ export default function App() {
   return (
     <AuthGate>
       <Routes>
+        <Route index element={<Navigate to="/discover" replace />} />
+        <Route path="login" element={<Navigate to="/discover" replace />} />
         <Route element={<Shell />}>
-          <Route index element={<HomePage />} />
+          <Route path="discover" element={<HomePage />} />
           <Route path="search" element={<SearchPage />} />
           <Route path="library" element={<LibraryPage />} />
           <Route path="favorites" element={<FavoritesPage />} />

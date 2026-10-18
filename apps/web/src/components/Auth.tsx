@@ -30,8 +30,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!ready || user) return;
     document.title = 'Ascooo Music';
-    if (location.pathname !== '/' || location.search || location.hash) {
-      navigate('/', { replace: true });
+    if (location.pathname !== '/login' || location.search || location.hash) {
+      navigate('/login', { replace: true });
     }
   }, [location.hash, location.pathname, location.search, navigate, ready, user]);
 

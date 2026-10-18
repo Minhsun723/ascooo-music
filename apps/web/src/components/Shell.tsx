@@ -20,7 +20,7 @@ import {
 import { NowPlaying, PlayerBar, QueuePanel } from './Player';
 
 const mainNav = [
-  { to: '/', label: '首頁', icon: IconHome, end: true },
+  { to: '/discover', label: '首頁', icon: IconHome, end: true },
   { to: '/search', label: '搜尋', icon: IconSearch },
   { to: '/library', label: '音樂庫', icon: IconLibrary },
   { to: '/favorites', label: '喜愛的歌曲', icon: IconHeart },
@@ -37,7 +37,7 @@ const legalLinks = [
 ];
 
 function getDocumentTitle(pathname: string, search: string) {
-  if (pathname === '/') return 'Ascooo Music';
+  if (pathname === '/discover') return 'Ascooo Music';
 
   let pageTitle: string;
   if (pathname === '/search') {
@@ -61,7 +61,7 @@ function isTextEntryTarget(target: EventTarget | null) {
 }
 
 function Brand() {
-  return <NavLink to="/" className="brand" aria-label="Ascooo Music 首頁"><img className="brand__image" src="/brand-logo/ascooo-music_light.png" width="750" height="320" alt="" aria-hidden="true" draggable={false} /></NavLink>;
+  return <NavLink to="/discover" className="brand" aria-label="Ascooo Music 首頁"><img className="brand__image" src="/brand-logo/ascooo-music_light.png" width="750" height="320" alt="" aria-hidden="true" draggable={false} /></NavLink>;
 }
 
 function SiteFooter() {
@@ -181,7 +181,7 @@ export function Shell() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [dynamicPageTitle, setDynamicPageTitle] = useState<{ pathname: string; title: string } | null>(null);
-  const isHomePage = location.pathname === '/';
+  const isHomePage = location.pathname === '/discover';
   const isSearchPage = location.pathname === '/search';
   const isRestoringHistory = navigationType === 'POP' && scrollPositions.current.has(location.key);
   const navigationPageTitle = typeof location.state?.pageTitle === 'string'
@@ -322,7 +322,7 @@ export function Shell() {
       <div className={`app-shell__body${hasPlayer ? ' app-shell__body--with-player' : ''}`}>
         <header className={`topbar${isSearchPage ? ' topbar--search' : ''}`}>
           <div className="history-controls">{!isHomePage && <button type="button" className="round-button" aria-label="返回" onClick={() => navigate(-1)}><IconChevronLeft size={19} /></button>}</div>
-          <NavLink to="/" className="topbar__mobile-brand" aria-label="Ascooo Music 首頁"><img src="/brand-logo/music-logo.png" width="1000" height="1000" alt="" aria-hidden="true" draggable={false} /></NavLink>
+          <NavLink to="/discover" className="topbar__mobile-brand" aria-label="Ascooo Music 首頁"><img src="/brand-logo/music-logo.png" width="1000" height="1000" alt="" aria-hidden="true" draggable={false} /></NavLink>
           <form className="global-search" role="search" onSubmit={search}><IconSearch size={19} /><input ref={searchInputRef} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') event.currentTarget.blur(); }} placeholder="搜尋歌曲、專輯或藝人" aria-label="搜尋音樂庫" />{query ? <button type="button" className="global-search__clear" onClick={() => { setQuery(''); searchInputRef.current?.focus(); }} aria-label="清除搜尋文字"><IconClose size={16} /></button> : <kbd>{searchShortcutLabel}</kbd>}</form>
           <NavLink to="/settings" className="topbar__profile"><span>{user.username.slice(0, 1).toUpperCase()}</span><b>{user.username}</b></NavLink>
         </header>
