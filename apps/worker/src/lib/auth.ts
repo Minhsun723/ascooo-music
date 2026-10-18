@@ -61,8 +61,15 @@ export async function readSession(c: Context<AppEnv>): Promise<SessionUser | nul
   }
 }
 
-export const requireUser: MiddlewareHandler<AppEnv> = async (c, next) => {
+/** Attach the signed-in user when there is one; signed-out requests continue as anonymous. */
+export const loadUser: MiddlewareHandler<AppEnv> = async (c, next) => {
   const user = await readSession(c);
+  if (user) c.set('user', user);
+  await next();
+};
+
+export const requireUser: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const user = c.get('user') ?? (await readSession(c));
   if (!user) throw new HTTPException(401, { message: '請先登入' });
   c.set('user', user);
   await next();

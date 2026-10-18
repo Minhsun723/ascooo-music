@@ -46,9 +46,15 @@ export const useSession = create<SessionState>((set, get) => ({
     if (user) get().refreshPlaylists();
   },
   async logout() {
-    const request = api.auth.logout().catch(() => {});
-    get().setUser(null);
-    await request;
+    try {
+      await api.auth.logout();
+    } catch (error) {
+      // The session cookie is httpOnly, so only the server can clear it; stay signed in.
+      useToasts.getState().push((error as Error).message || '登出失敗，請稍後再試', 'error');
+      return;
+    }
+    // A full reload drops every in-memory cache and the audio element, then starts fresh on home.
+    window.location.replace('/discover');
   },
   async refreshPlaylists() {
     const userId = get().user?.id;

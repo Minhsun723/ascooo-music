@@ -18,9 +18,14 @@ function validate(body: { username?: string; password?: string }) {
   return { username, password };
 }
 
+// Accounts can't drop back to zero (nobody can delete themselves), so once an
+// isolate has seen a user it never needs to count again.
+let setupComplete = false;
+
 auth.get('/status', async (c) => {
-  const [count, user] = await Promise.all([userCount(c.env.DB), readSession(c)]);
-  return c.json({ needsSetup: count === 0, user });
+  const user = await readSession(c);
+  if (!setupComplete) setupComplete = Boolean(user) || (await userCount(c.env.DB)) > 0;
+  return c.json({ needsSetup: !setupComplete, user });
 });
 
 /** First-run: create the admin account. Disabled once any user exists. */
@@ -34,6 +39,7 @@ auth.post('/setup', async (c) => {
     .bind(username, hash, Date.now())
     .first<{ id: number }>();
   const user: SessionUser = { id: r!.id, username, role: 'admin' };
+  setupComplete = true;
   await startSession(c, user);
   return c.json({ user });
 });

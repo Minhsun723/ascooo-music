@@ -162,6 +162,7 @@ export function TrackList({ tracks, numbered = true, compact = false, showMetada
   const isPlaying = usePlayer((s) => s.isPlaying);
   const playList = usePlayer((s) => s.playList);
   const toggle = usePlayer((s) => s.toggle);
+  const signedIn = useSession((s) => Boolean(s.user));
 
   return (
     <div className={`track-list ${compact ? 'track-list--compact' : ''}`} role="list">
@@ -169,7 +170,7 @@ export function TrackList({ tracks, numbered = true, compact = false, showMetada
         const active = current?.id === track.id;
         const quality = qualityLabel(track);
         return (
-          <div className={`track-row ${active ? 'is-current' : ''}`} role="listitem" key={track.entryId ?? track.id}>
+          <div className={`track-row ${active ? 'is-current' : ''}${signedIn ? '' : ' track-row--guest'}`} role="listitem" key={track.entryId ?? track.id}>
             <button
               type="button"
               className="track-row__main"
@@ -191,8 +192,8 @@ export function TrackList({ tracks, numbered = true, compact = false, showMetada
                 : quality ? <span className="quality-badge">{quality}</span> : null}
             </span>
             <span className="track-row__duration">{formatTime(track.duration)}</span>
-            <LikeButton track={track} />
-            <TrackMenu track={track} onRemove={onRemove ? () => onRemove(track) : undefined} />
+            {signedIn ? <LikeButton track={track} /> : null}
+            {signedIn ? <TrackMenu track={track} onRemove={onRemove ? () => onRemove(track) : undefined} /> : null}
           </div>
         );
       })}

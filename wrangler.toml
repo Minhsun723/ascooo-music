@@ -28,5 +28,11 @@ migrations_dir = "apps/worker/migrations"
 binding = "ARTWORK"
 bucket_name = "ascooo-music-artwork"
 
+# Caps how often one signed-out IP can miss the edge cache and reach D1.
+[[ratelimits]]
+name = "ANONYMOUS_LIMITER"
+namespace_id = "1001"
+simple = { limit = 30, period = 60 }
+
 [observability]
 enabled = true

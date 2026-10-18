@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { api } from '../api/client';
+import { requireLogin } from '../lib/login-gate';
 import { usePlayer } from '../store/player';
 import { useSession } from '../store/session';
 import { toast } from '../store/toast';
@@ -165,7 +166,7 @@ function CreatePlaylistDialog({ open, onClose }: { open: boolean; onClose: () =>
 }
 
 export function Shell() {
-  const user = useSession((s) => s.user)!;
+  const user = useSession((s) => s.user);
   const playlists = useSession((s) => s.playlists);
   const logout = useSession((s) => s.logout);
   const currentTrack = usePlayer((s) => s.queue[s.index]);
@@ -295,6 +296,9 @@ export function Shell() {
     };
   }, []);
 
+  const loginState = { from: location.pathname + location.search + location.hash };
+  const openCreatePlaylist = () => { if (requireLogin()) setCreateOpen(true); };
+
   function search(event: FormEvent) {
     event.preventDefault();
     navigate(`/search${query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ''}`);
@@ -305,31 +309,39 @@ export function Shell() {
       <aside className="sidebar">
         <Brand />
         <nav className="sidebar__nav" aria-label="主要導覽">
-          {mainNav.map(({ to, label, icon: Icon, end }) => <NavLink key={to} to={to} end={end} className={({ isActive }) => isActive ? 'is-active' : ''}><Icon size={20} /><span>{label}</span></NavLink>)}
+          {(user ? mainNav : mainNav.slice(0, 3)).map(({ to, label, icon: Icon, end }) => <NavLink key={to} to={to} end={end} className={({ isActive }) => isActive ? 'is-active' : ''}><Icon size={20} /><span>{label}</span></NavLink>)}
         </nav>
-        <div className="sidebar__section">
-          <div className="sidebar__section-title"><span>YOUR PLAYLISTS</span><button type="button" className="icon-button" aria-label="建立播放清單" onClick={() => setCreateOpen(true)}><IconPlus size={18} /></button></div>
+        {user ? <div className="sidebar__section">
+          <div className="sidebar__section-title"><span>YOUR PLAYLISTS</span><button type="button" className="icon-button" aria-label="建立播放清單" onClick={openCreatePlaylist}><IconPlus size={18} /></button></div>
           <div className="sidebar__playlists">
-            {playlists.length ? playlists.map((playlist) => <NavLink key={playlist.id} to={`/playlist/${playlist.id}`}><IconDisc size={17} /><span>{playlist.name}</span></NavLink>) : <button type="button" className="sidebar__empty" onClick={() => setCreateOpen(true)}>還沒有播放清單<br /><strong>建立第一個</strong></button>}
+            {playlists.length ? playlists.map((playlist) => <NavLink key={playlist.id} to={`/playlist/${playlist.id}`}><IconDisc size={17} /><span>{playlist.name}</span></NavLink>) : <button type="button" className="sidebar__empty" onClick={openCreatePlaylist}>還沒有播放清單<br /><strong>建立第一個</strong></button>}
           </div>
-        </div>
-        <div className="sidebar__account">
-          <span className="avatar"><IconUser size={17} /></span><span><strong>{user.username}</strong><small>{user.role === 'admin' ? '管理員' : '使用者'}</small></span>
-          <NavLink to="/settings" className="icon-button" aria-label="設定"><IconSettings size={18} /></NavLink>
-          <button type="button" className="icon-button" aria-label="登出" onClick={() => void logout()}><IconLogout size={18} /></button>
-        </div>
+        </div> : null}
+        {user ? (
+          <div className="sidebar__account">
+            <span className="avatar"><IconUser size={17} /></span><span><strong>{user.username}</strong><small>{user.role === 'admin' ? '管理員' : '使用者'}</small></span>
+            <NavLink to="/settings" className="icon-button" aria-label="設定"><IconSettings size={18} /></NavLink>
+            <button type="button" className="icon-button" aria-label="登出" onClick={() => void logout()}><IconLogout size={18} /></button>
+          </div>
+        ) : (
+          <div className="sidebar__account sidebar__account--guest">
+            <Link to="/login" state={loginState} className="primary-button">登入</Link>
+          </div>
+        )}
       </aside>
       <div className={`app-shell__body${hasPlayer ? ' app-shell__body--with-player' : ''}`}>
         <header className={`topbar${isSearchPage ? ' topbar--search' : ''}`}>
           <div className="history-controls">{!isHomePage && <button type="button" className="round-button" aria-label="返回" onClick={() => navigate(-1)}><IconChevronLeft size={19} /></button>}</div>
           <NavLink to="/discover" className="topbar__mobile-brand" aria-label="Ascooo Music 首頁"><img src="/brand-logo/music-logo.png" width="1000" height="1000" alt="" aria-hidden="true" draggable={false} /></NavLink>
           <form className="global-search" role="search" onSubmit={search}><IconSearch size={19} /><input ref={searchInputRef} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') event.currentTarget.blur(); }} placeholder="搜尋歌曲、專輯或藝人" aria-label="搜尋音樂庫" />{query ? <button type="button" className="global-search__clear" onClick={() => { setQuery(''); searchInputRef.current?.focus(); }} aria-label="清除搜尋文字"><IconClose size={16} /></button> : <kbd>{searchShortcutLabel}</kbd>}</form>
-          <NavLink to="/settings" className="topbar__profile"><span>{user.username.slice(0, 1).toUpperCase()}</span><b>{user.username}</b></NavLink>
+          {user
+            ? <NavLink to="/settings" className="topbar__profile"><span>{user.username.slice(0, 1).toUpperCase()}</span><b>{user.username}</b></NavLink>
+            : <Link to="/login" state={loginState} className="topbar__login">登入</Link>}
         </header>
         <main className={`page${isRestoringHistory ? ' page--history' : ''}`} key={location.pathname}><Outlet context={setPageTitle} /></main>
         <SiteFooter />
       </div>
-      <nav className="mobile-nav" aria-label="行動版主要導覽">{mainNav.slice(0, 3).map(({ to, label, icon: Icon, end }) => <NavLink key={to} to={to} end={end} className={({ isActive }) => isActive ? 'is-active' : ''}><Icon size={21} /><span>{label}</span></NavLink>)}<NavLink to="/settings" className={({ isActive }) => isActive ? 'is-active' : ''}><IconSettings size={21} /><span>設定</span></NavLink></nav>
+      <nav className={`mobile-nav${user ? '' : ' mobile-nav--guest'}`} aria-label="行動版主要導覽">{mainNav.slice(0, 3).map(({ to, label, icon: Icon, end }) => <NavLink key={to} to={to} end={end} className={({ isActive }) => isActive ? 'is-active' : ''}><Icon size={21} /><span>{label}</span></NavLink>)}{user ? <NavLink to="/settings" className={({ isActive }) => isActive ? 'is-active' : ''}><IconSettings size={21} /><span>設定</span></NavLink> : null}</nav>
       <QueuePanel />
       <PlayerBar />
       <NowPlaying />

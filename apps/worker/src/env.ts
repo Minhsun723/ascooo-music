@@ -1,6 +1,7 @@
 export interface Env {
   DB: D1Database;
   ARTWORK: R2Bucket;
+  ANONYMOUS_LIMITER: RateLimit;
   WEBDAV_URL: string;
   MUSIC_ROOT: string;
   WEBDAV_USERNAME?: string;

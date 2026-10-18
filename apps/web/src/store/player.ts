@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import { api, artUrl, streamUrl } from '../api/client';
 import type { Track } from '../api/types';
 import { shuffleArray } from '../lib/format';
+import { requireLogin } from '../lib/login-gate';
 
 export type RepeatMode = 'off' | 'all' | 'one';
 
@@ -91,7 +92,7 @@ export const usePlayer = create<PlayerState>()(
         queueOpen: false,
 
         playList(tracks, start = 0, opts) {
-          if (!tracks.length) return;
+          if (!tracks.length || !requireLogin()) return;
           const wantShuffle = opts?.shuffle ?? get().shuffle;
           if (wantShuffle) {
             const first = tracks[start];
@@ -106,12 +107,14 @@ export const usePlayer = create<PlayerState>()(
         },
 
         playNext(tracks) {
+          if (!requireLogin()) return;
           const { queue, index } = get();
           if (!queue.length) return get().playList(tracks);
           set({ queue: [...queue.slice(0, index + 1), ...tracks, ...queue.slice(index + 1)] });
         },
 
         addToQueue(tracks) {
+          if (!requireLogin()) return;
           if (!get().queue.length) return get().playList(tracks);
           set({ queue: [...get().queue, ...tracks] });
         },
@@ -123,11 +126,12 @@ export const usePlayer = create<PlayerState>()(
         },
 
         jumpTo(i) {
+          if (!requireLogin()) return;
           load(i, true);
         },
 
         toggle() {
-          if (!current()) return;
+          if (!current() || !requireLogin()) return;
           if (!audio.src) return load(get().index, true);
           if (audio.paused) audio.play().catch(() => {});
           else audio.pause();

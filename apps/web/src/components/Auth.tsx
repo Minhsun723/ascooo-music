@@ -1,39 +1,58 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useEffect, useLayoutEffect, useState, type FormEvent } from 'react';
+import { Link, Navigate, useLocation } from 'react-router-dom';
 import { api } from '../api/client';
 import { useSession } from '../store/session';
 import { IconWave } from './Icons';
 
+/** Where to return after logging in, as set by requireLogin() or RequireUser. */
+function loginReturnPath(state: unknown) {
+  const from = (state as { from?: unknown } | null)?.from;
+  return typeof from === 'string' && from.startsWith('/') && !from.startsWith('/login') ? from : '/discover';
+}
+
+/** Loads the session once; pages stay browsable while signed out. */
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const location = useLocation();
-  const navigate = useNavigate();
   const ready = useSession((s) => s.ready);
   const needsSetup = useSession((s) => s.needsSetup);
-  const user = useSession((s) => s.user);
   const init = useSession((s) => s.init);
+
+  useEffect(() => { void init(); }, [init]);
+
+  if (!ready) {
+    return <div className="app-loading" aria-live="polite"><span className="brand-pulse"><IconWave size={28} /></span><p>載入你的音樂庫…</p></div>;
+  }
+  if (needsSetup && location.pathname !== '/login') return <Navigate to="/login" replace />;
+  return children;
+}
+
+/** Sends signed-out visitors to the login page and brings them back afterwards. */
+export function RequireUser({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  const user = useSession((s) => s.user);
+  if (user) return children;
+  return <Navigate to="/login" replace state={{ from: location.pathname + location.search + location.hash }} />;
+}
+
+export function LoginPage() {
+  const location = useLocation();
+  const needsSetup = useSession((s) => s.needsSetup);
+  const user = useSession((s) => s.user);
   const setUser = useSession((s) => s.setUser);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => { void init(); }, [init]);
+  // The shell's scroll restoration doesn't cover this page, so start at the top
+  // even when the visitor was sent here from far down a long list.
+  useLayoutEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+  }, []);
 
   useEffect(() => {
-    if (user) return;
-    setUsername('');
-    setPassword('');
-    setPending(false);
-    setError('');
-  }, [user]);
-
-  useEffect(() => {
-    if (!ready || user) return;
-    document.title = 'Ascooo Music';
-    if (location.pathname !== '/login' || location.search || location.hash) {
-      navigate('/login', { replace: true });
-    }
-  }, [location.hash, location.pathname, location.search, navigate, ready, user]);
+    document.title = needsSetup ? 'Ascooo Music' : '登入 · Ascooo Music';
+  }, [needsSetup]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -51,10 +70,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     }
   }
 
-  if (!ready) {
-    return <div className="app-loading" aria-live="polite"><span className="brand-pulse"><IconWave size={28} /></span><p>載入你的音樂庫…</p></div>;
-  }
-  if (user) return children;
+  if (user) return <Navigate to={loginReturnPath(location.state)} replace />;
 
   return (
     <main className="auth-page">
@@ -74,6 +90,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           {error ? <div className="form-error" role="alert">{error}</div> : null}
           <button className="primary-button" type="submit" disabled={pending}>{pending ? '處理中…' : needsSetup ? '建立並開始使用' : '登入'}</button>
         </form>
+        {needsSetup ? null : <Link className="auth-card__browse" to="/discover">先不登入，繼續瀏覽</Link>}
       </section>
     </main>
   );

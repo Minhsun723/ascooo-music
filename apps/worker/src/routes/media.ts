@@ -2,8 +2,11 @@ import { Hono, type Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import type { AppEnv } from '../env';
 import { ARTWORK_ASSET_VERSION, artworkObjectKey, isArtworkSize } from '../lib/artwork';
+import { readSession } from '../lib/auth';
 import { WebDAV } from '../lib/webdav';
 
+/** Album art is public so signed-out visitors can browse; mounted ahead of requireUser. */
+export const artwork = new Hono<AppEnv>();
 const media = new Hono<AppEnv>();
 
 const MIME: Record<string, string> = {
@@ -106,7 +109,11 @@ async function serveArtwork(c: Context<AppEnv>): Promise<Response> {
   }
 
   const object = await c.env.ARTWORK.get(artworkObjectKey(id, size));
-  if (!object) return legacyArtwork(c, id);
+  if (!object) {
+    // The legacy fallback reads D1; keep signed-out traffic on R2 and the edge cache only.
+    if (!(await readSession(c))) throw new HTTPException(404, { message: '找不到封面' });
+    return legacyArtwork(c, id);
+  }
 
   const headers = new Headers();
   object.writeHttpMetadata(headers);
@@ -124,7 +131,7 @@ async function serveArtwork(c: Context<AppEnv>): Promise<Response> {
   return response;
 }
 
-media.get('/art/:id', serveArtwork);
-media.get('/art/:id/:size', serveArtwork);
+artwork.get('/art/:id', serveArtwork);
+artwork.get('/art/:id/:size', serveArtwork);
 
 export default media;

@@ -1,7 +1,9 @@
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
+import type { Context } from 'hono';
 import type { AppEnv } from '../env';
 import { requireAdmin } from '../lib/auth';
+import { anonymousEdgeCache } from '../lib/edge-cache';
 import { searchPatterns } from '../lib/search-query';
 import {
   ALBUM_FROM,
@@ -14,7 +16,12 @@ import {
   toTrack,
 } from '../lib/sql';
 
+/** Browsing routes open to signed-out visitors; mounted ahead of requireUser. */
+export const catalog = new Hono<AppEnv>();
 const library = new Hono<AppEnv>();
+
+/** Signed-out visitors have no likes or history, so user id 0 matches no rows. */
+const viewerId = (c: Context<AppEnv>) => c.get('user')?.id ?? 0;
 
 const int = (v: string | undefined, def: number, max = 500) => {
   const n = parseInt(v ?? '', 10);
@@ -44,8 +51,8 @@ const ALBUM_SORTS: Record<string, string> = {
   year: 'al.year DESC',
 };
 
-library.get('/home', async (c) => {
-  const uid = c.get('user').id;
+catalog.get('/home', anonymousEdgeCache, async (c) => {
+  const uid = viewerId(c);
   const db = c.env.DB;
   const [trackBound, albumBound] = await db.batch([
     db.prepare("SELECT MAX(id) AS max_id FROM tracks WHERE status = 'ready' AND visible = 1"),
@@ -82,13 +89,15 @@ library.get('/home', async (c) => {
      ORDER BY t.id LIMIT 100`,
   ).bind(uid, trackStart);
 
-  const [recentAlbums, recentPlays, randomAlbumsAfter, randomAlbumsBefore, randomTracksAfter, randomTracksBefore, stats] = await db.batch([
+  // Signed-out visitors have no play history; skip the query instead of reading zero rows.
+  const recentPlaysQuery = uid ? db.prepare(
+    `SELECT ${TRACK_SELECT} FROM play_stats h JOIN tracks t ON t.id = h.track_id ${TRACK_JOINS}
+     WHERE h.user_id = ? AND t.status = 'ready' AND t.visible = 1
+     ORDER BY h.last_played DESC LIMIT 16`,
+  ).bind(uid, uid) : null;
+
+  const [recentAlbums, randomAlbumsAfter, randomAlbumsBefore, randomTracksAfter, randomTracksBefore, stats, recentPlays] = await db.batch([
     db.prepare(`SELECT ${ALBUM_SELECT} ${ALBUM_FROM} GROUP BY al.id ORDER BY added_at DESC LIMIT 12`),
-    db.prepare(
-      `SELECT ${TRACK_SELECT} FROM play_stats h JOIN tracks t ON t.id = h.track_id ${TRACK_JOINS}
-       WHERE h.user_id = ? AND t.status = 'ready' AND t.visible = 1
-       ORDER BY h.last_played DESC LIMIT 16`,
-    ).bind(uid, uid),
     randomAlbumQuery('>='),
     randomAlbumQuery('<'),
     randomTrackQuery('>='),
@@ -109,6 +118,7 @@ library.get('/home', async (c) => {
         COALESCE(SUM(has_lyrics), 0) AS with_lyrics
        FROM visible_tracks`,
     ),
+    ...(recentPlaysQuery ? [recentPlaysQuery] : []),
   ]);
   const randomAlbums = shuffledTake([
     ...(randomAlbumsAfter.results as AlbumRow[]),
@@ -120,15 +130,15 @@ library.get('/home', async (c) => {
   ], 20);
   return c.json({
     recentAlbums: (recentAlbums.results as AlbumRow[]).map(toAlbum),
-    recentPlays: (recentPlays.results as TrackRow[]).map(toTrack),
+    recentPlays: recentPlays ? (recentPlays.results as TrackRow[]).map(toTrack) : [],
     randomAlbums: randomAlbums.map(toAlbum),
     quickPicks: randomTracks.map(toTrack),
     stats: stats.results[0],
   });
 });
 
-library.get('/tracks', async (c) => {
-  const uid = c.get('user').id;
+catalog.get('/tracks', anonymousEdgeCache, async (c) => {
+  const uid = viewerId(c);
   const sort = TRACK_SORTS[c.req.query('sort') ?? 'added'] ?? TRACK_SORTS.added;
   const limit = int(c.req.query('limit'), 100);
   const offset = int(c.req.query('offset'), 0, 1e9);
@@ -141,7 +151,7 @@ library.get('/tracks', async (c) => {
   return c.json({ tracks: results.map(toTrack), total: total?.n ?? 0 });
 });
 
-library.get('/albums', async (c) => {
+catalog.get('/albums', anonymousEdgeCache, async (c) => {
   const sort = ALBUM_SORTS[c.req.query('sort') ?? 'added'] ?? ALBUM_SORTS.added;
   const limit = int(c.req.query('limit'), 100);
   const offset = int(c.req.query('offset'), 0, 1e9);
@@ -153,8 +163,8 @@ library.get('/albums', async (c) => {
   return c.json({ albums: results.map(toAlbum) });
 });
 
-library.get('/albums/:id', async (c) => {
-  const uid = c.get('user').id;
+catalog.get('/albums/:id', anonymousEdgeCache, async (c) => {
+  const uid = viewerId(c);
   const id = Number(c.req.param('id'));
   const db = c.env.DB;
   const album = await db.prepare(`SELECT ${ALBUM_SELECT} ${ALBUM_FROM} WHERE al.id = ? GROUP BY al.id`).bind(id).first<AlbumRow>();
@@ -176,7 +186,7 @@ library.get('/albums/:id', async (c) => {
   });
 });
 
-library.get('/artists', async (c) => {
+catalog.get('/artists', anonymousEdgeCache, async (c) => {
   const limit = int(c.req.query('limit'), 200);
   const offset = int(c.req.query('offset'), 0, 1e9);
   const { results } = await c.env.DB.prepare(
@@ -225,8 +235,8 @@ async function findArtist(db: D1Database, id: number) {
   return artist;
 }
 
-library.get('/artists/:id', async (c) => {
-  const uid = c.get('user').id;
+catalog.get('/artists/:id', anonymousEdgeCache, async (c) => {
+  const uid = viewerId(c);
   const id = Number(c.req.param('id'));
   const db = c.env.DB;
   const artist = await findArtist(db, id);
@@ -253,8 +263,8 @@ library.get('/artists/:id', async (c) => {
   });
 });
 
-library.get('/artists/:id/tracks', async (c) => {
-  const uid = c.get('user').id;
+catalog.get('/artists/:id/tracks', anonymousEdgeCache, async (c) => {
+  const uid = viewerId(c);
   const id = Number(c.req.param('id'));
   const db = c.env.DB;
   const artist = await findArtist(db, id);
@@ -275,8 +285,8 @@ library.get('/artists/:id/tracks', async (c) => {
   });
 });
 
-library.get('/search', async (c) => {
-  const uid = c.get('user').id;
+catalog.get('/search', anonymousEdgeCache, async (c) => {
+  const uid = viewerId(c);
   const patterns = searchPatterns(c.req.query('q'));
   if (!patterns) return c.json({ tracks: [], albums: [], artists: [] });
   const { contains, prefix } = patterns;

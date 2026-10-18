@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { api } from '../api/client';
+import { requireLogin } from '../lib/login-gate';
 import type { Track } from '../api/types';
 import { toast } from './toast';
 
@@ -15,6 +16,7 @@ export const useLikes = create<LikesState>((set, get) => ({
   epoch: 0,
   overrides: {},
   async toggle(t) {
+    if (!requireLogin()) return;
     const epoch = get().epoch;
     const was = get().overrides[t.id] ?? t.liked;
     set({ overrides: { ...get().overrides, [t.id]: !was } });

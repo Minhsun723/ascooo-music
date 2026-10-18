@@ -76,7 +76,7 @@ function cacheAlbum(key: string, data: AlbumData) {
 }
 
 export function HomePage() {
-  const userId = useSession((s) => s.user!.id);
+  const userId = useSession((s) => s.user?.id ?? 0);
   const cached = homeCache?.userId === userId && Date.now() - homeCache.cachedAt < HOME_CACHE_TTL ? homeCache.data : null;
   const request = useRequest<HomeData>(async () => {
     const data = await api.home();
@@ -137,8 +137,10 @@ let libraryCache: { userId: number; cachedAt: number; data: LibraryData } | null
 
 export function LibraryPage() {
   const [params, setParams] = useSearchParams();
-  const tab = params.get('tab') ?? 'albums';
-  const userId = useSession((s) => s.user!.id);
+  const userId = useSession((s) => s.user?.id ?? 0);
+  const requestedTab = params.get('tab') ?? 'albums';
+  // Playlists belong to an account, so signed-out visitors don't get that tab.
+  const tab = requestedTab === 'playlists' && !userId ? 'albums' : requestedTab;
   const playlists = useSession((s) => s.playlists);
   const cached = libraryCache?.userId === userId && Date.now() - libraryCache.cachedAt < LIBRARY_CACHE_TTL ? libraryCache.data : null;
   const request = useRequest<LibraryData>(async () => {
@@ -147,7 +149,7 @@ export function LibraryPage() {
     libraryCache = { userId, cachedAt: Date.now(), data };
     return data;
   }, [], cached, cached !== null);
-  const tabs = [{ value: 'albums', label: '專輯' }, { value: 'tracks', label: '歌曲' }, { value: 'artists', label: '藝人' }, { value: 'playlists', label: '播放清單' }];
+  const tabs = [{ value: 'albums', label: '專輯' }, { value: 'tracks', label: '歌曲' }, { value: 'artists', label: '藝人' }, ...(userId ? [{ value: 'playlists', label: '播放清單' }] : [])];
   return <><PageIntro title="音樂庫" /><div className="segmented-tabs"><RubberSegment items={tabs} value={tab} onChange={(nextTab) => setParams({ tab: nextTab })} trackColor="transparent" thumbColor="#fff" textColor="var(--text-soft)" activeTextColor="#090909" radius={999} inset={0} equalSlots stretch={100} squash={3} speed={1} glide={75} draggable className="library-segment" aria-label="音樂庫分類" /></div>{request.loading && !request.data ? <LoadingBlock rows={7} /> : null}{request.error ? <RequestError message={request.error} retry={request.reload} /> : null}{request.data && tab === 'albums' ? request.data.albums.length ? <AlbumGrid albums={request.data.albums} /> : <EmptyState title="還沒有專輯" copy="同步歌曲後，系統會依照內嵌資訊整理專輯。" /> : null}{request.data && tab === 'tracks' ? request.data.tracks.length ? <TrackList tracks={request.data.tracks} /> : <EmptyState title="還沒有歌曲" copy="前往設定頁執行 PikPak 同步。" /> : null}{request.data && tab === 'artists' ? request.data.artists.length ? <ArtistGrid artists={request.data.artists} /> : <EmptyState title="還沒有藝人" copy="同步歌曲後，藝人會自動出現在這裡。" /> : null}{tab === 'playlists' ? playlists.length ? <PlaylistGrid playlists={playlists} /> : <EmptyState icon={<IconDisc />} title="還沒有播放清單" copy="從歌曲選單加入現有清單，或從左側建立新清單。" /> : null}</>;
 }
 
@@ -160,7 +162,7 @@ function CollectionHero({ artworkId, title, subtitle, meta = '', badge, tracks, 
 export function AlbumPage() {
   const id = Number(useParams().id);
   const navigate = useNavigate();
-  const userId = useSession((s) => s.user!.id);
+  const userId = useSession((s) => s.user?.id ?? 0);
   const cacheKey = `${userId}:${id}`;
   const cachedEntry = albumCache.get(cacheKey);
   const cached = cachedEntry && Date.now() - cachedEntry.cachedAt < ALBUM_CACHE_TTL ? cachedEntry.data : null;
