@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api, artUrl } from '../api/client';
-import type { Lyrics } from '../api/types';
+import type { Lyrics, Track } from '../api/types';
 import { DEFAULT_PALETTE, extractPalette, type Palette } from '../lib/color';
 import { parseLrc, parseTtml, plainLines } from '../lib/lrc';
 import { formatTime, isDolbyAtmos, qualityLabel } from '../lib/format';
@@ -11,6 +12,7 @@ import { DolbyLogo } from './DolbyLogo';
 import {
   IconChevronDown,
   IconClose,
+  IconDisc,
   IconLyrics,
   IconMute,
   IconNext,
@@ -22,6 +24,7 @@ import {
   IconRepeatOne,
   IconShuffle,
   IconTrash,
+  IconUser,
   IconVolume,
   IconVolumeLow,
   IconWave,
@@ -58,8 +61,10 @@ function OverflowMarquee({ text, play = true }: { text: string; play?: boolean }
     const measure = () => {
       cancelAnimationFrame(animationFrame);
       animationFrame = requestAnimationFrame(() => {
-        const textWidth = Math.ceil(content.getBoundingClientRect().width);
-        const overflowing = textWidth > viewport.clientWidth + 1;
+        const textWidth = content.getBoundingClientRect().width;
+        const overflowing = Math.ceil(textWidth) > viewport.clientWidth + 1;
+        // Keep the fraction: each loop must travel exactly one text + gap, or the jump back to
+        // the start lands a sub-pixel off and the text visibly blinks at the seam.
         const distance = textWidth + MARQUEE_GAP;
         const duration = distance / MARQUEE_SPEED;
 
@@ -102,6 +107,62 @@ function OverflowMarquee({ text, play = true }: { text: string; play?: boolean }
         {metrics.overflowing && play ? <span className="marquee__text marquee__text--clone" aria-hidden="true">{text}</span> : null}
       </span>
     </span>
+  );
+}
+
+/** Artist · album line; tapping it offers to jump to either page. */
+function BylineMenu({ track }: { track: Track }) {
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
+  const setNowPlaying = usePlayer((s) => s.setNowPlaying);
+  const text = [track.artist, track.album].filter(Boolean).join(' · ');
+  const byline = <OverflowMarquee text={text} />;
+
+  useEffect(() => {
+    if (!open) return;
+    const details = detailsRef.current;
+    const onPointerDown = (event: PointerEvent) => {
+      if (details && !details.contains(event.target as Node)) details.removeAttribute('open');
+    };
+    // Capture phase, so Escape closes just the menu instead of the whole player.
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      details?.removeAttribute('open');
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [open]);
+
+  if (track.artistId === null && track.albumId === null) return <p className="now-playing__byline">{byline}</p>;
+
+  const go = (path: string, pageTitle: string) => {
+    detailsRef.current?.removeAttribute('open');
+    setNowPlaying(false);
+    navigate(path, { state: { pageTitle } });
+  };
+
+  return (
+    <details ref={detailsRef} className="now-playing__byline-menu" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary className="now-playing__byline" aria-label={`${text}，更多選項`}>{byline}</summary>
+      <div className="menu-popover">
+        {track.artistId !== null ? (
+          <button type="button" onClick={() => go(`/artist/${track.artistId}`, track.artist)}>
+            <IconUser size={18} />前往歌手
+          </button>
+        ) : null}
+        {track.albumId !== null ? (
+          <button type="button" onClick={() => go(`/album/${track.albumId}`, track.album)}>
+            <IconDisc size={18} />前往專輯
+          </button>
+        ) : null}
+      </div>
+    </details>
   );
 }
 
@@ -361,7 +422,7 @@ export function NowPlaying() {
 
   const startPlayerDrag = (event: ReactPointerEvent<HTMLElement>) => {
     if (!event.isPrimary || event.button !== 0 || dragRef.current) return;
-    if ((event.target as HTMLElement).closest('button, a, input')) return;
+    if ((event.target as HTMLElement).closest('button, a, input, summary')) return;
     const player = nowPlayingRef.current;
     if (!player) return;
 
@@ -479,11 +540,7 @@ export function NowPlaying() {
           <div className="now-playing__meta">
             <h1><OverflowMarquee key={track.id} text={track.title} /></h1>
             <div className="now-playing__artist-row">
-              <p>
-                <span className="now-playing__artist-name">{track.artist}</span>
-                <span className="now-playing__artist-sep" aria-hidden="true">·</span>
-                <span className="now-playing__album-name"><OverflowMarquee key={`${track.id}-album`} text={track.album} /></span>
-              </p>
+              <BylineMenu key={track.id} track={track} />
               <div className="now-playing__meta-actions">
                 <button type="button" className={`icon-button ${!queueOpen ? 'is-active' : ''}`} aria-label="顯示歌詞" aria-pressed={!queueOpen} onClick={() => setQueueOpen(false)}><IconLyrics size={19} /></button>
                 <LikeButton track={track} className="now-playing__like" />

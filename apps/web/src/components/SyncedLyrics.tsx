@@ -15,10 +15,16 @@ const prefersReducedMotion = () => window.matchMedia('(prefers-reduced-motion: r
 interface WordTimeline {
   tl: gsap.core.Timeline;
   base: number;
+  index: number;
 }
 
 /** One paused timeline per active line; the ticker scrubs it to the audio clock, so seeking just works. */
-function buildWordTimeline(line: LyricLine, words: HTMLElement[], reduce: boolean): WordTimeline {
+function buildWordTimeline(line: LyricLine, index: number, words: HTMLElement[], reduce: boolean): WordTimeline {
+  // A line sung before (seeking back) keeps its words' last inline state, and the tweens below
+  // don't render until the playhead reaches them, so unsung words would show already lit.
+  gsap.killTweensOf(words);
+  gsap.set(words, { '--p': 0, '--glow': 0, yPercent: 0, scale: 1 });
+
   const tl = gsap.timeline({ paused: true });
   const base = Math.min(line.time, line.words?.[0]?.time ?? line.time);
 
@@ -40,7 +46,7 @@ function buildWordTimeline(line: LyricLine, words: HTMLElement[], reduce: boolea
     }
   });
 
-  return { tl, base };
+  return { tl, base, index };
 }
 
 function splitTrailingSpace(text: string) {
@@ -107,6 +113,9 @@ export function SyncedLyrics({ lines, panelRef, onSeek }: {
         return;
       }
       const currentY = Number(gsap.getProperty(el, 'y')) || 0;
+      // 'auto' overwrite only kicks in once the delay ends; until then a previous wave would keep
+      // writing y over the new start offset, so the line jumps away and snaps back.
+      gsap.killTweensOf(el, 'y');
       gsap.fromTo(el, { y: currentY + shift }, {
         y: 0,
         duration: 0.9,
@@ -140,7 +149,9 @@ export function SyncedLyrics({ lines, panelRef, onSeek }: {
         setActive(next);
       }
       const words = wordTimelineRef.current;
-      if (words) words.tl.time(gsap.utils.clamp(0, words.tl.duration(), time - words.base));
+      // Until React commits the new line, the timeline still belongs to the old one; scrubbing it
+      // to the new time would flash that line fully lit or dark for a frame.
+      if (words && words.index === next) words.tl.time(gsap.utils.clamp(0, words.tl.duration(), time - words.base));
     };
     tick();
     gsap.ticker.add(tick);
@@ -178,7 +189,7 @@ export function SyncedLyrics({ lines, panelRef, onSeek }: {
     const el = lineRefs.current[active];
     if (!line?.words?.length || !el) return;
     const words = Array.from(el.querySelectorAll<HTMLElement>('.lyrics-word'));
-    const built = buildWordTimeline(line, words, prefersReducedMotion());
+    const built = buildWordTimeline(line, active, words, prefersReducedMotion());
     built.tl.time(gsap.utils.clamp(0, built.tl.duration(), (getAudio()?.currentTime ?? 0) - built.base));
     wordTimelineRef.current = built;
 
