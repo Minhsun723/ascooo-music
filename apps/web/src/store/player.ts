@@ -53,6 +53,60 @@ if (audio) {
 }
 export const getAudio = () => audio;
 
+// Some browsers (Chrome on Android especially) advance currentTime in 20–100ms steps, so anything
+// animated straight off it stutters. Between steps the playhead is extrapolated from the wall clock,
+// and each new reading only nudges the estimate, so the result moves every frame and never backwards.
+// After a seek the output can sit still for a few hundred ms while it restarts, so extrapolation
+// waits until the reported time actually moves, and never runs further ahead than MAX_EXTRAPOLATE:
+// kept below MAX_DRIFT, a stall can only pause the estimate, never make it snap back.
+const MAX_DRIFT = 0.3; // seconds off the reported time that count as a jump (seek, loop)
+const MAX_EXTRAPOLATE = 0.2;
+const DRIFT_CORRECTION = 0.3;
+let clockRaw = Number.NaN;
+let clockBase = 0;
+let clockAt = 0;
+let clockLast = 0;
+let clockLive = false; // the reported time has advanced since the last jump
+
+function resetClock(raw: number, now: number) {
+  clockRaw = raw;
+  clockBase = raw;
+  clockAt = now;
+  clockLast = raw;
+  clockLive = false;
+}
+
+/** Smoothed playhead for frame-by-frame animation; use audio.currentTime for anything else. */
+export function getPlaybackTime() {
+  if (!audio) return 0;
+  const raw = audio.currentTime;
+  const now = performance.now();
+  if (audio.paused || audio.seeking || audio.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+    resetClock(raw, now);
+    return raw;
+  }
+  const rate = audio.playbackRate;
+  const project = () => Math.min(clockBase + (now - clockAt) / 1000 * rate, clockRaw + MAX_EXTRAPOLATE);
+  if (raw !== clockRaw) {
+    const drift = raw - (clockLive ? project() : clockRaw);
+    if (Number.isNaN(clockRaw) || Math.abs(drift) > MAX_DRIFT) {
+      resetClock(raw, now);
+    } else if (!clockLive) {
+      // First movement after a jump: start extrapolating from here.
+      clockRaw = raw;
+      clockBase = raw;
+      clockAt = now;
+      clockLive = true;
+    } else {
+      clockBase = project() + drift * DRIFT_CORRECTION;
+      clockRaw = raw;
+      clockAt = now;
+    }
+  }
+  if (clockLive) clockLast = Math.max(clockLast, project());
+  return clockLast;
+}
+
 /** Safari and some Edge/Android builds decode EC-3; Chrome and Firefox on desktop do not. */
 export const canPlayAtmos = !!audio && audio.canPlayType('audio/mp4; codecs="ec-3"') !== '';
 

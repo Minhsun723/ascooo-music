@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import gsap from 'gsap';
 import { activeIndex, type LyricLine } from '../lib/lrc';
-import { getAudio } from '../store/player';
+import { getAudio, getPlaybackTime } from '../store/player';
 
 const USER_SCROLL_IDLE = 2600;
 const WAVE_BEFORE = 2;
@@ -59,11 +59,12 @@ export function SyncedLyrics({ lines, panelRef, onSeek }: {
   panelRef: RefObject<HTMLDivElement | null>;
   onSeek: (time: number) => void;
 }) {
-  const [active, setActive] = useState(() => activeIndex(lines, getAudio()?.currentTime ?? 0));
+  const [active, setActive] = useState(() => activeIndex(lines, getPlaybackTime()));
   const activeRef = useRef(active);
   const lineRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const wordTimelineRef = useRef<WordTimeline | null>(null);
   const scrollTweenRef = useRef<gsap.core.Tween | null>(null);
+  const waveTweensRef = useRef<(gsap.core.Tween | undefined)[]>([]);
   const userScrollTimerRef = useRef(0);
   const userScrollingRef = useRef(false);
   const hasFollowedRef = useRef(false);
@@ -76,6 +77,12 @@ export function SyncedLyrics({ lines, panelRef, onSeek }: {
     const lineY = Number(gsap.getProperty(line, 'y')) || 0;
     const top = panel.scrollTop + lineRect.top - lineY - panelRect.top - (panel.clientHeight - lineRect.height) / 2;
     return Math.max(0, Math.min(top, panel.scrollHeight - panel.clientHeight));
+  };
+
+  const settleLine = (el: HTMLElement, index: number) => {
+    waveTweensRef.current[index]?.kill();
+    waveTweensRef.current[index] = undefined;
+    gsap.set(el, { y: 0 });
   };
 
   const smoothScrollTo = (panel: HTMLElement, top: number) => {
@@ -100,7 +107,7 @@ export function SyncedLyrics({ lines, panelRef, onSeek }: {
     panel.scrollTop = targetScrollTop(panel, index);
     const shift = panel.scrollTop - previous;
     if (immediate || Math.abs(shift) < 1 || Math.abs(shift) > panel.clientHeight * 1.5) {
-      gsap.set(lineRefs.current.filter(Boolean), { y: 0, overwrite: 'auto' });
+      lineRefs.current.forEach((el, i) => { if (el) settleLine(el, i); });
       return;
     }
 
@@ -109,19 +116,19 @@ export function SyncedLyrics({ lines, panelRef, onSeek }: {
       if (!el) return;
       const offset = i - anchor;
       if (offset < -WAVE_BEFORE - 4 || offset > WAVE_AFTER + 4) {
-        gsap.set(el, { y: 0, overwrite: 'auto' });
+        settleLine(el, i);
         return;
       }
       const currentY = Number(gsap.getProperty(el, 'y')) || 0;
-      // 'auto' overwrite only kicks in once the delay ends; until then a previous wave would keep
-      // writing y over the new start offset, so the line jumps away and snaps back.
-      gsap.killTweensOf(el, 'y');
-      gsap.fromTo(el, { y: currentY + shift }, {
+      // The previous wave must be killed by its handle: neither 'auto' overwrite nor
+      // killTweensOf(el, 'y') stops a fromTo still in its delay, which then stays parked on its
+      // start offset for good, leaving lines overlapping or a gap where the active line should be.
+      waveTweensRef.current[i]?.kill();
+      waveTweensRef.current[i] = gsap.fromTo(el, { y: currentY + shift }, {
         y: 0,
         duration: 0.9,
         ease: 'power3.out',
         delay: gsap.utils.clamp(0, WAVE_BEFORE + WAVE_AFTER, offset + WAVE_BEFORE) * WAVE_STAGGER,
-        overwrite: 'auto',
       });
     });
   };
@@ -134,15 +141,17 @@ export function SyncedLyrics({ lines, panelRef, onSeek }: {
 
   useLayoutEffect(() => {
     lineRefs.current.length = lines.length;
+    waveTweensRef.current.forEach((tween) => tween?.kill());
+    waveTweensRef.current = [];
     hasFollowedRef.current = false;
   }, [lines]);
 
-  // Frame-accurate clock: the store only publishes currentTime every 250ms.
+  // Frame-accurate clock: the store only publishes currentTime every 250ms, and some browsers step it coarsely.
   useEffect(() => {
     const audio = getAudio();
     if (!audio) return;
     const tick = () => {
-      const time = audio.currentTime;
+      const time = getPlaybackTime();
       const next = activeIndex(lines, time);
       if (next !== activeRef.current) {
         activeRef.current = next;
@@ -164,17 +173,15 @@ export function SyncedLyrics({ lines, panelRef, onSeek }: {
     lineRefs.current.forEach((el, i) => {
       if (!el) return;
       const distance = active < 0 ? i + 1 : Math.abs(i - active);
-      const vars = {
-        '--blur': `${reduce ? 0 : Math.min(distance, MAX_BLUR_DISTANCE) * BLUR_PER_LINE}px`,
-      };
+      // Set, not tweened: a changing blur radius re-rasterizes every line each frame, which drops
+      // frames on large high-DPI screens. One step of 0.7px is too small to notice jumping.
+      gsap.set(el, { '--blur': `${reduce ? 0 : Math.min(distance, MAX_BLUR_DISTANCE) * BLUR_PER_LINE}px` });
       const text = el.firstElementChild;
       const scale = i === active || reduce ? 1 : 0.95;
       if (distance > WAVE_AFTER + 4) {
-        gsap.set(el, vars);
         if (text) gsap.set(text, { scale });
         return;
       }
-      gsap.to(el, { ...vars, duration: 0.6, ease: 'power2.out', overwrite: 'auto' });
       if (text) gsap.to(text, { scale, duration: i === active ? 0.7 : 0.5, ease: i === active ? 'back.out(1.6)' : 'power2.out', overwrite: 'auto' });
     });
 
@@ -190,7 +197,7 @@ export function SyncedLyrics({ lines, panelRef, onSeek }: {
     if (!line?.words?.length || !el) return;
     const words = Array.from(el.querySelectorAll<HTMLElement>('.lyrics-word'));
     const built = buildWordTimeline(line, active, words, prefersReducedMotion());
-    built.tl.time(gsap.utils.clamp(0, built.tl.duration(), (getAudio()?.currentTime ?? 0) - built.base));
+    built.tl.time(gsap.utils.clamp(0, built.tl.duration(), getPlaybackTime() - built.base));
     wordTimelineRef.current = built;
 
     return () => {

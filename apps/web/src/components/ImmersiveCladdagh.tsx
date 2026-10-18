@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import gsap from 'gsap';
-import { getAudio } from '../store/player';
+import { getPlaybackTime } from '../store/player';
 import { useLineTransition, useTrackedNodes, type LineRendererProps, type PreparedLine } from './lyricUnits';
 
 // 指環: every glyph sits on a tilted 3D ellipse. The syllable being sung is at the front of the ring
@@ -118,7 +118,6 @@ export function CladdaghLine({ line, leaving, onExited }: LineRendererProps) {
   // Recompute every glyph's place on the ring each frame. While leaving, the last frame simply holds.
   useEffect(() => {
     if (leaving) return;
-    const audio = getAudio();
     let pos = Number.NaN;
     let last = performance.now();
     let lastActive = -1;
@@ -126,7 +125,7 @@ export function CladdaghLine({ line, leaving, onExited }: LineRendererProps) {
     const sin = Math.sin(TILT);
 
     const frame = () => {
-      const time = audio?.currentTime ?? 0;
+      const time = getPlaybackTime();
       const now = performance.now();
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;

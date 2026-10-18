@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import gsap from 'gsap';
 import { formatTime } from '../lib/format';
 import { activeIndex, type LyricLine } from '../lib/lrc';
-import { getAudio } from '../store/player';
+import { getAudio, getPlaybackTime } from '../store/player';
 import { IconMic, IconMusic } from './Icons';
 import { prepareLine, seededRandom, useTimedStates, type PreparedLine } from './lyricUnits';
 
@@ -139,12 +139,12 @@ export function CappellaLyrics({ lines, reduce, onSeek }: { lines: LyricLine[]; 
     return { raw, typing };
   }, [lines, prepared, senders]);
 
-  const [view, setView] = useState(() => locate(getAudio()?.currentTime ?? 0));
+  const [view, setView] = useState(() => locate(getPlaybackTime()));
   const viewRef = useRef(view);
   const seenRef = useRef(new Set<number>());
 
   useLayoutEffect(() => {
-    const next = locate(getAudio()?.currentTime ?? 0);
+    const next = locate(getPlaybackTime());
     viewRef.current = next;
     setView(next);
     seenRef.current = new Set();
@@ -154,7 +154,7 @@ export function CappellaLyrics({ lines, reduce, onSeek }: { lines: LyricLine[]; 
     const audio = getAudio();
     if (!audio) return;
     const tick = () => {
-      const next = locate(audio.currentTime);
+      const next = locate(getPlaybackTime());
       if (next.raw === viewRef.current.raw && next.typing === viewRef.current.typing) return;
       viewRef.current = next;
       setView(next);

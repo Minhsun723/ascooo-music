@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import gsap from 'gsap';
 import { activeIndex, type LyricLine } from '../lib/lrc';
-import { getAudio } from '../store/player';
+import { getAudio, getPlaybackTime } from '../store/player';
 import type { ImmersiveStyle } from '../store/preferences';
 import { CappellaLyrics } from './ImmersiveCappella';
 import { CladdaghLine } from './ImmersiveCladdagh';
@@ -140,13 +140,13 @@ function ImmersiveStage({ lines, entry }: { lines: LyricLine[]; entry: StageEntr
     return { shown, upcoming };
   }, [lines, prepared]);
 
-  const [view, setView] = useState(() => locate(getAudio()?.currentTime ?? 0));
+  const [view, setView] = useState(() => locate(getPlaybackTime()));
   const [leaving, setLeaving] = useState<number[]>([]);
   const viewRef = useRef(view);
   const floatRef = useRef<HTMLDivElement | null>(null);
 
   useLayoutEffect(() => {
-    const next = locate(getAudio()?.currentTime ?? 0);
+    const next = locate(getPlaybackTime());
     viewRef.current = next;
     setView(next);
     setLeaving([]);
@@ -156,7 +156,7 @@ function ImmersiveStage({ lines, entry }: { lines: LyricLine[]; entry: StageEntr
     const audio = getAudio();
     if (!audio) return;
     const tick = () => {
-      const next = locate(audio.currentTime);
+      const next = locate(getPlaybackTime());
       const current = viewRef.current;
       if (next.shown === current.shown && next.upcoming === current.upcoming) return;
       viewRef.current = next;

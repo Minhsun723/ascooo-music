@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
 import gsap from 'gsap';
 import type { LyricLine } from '../lib/lrc';
-import { getAudio } from '../store/player';
+import { getPlaybackTime } from '../store/player';
 
 // Timing and lifecycle shared by every immersive lyric renderer: lines are cut into word-sized
 // units (and glyphs) with their own start/end times, and renderers react to per-unit states.
@@ -164,13 +164,12 @@ export function useTimedStates(
 
   useLayoutEffect(() => {
     if (!enabled) return;
-    const audio = getAudio();
-    const start = audio?.currentTime ?? 0;
+    const start = getPlaybackTime();
     const states = items.map((item) => initial === 'actual' ? stateAt(start, item) : 'waiting');
     states.forEach((state, i) => handlers.current.onState(i, state, true));
 
     const tick = () => {
-      const time = audio?.currentTime ?? 0;
+      const time = getPlaybackTime();
       items.forEach((item, i) => {
         const state = stateAt(time, item);
         if (state === 'active') {
