@@ -3,7 +3,7 @@ import { HTTPException } from 'hono/http-exception';
 import type { AppEnv, Env } from '../env';
 import { requireAdmin, requireSessionAdmin } from '../lib/auth';
 import { ARTWORK_ASSET_VERSION, ARTWORK_SIZES, artworkObjectKey, isArtworkSize, type ArtworkSize } from '../lib/artwork';
-import { type AlternateSource, aac51Root } from '../lib/aac51';
+import { type AlternateSource, aac51Root, pairAac51 } from '../lib/aac51';
 import { AUDIO_EXTENSIONS, type AudioMetadata, extOf, extractMetadata, guessFromFilename } from '../lib/metadata';
 import { artistSearchKey, searchKey, trackSearchKey } from '../lib/search';
 import { type DavEntry, WebDAV, normalizePath, parentDir } from '../lib/webdav';
@@ -478,16 +478,7 @@ sync.post('/import/track', async (c) => {
       throw new HTTPException(400, { message: '歌詞內容為空或超過 1.5 MB' });
     }
   }
-  const aac51 = item.aac51 ?? null;
-  if (aac51) {
-    const altRoot = aac51Root(c.env.AAC51_ROOT);
-    const altPath = normalizePath(aac51.path);
-    if (altRoot === '/' || !altPath.startsWith(`${altRoot}/`) || altPath.split('/').includes('..') || extOf(altPath) !== 'm4a' ||
-        !Number.isFinite(aac51.size) || aac51.size < 0) {
-      throw new HTTPException(400, { message: `AAC 5.1 檔案必須是位於 ${altRoot} 之內的 m4a` });
-    }
-    aac51.path = altPath;
-  }
+  const aac51 = item.aac51 ? validAac51(c.env, item.aac51) : null;
   if (item.appleMusic) {
     if (!/^\d+$/.test(item.appleMusic.songId) ||
         item.appleMusic.artistId !== null && !/^\d+$/.test(item.appleMusic.artistId) ||
@@ -598,7 +589,7 @@ sync.post('/import/track', async (c) => {
     apple?.isrc ?? null,
     key,
     aac51?.path ?? null,
-    aac51 ? Math.floor(aac51.size) : null,
+    aac51?.size ?? null,
     aac51?.etag ?? null,
     now,
     now,
@@ -625,6 +616,53 @@ sync.post('/import/track', async (c) => {
   }
   await db.batch(statements);
   return c.json({ id: row!.id, title: displayTitle ?? title });
+});
+
+/** Validate an AAC 5.1 file reported by the local sync and return it normalized. */
+function validAac51(env: Env, file: AlternateSource): AlternateSource {
+  const root = aac51Root(env.AAC51_ROOT);
+  const path = typeof file?.path === 'string' ? normalizePath(file.path) : '';
+  if (root === '/' || !path.startsWith(`${root}/`) || path.split('/').includes('..') || extOf(path) !== 'm4a' ||
+      !Number.isFinite(file.size) || file.size < 0 || (file.etag != null && typeof file.etag !== 'string')) {
+    throw new HTTPException(400, { message: `AAC 5.1 檔案必須是位於 ${root} 之內的 m4a` });
+  }
+  return { path, size: Math.floor(file.size), etag: file.etag ?? null };
+}
+
+/**
+ * Re-pair AAC 5.1 copies without re-importing any track: the local command
+ * only lists AAC51_ROOT, and the Worker matches it against every track in D1.
+ * Only rows whose pairing changed are written.
+ */
+sync.post('/aac51', async (c) => {
+  const { files: raw } = await c.req.json<{ files?: unknown }>();
+  if (!Array.isArray(raw) || raw.length > 20_000) throw new HTTPException(400, { message: 'AAC 5.1 檔案清單格式錯誤' });
+  const files = (raw as AlternateSource[]).map((file) => validAac51(c.env, file));
+  const db = c.env.DB;
+  const { results: tracks } = await db
+    .prepare('SELECT id, path, alt_path, alt_size, alt_etag FROM tracks')
+    .all<{ id: number; path: string; alt_path: string | null; alt_size: number | null; alt_etag: string | null }>();
+  const { pairs, ambiguous, orphans } = pairAac51(tracks.map((track) => track.path), files);
+  const changes = tracks.flatMap((track) => {
+    const alt = pairs.get(track.path) ?? null;
+    const unchanged = (alt?.path ?? null) === track.alt_path &&
+      (alt?.size ?? null) === track.alt_size &&
+      (alt?.etag ?? null) === track.alt_etag;
+    return unchanged ? [] : [{ id: track.id, path: alt?.path ?? null, size: alt?.size ?? null, etag: alt?.etag ?? null }];
+  });
+  if (changes.length) {
+    // One statement for any number of rows stays within D1's per-request query limit.
+    await db.prepare(
+      `UPDATE tracks SET alt_path = u.path, alt_size = u.size, alt_etag = u.etag
+       FROM (
+         SELECT json_extract(value, '$.id') AS id, json_extract(value, '$.path') AS path,
+                json_extract(value, '$.size') AS size, json_extract(value, '$.etag') AS etag
+         FROM json_each(?)
+       ) AS u
+       WHERE tracks.id = u.id`,
+    ).bind(JSON.stringify(changes)).run();
+  }
+  return c.json({ paired: pairs.size, changed: changes.length, ambiguous, orphans });
 });
 
 /** Tag text is stored composed so equal names share one artist/album row. */

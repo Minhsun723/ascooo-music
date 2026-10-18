@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import sharp from 'sharp';
-import { type AlternateSource, aac51Key, aac51Root } from '../apps/worker/src/lib/aac51';
+import { type Aac51Pairing, type AlternateSource, aac51Root, pairAac51 } from '../apps/worker/src/lib/aac51';
 import { ARTWORK_SIZES, type ArtworkSize } from '../apps/worker/src/lib/artwork';
 import { AUDIO_EXTENSIONS, type AudioMetadata, extOf, extractMetadata, guessFromFilename } from '../apps/worker/src/lib/metadata';
 import { type DavEntry, WebDAV, normalizePath } from '../apps/worker/src/lib/webdav';
@@ -362,60 +362,59 @@ async function withReadRetry<T>(label: string, operation: () => Promise<T>): Pro
  */
 function attachAac51(
   tracks: PreparedTrack[],
-  altFiles: DavEntry[] | null,
+  altFiles: AlternateSource[] | null,
   previousByPath: Map<string, PreparedTrack>,
-): void {
+): Aac51Pairing | null {
   if (!altFiles) {
     for (const track of tracks) track.aac51 = previousByPath.get(track.path)?.aac51 ?? null;
-    return;
+    return null;
   }
-  const altByName = new Map<string, DavEntry[]>();
-  for (const file of altFiles) {
-    const key = aac51Key(file.path);
-    altByName.set(key, [...(altByName.get(key) ?? []), file]);
-  }
-  const tracksByName = new Map<string, PreparedTrack[]>();
-  for (const track of tracks) {
-    const key = aac51Key(track.path);
-    tracksByName.set(key, [...(tracksByName.get(key) ?? []), track]);
-  }
+  const pairing = pairAac51(tracks.map((track) => track.path), altFiles);
+  for (const track of tracks) track.aac51 = pairing.pairs.get(track.path) ?? null;
+  return pairing;
+}
 
-  let paired = 0;
-  const ambiguous: string[] = [];
-  for (const [key, named] of tracksByName) {
-    const candidates = altByName.get(key) ?? [];
-    for (const track of named) track.aac51 = null;
-    if (!candidates.length) continue;
-    if (named.length > 1 || candidates.length > 1) {
-      ambiguous.push(candidates[0].name);
-      continue;
-    }
-    const file = candidates[0];
-    named[0].aac51 = { path: file.path, size: file.size, etag: file.etag };
-    paired++;
-  }
-  const orphans = [...altByName.keys()].filter((key) => !tracksByName.has(key));
+function reportAac51(paired: number, ambiguous: string[], orphans: string[]): void {
   console.log(`  AAC 5.1 配對：${paired} 首`);
   if (ambiguous.length) {
     console.warn(`  AAC 5.1 檔名重複，無法判斷對應哪一首，已略過 ${ambiguous.length} 個：${ambiguous.slice(0, 5).join('、')}`);
   }
   if (orphans.length) {
-    const examples = orphans.slice(0, 5).map((key) => altByName.get(key)![0].name).join('、');
-    console.warn(`  AAC 5.1 找不到同名原檔 ${orphans.length} 個：${examples}`);
+    console.warn(`  AAC 5.1 找不到同名原檔 ${orphans.length} 個：${orphans.slice(0, 5).join('、')}`);
   }
 }
 
-async function prepare(): Promise<SyncManifest> {
-  const env = {
+/** Every m4a under the AAC 5.1 folder; throws when the folder cannot be read. */
+async function listAac51Files(dav: WebDAV, altRoot: string): Promise<AlternateSource[]> {
+  const folders = [altRoot];
+  const files: AlternateSource[] = [];
+  while (folders.length) {
+    const dir = folders.shift()!;
+    for (const entry of await withReadRetry(`掃描 ${dir}`, () => dav.list(dir))) {
+      if (entry.isDir) {
+        if (entry.path !== dir) folders.push(entry.path);
+      } else if (extOf(entry.name) === 'm4a') {
+        files.push({ path: entry.path, size: entry.size, etag: entry.etag });
+      }
+    }
+  }
+  return files;
+}
+
+function connectWebDAV(): WebDAV {
+  return new WebDAV({
     WEBDAV_URL: required('WEBDAV_URL'),
     MUSIC_ROOT: process.env.MUSIC_ROOT?.trim() || '/',
     WEBDAV_USERNAME: process.env.WEBDAV_USERNAME,
     WEBDAV_PASSWORD: process.env.WEBDAV_PASSWORD,
     WEBDAV_BEARER_TOKEN: process.env.WEBDAV_BEARER_TOKEN,
     WEBDAV_AUTH_MODE: process.env.WEBDAV_AUTH_MODE as 'auto' | 'basic' | 'bearer' | undefined,
-  };
-  const dav = new WebDAV(env as never);
-  const root = normalizePath(env.MUSIC_ROOT);
+  } as never);
+}
+
+async function prepare(): Promise<SyncManifest> {
+  const dav = connectWebDAV();
+  const root = normalizePath(process.env.MUSIC_ROOT?.trim() || '/');
   const appleLyricsRoot = normalizePath(process.env.APPLE_MUSIC_LYRICS_PATH?.trim() || '/ascooo-music/lyrics');
   const concurrency = concurrencyFromEnvironment();
   const folders: string[] = [root];
@@ -493,23 +492,11 @@ async function prepare(): Promise<SyncManifest> {
 
   const altRoot = aac51Root(process.env.AAC51_ROOT);
   const insideAltRoot = (path: string) => path === altRoot || path.startsWith(`${altRoot}/`);
-  let altFiles: DavEntry[] | null = null;
+  let altFiles: AlternateSource[] | null = null;
   try {
-    const altFolders = [altRoot];
-    altFiles = [];
-    while (altFolders.length) {
-      const dir = altFolders.shift()!;
-      for (const entry of await withReadRetry(`掃描 ${dir}`, () => dav.list(dir))) {
-        if (entry.isDir) {
-          if (entry.path !== dir) altFolders.push(entry.path);
-        } else if (extOf(entry.name) === 'm4a') {
-          altFiles.push(entry);
-        }
-      }
-    }
+    altFiles = await listAac51Files(dav, altRoot);
     console.log(`  AAC 5.1 資料夾：${altFiles.length} 個檔案`);
   } catch (error) {
-    altFiles = null;
     warnOnce('aac51-root', `  無法讀取 ${altRoot}，本次沿用上次的 AAC 5.1 配對：${error instanceof Error ? error.message : String(error)}`);
   }
 
@@ -841,7 +828,8 @@ async function prepare(): Promise<SyncManifest> {
       return track;
   });
   tracks.push(...preparedTracks);
-  attachAac51(tracks, altFiles, previousByPath);
+  const pairing = attachAac51(tracks, altFiles, previousByPath);
+  if (pairing) reportAac51(pairing.pairs.size, pairing.ambiguous, pairing.orphans);
 
   const referencedArtwork = new Set(tracks.flatMap((track) => [
     track.trackArtworkId,
@@ -916,6 +904,46 @@ async function post(baseUrl: string, cookie: string, path: string, body: unknown
   throw new Error(`${path} 上傳失敗：${lastError}`);
 }
 
+function targetUrl(): string {
+  const baseUrl = (process.env.SYNC_TARGET_URL?.trim() || 'https://music.ascooo.com').replace(/\/$/, '');
+  const target = new URL(baseUrl);
+  if (target.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(target.hostname)) {
+    throw new Error('SYNC_TARGET_URL 必須使用 HTTPS（本機 localhost 除外）');
+  }
+  return baseUrl;
+}
+
+/**
+ * `--aac51-only`: re-pair AAC 5.1 copies from one listing of their folder,
+ * without parsing or uploading any track. The Worker matches the names
+ * against D1, so the result does not depend on how fresh the local cache is.
+ */
+async function syncAac51Only() {
+  const altRoot = aac51Root(process.env.AAC51_ROOT);
+  console.log(`掃描 ${altRoot}`);
+  const files = await listAac51Files(connectWebDAV(), altRoot);
+  console.log(`  AAC 5.1 資料夾：${files.length} 個檔案`);
+
+  const baseUrl = targetUrl();
+  console.log(`登入 ${baseUrl}`);
+  const cookie = await login(baseUrl);
+  const result = await post(baseUrl, cookie, '/sync/aac51', { files }) as {
+    paired: number;
+    changed: number;
+    ambiguous: string[];
+    orphans: string[];
+  };
+  reportAac51(result.paired, result.ambiguous, result.orphans);
+
+  // Keep the cache in step so a later --upload-only does not restore the old pairing.
+  const manifest = await previousManifest(normalizePath(process.env.MUSIC_ROOT?.trim() || '/'));
+  if (manifest) {
+    attachAac51(manifest.tracks, files, new Map());
+    await persistManifest(manifest);
+  }
+  console.log(`AAC 5.1 同步完成：${result.changed ? `更新 ${result.changed} 首` : '沒有需要更新的歌曲'}`);
+}
+
 /** Ask the Worker which artworks R2 lacks; on failure (e.g. an older Worker) send them all. */
 async function missingArtwork(baseUrl: string, cookie: string, artworks: PreparedArtwork[]): Promise<Set<string>> {
   const ids = artworks.map((artwork) => artwork.id);
@@ -943,11 +971,7 @@ async function upload(manifest: SyncManifest) {
       `仍有 ${failedTracks.length} 首音訊解析失敗（例如：${examples}），為避免覆蓋既有歌手與封面，已停止上傳；請重新執行 --prepare-only`,
     );
   }
-  const baseUrl = (process.env.SYNC_TARGET_URL?.trim() || 'https://music.ascooo.com').replace(/\/$/, '');
-  const target = new URL(baseUrl);
-  if (target.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(target.hostname)) {
-    throw new Error('SYNC_TARGET_URL 必須使用 HTTPS（本機 localhost 除外）');
-  }
+  const baseUrl = targetUrl();
   console.log(`登入 ${baseUrl}`);
   const cookie = await login(baseUrl);
   const state = await loadUploadState(manifest.scanId);
@@ -989,6 +1013,7 @@ async function upload(manifest: SyncManifest) {
 
 async function main() {
   await loadLocalEnvironment();
+  if (process.argv.includes('--aac51-only')) return syncAac51Only();
   const prepareOnly = process.argv.includes('--prepare-only');
   const uploadOnly = process.argv.includes('--upload-only');
   if (prepareOnly && uploadOnly) throw new Error('--prepare-only 與 --upload-only 不能同時使用');

@@ -18,6 +18,7 @@
     "db:migrate:remote": "wrangler d1 migrations apply ascooo-music --remote",
     "db:search-keys": "node scripts/backfill-search-keys.mts",
     "sync:local": "node scripts/run-local-sync.mjs",
+    "sync:aac51": "node scripts/run-local-sync.mjs --aac51-only",
     "deploy": "npm run build && wrangler deploy",
     "typecheck": "npm run typecheck -w apps/worker && npm run typecheck -w apps/web"
   }
