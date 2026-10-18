@@ -140,7 +140,9 @@ sync.post('/list', async (c) => {
            OR COALESCE(tracks.lrc_path, '') != COALESCE(excluded.lrc_path, '')
            OR COALESCE(tracks.cover_path, '') != COALESCE(excluded.cover_path, '')
            OR COALESCE(tracks.cover_signature, '') != COALESCE(excluded.cover_signature, '')
-          OR tracks.metadata_version < ${METADATA_VERSION}
+          -- Stays at 1: re-parsing here drops Apple Music lyrics and artist merges,
+          -- so newer metadata versions are only backfilled by the local sync.
+          OR tracks.metadata_version < 1
          THEN 'pending' ELSE tracks.status END,
        lrc_path = excluded.lrc_path,
        cover_path = excluded.cover_path,
