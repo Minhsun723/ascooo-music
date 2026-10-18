@@ -729,7 +729,13 @@ async function prepare(): Promise<SyncManifest> {
       let lyrics: PreparedTrack['lyrics'] = null;
       const sourceTitle = preparedMetadata.title || guessFromFilename(file.path).title;
       const isInstrumental = INSTRUMENTAL_TITLE.test(sourceTitle);
-      if (lyricsFile) {
+      // The same file with the same signature holds the same text; reading it again only
+      // costs PikPak another download link, which is what trips its 404 throttling.
+      const lyricsFileUnchanged = !!lyricsFile && !!cached?.lyrics && hasStableSignature(lyricsFile) &&
+        cached.lrcPath === lyricsFile.path && cached.lrcSignature === lrcSignature;
+      if (lyricsFileUnchanged) {
+        lyrics = cached!.lyrics;
+      } else if (lyricsFile) {
         try {
           const content = (await withReadRetry(`讀取歌詞 ${lyricsFile.path}`, () => dav.readText(lyricsFile.path))).trim();
           const format = lyricsFormat(lyricsFile.path, content);
