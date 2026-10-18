@@ -731,8 +731,14 @@ async function prepare(): Promise<SyncManifest> {
       const isInstrumental = INSTRUMENTAL_TITLE.test(sourceTitle);
       // The same file with the same signature holds the same text; reading it again only
       // costs PikPak another download link, which is what trips its 404 throttling.
-      const lyricsFileUnchanged = !!lyricsFile && !!cached?.lyrics && hasStableSignature(lyricsFile) &&
-        cached.lrcPath === lyricsFile.path && cached.lrcSignature === lrcSignature;
+      // A TTML this script saved from Apple Music is recorded with a hash of its content,
+      // since PikPak's etag is unknown right after upload; trust it and adopt the etag.
+      const cachedLyricsSigned = !!cached?.lyrics && !!cached.lrcSignature && (
+        cached.lrcSignature === lrcSignature ||
+        cached.lrcSignature === sha256(Buffer.from(cached.lyrics.content))
+      );
+      const lyricsFileUnchanged = !!lyricsFile && cachedLyricsSigned && hasStableSignature(lyricsFile) &&
+        cached!.lrcPath === lyricsFile.path;
       if (lyricsFileUnchanged) {
         lyrics = cached!.lyrics;
       } else if (lyricsFile) {
