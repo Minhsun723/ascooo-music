@@ -916,6 +916,19 @@ async function post(baseUrl: string, cookie: string, path: string, body: unknown
   throw new Error(`${path} 上傳失敗：${lastError}`);
 }
 
+/** Ask the Worker which artworks R2 lacks; on failure (e.g. an older Worker) send them all. */
+async function missingArtwork(baseUrl: string, cookie: string, artworks: PreparedArtwork[]): Promise<Set<string>> {
+  const ids = artworks.map((artwork) => artwork.id);
+  if (!ids.length) return new Set();
+  try {
+    const { missing } = await post(baseUrl, cookie, '/sync/import/artwork/missing', { ids }) as { missing: string[] };
+    return new Set(missing);
+  } catch (error) {
+    console.warn(`  無法查詢 R2 既有封面，改為全部上傳：${error instanceof Error ? error.message : String(error)}`);
+    return new Set(ids);
+  }
+}
+
 async function upload(manifest: SyncManifest) {
   if (!manifest.tracks.length) {
     throw new Error('本機掃描沒有找到任何音訊；為避免誤刪線上音樂庫，已停止上傳');
@@ -942,12 +955,20 @@ async function upload(manifest: SyncManifest) {
     console.log(`續傳進度：封面 ${state.artworkIndex}/${manifest.artworks.length}、歌曲 ${state.trackIndex}/${manifest.tracks.length}`);
   }
 
-  for (let index = state.artworkIndex; index < manifest.artworks.length; index++) {
-    const artwork = manifest.artworks[index];
-    await post(baseUrl, cookie, '/sync/import/artwork', artwork);
-    state.artworkIndex = index + 1;
+  if (state.artworkIndex < manifest.artworks.length) {
+    const missing = await missingArtwork(baseUrl, cookie, manifest.artworks.slice(state.artworkIndex));
+    console.log(`  封面：${manifest.artworks.length - state.artworkIndex - missing.size} 張已在 R2，需上傳 ${missing.size} 張`);
+    let sent = 0;
+    for (let index = state.artworkIndex; index < manifest.artworks.length; index++) {
+      const artwork = manifest.artworks[index];
+      if (!missing.has(artwork.id)) continue;
+      await post(baseUrl, cookie, '/sync/import/artwork', artwork);
+      state.artworkIndex = index + 1;
+      await persistUploadState(state);
+      console.log(`  上傳封面 ${++sent}/${missing.size}`);
+    }
+    state.artworkIndex = manifest.artworks.length;
     await persistUploadState(state);
-    console.log(`  上傳封面 ${index + 1}/${manifest.artworks.length}`);
   }
   for (let index = state.trackIndex; index < manifest.tracks.length; index++) {
     const track = manifest.tracks[index];

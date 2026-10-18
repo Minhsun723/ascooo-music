@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import type { AppEnv, Env } from '../env';
 import { requireAdmin, requireSessionAdmin } from '../lib/auth';
-import { ARTWORK_SIZES, artworkObjectKey, isArtworkSize, type ArtworkSize } from '../lib/artwork';
+import { ARTWORK_ASSET_VERSION, ARTWORK_SIZES, artworkObjectKey, isArtworkSize, type ArtworkSize } from '../lib/artwork';
 import { type AlternateSource, aac51Root } from '../lib/aac51';
 import { AUDIO_EXTENSIONS, type AudioMetadata, extOf, extractMetadata, guessFromFilename } from '../lib/metadata';
 import { artistSearchKey, searchKey, trackSearchKey } from '../lib/search';
@@ -378,6 +378,29 @@ async function storeArtwork(
   }
   return id;
 }
+
+/**
+ * Report which artwork IDs are missing a size in R2, so the local sync only
+ * sends images R2 does not already hold. IDs are content hashes, so an ID that
+ * is present always has the exact same pixels. One listing covers the bucket
+ * instead of a HEAD per image.
+ */
+sync.post('/import/artwork/missing', async (c) => {
+  const { ids } = await c.req.json<{ ids?: unknown }>();
+  if (!Array.isArray(ids) || ids.length > 20_000 || ids.some((id) => typeof id !== 'string' || !/^[a-f0-9]{40}$/.test(id))) {
+    throw new HTTPException(400, { message: '封面 ID 清單格式錯誤' });
+  }
+  const prefix = `art/${ARTWORK_ASSET_VERSION}/`;
+  const stored = new Set<string>();
+  let cursor: string | undefined;
+  do {
+    const page = await c.env.ARTWORK.list({ prefix, cursor, limit: 1000 });
+    for (const object of page.objects) stored.add(object.key);
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  const missing = (ids as string[]).filter((id) => ARTWORK_SIZES.some((size) => !stored.has(artworkObjectKey(id, size))));
+  return c.json({ missing });
+});
 
 /**
  * The local sync command does all WebDAV reads and metadata parsing before it
