@@ -262,6 +262,8 @@ interface ImportedTrack {
   trackArtworkId: string | null;
   folderArtworkId: string | null;
   aac51?: AlternateSource | null;
+  /** Local-sync hash of this payload; stored so an unchanged track is not uploaded again. */
+  syncHash?: string | null;
 }
 
 interface ArtistEnrichment {
@@ -465,6 +467,14 @@ sync.post('/import/artwork', async (c) => {
   return c.json({ id: artwork.id, existing: uploaded.length === 0, uploaded });
 });
 
+/** Sync hashes of every imported track, so the local sync uploads only what changed. */
+sync.post('/import/track/hashes', async (c) => {
+  const { results } = await c.env.DB
+    .prepare('SELECT path, sync_hash FROM tracks WHERE sync_hash IS NOT NULL')
+    .all<{ path: string; sync_hash: string }>();
+  return c.json({ hashes: Object.fromEntries(results.map((row) => [row.path, row.sync_hash])) });
+});
+
 /** Persist one track already parsed by the local sync command. */
 sync.post('/import/track', async (c) => {
   const item = await c.req.json<ImportedTrack>();
@@ -481,6 +491,9 @@ sync.post('/import/track', async (c) => {
     }
   }
   const aac51 = item.aac51 ? validAac51(c.env, item.aac51) : null;
+  if (item.syncHash != null && !/^[a-f0-9]{64}$/.test(item.syncHash)) {
+    throw new HTTPException(400, { message: '同步校驗碼格式錯誤' });
+  }
   if (item.appleMusic) {
     if (!/^\d+$/.test(item.appleMusic.songId) ||
         item.appleMusic.artistId !== null && !/^\d+$/.test(item.appleMusic.artistId) ||
@@ -536,9 +549,9 @@ sync.post('/import/track', async (c) => {
        title, artist, artist_id, album_id, track_no, disc_no, year, genre, record_label,
        duration, codec, bitrate, sample_rate, bit_depth, channels, artwork_id, has_lyrics,
        display_title, display_artist, apple_music_id, apple_isrc, search_key,
-       alt_path, alt_size, alt_etag, copyright, release_date, metadata_version, added_at, updated_at
+       alt_path, alt_size, alt_etag, copyright, release_date, sync_hash, metadata_version, added_at, updated_at
      ) VALUES (
-       ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${METADATA_VERSION}, ?, ?
+       ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${METADATA_VERSION}, ?, ?
      )
      ON CONFLICT(path) DO UPDATE SET
        lrc_path = excluded.lrc_path, cover_path = excluded.cover_path,
@@ -556,7 +569,7 @@ sync.post('/import/track', async (c) => {
        apple_isrc = COALESCE(excluded.apple_isrc, tracks.apple_isrc),
        search_key = excluded.search_key,
        alt_path = excluded.alt_path, alt_size = excluded.alt_size, alt_etag = excluded.alt_etag,
-       copyright = excluded.copyright, release_date = excluded.release_date,
+       copyright = excluded.copyright, release_date = excluded.release_date, sync_hash = excluded.sync_hash,
        metadata_version = excluded.metadata_version, updated_at = excluded.updated_at
      RETURNING id`,
   ).bind(
@@ -596,6 +609,7 @@ sync.post('/import/track', async (c) => {
     aac51?.etag ?? null,
     meta.copyright ?? null,
     meta.releaseDate ?? null,
+    item.syncHash ?? null,
     now,
     now,
   ).first<{ id: number }>();
@@ -762,7 +776,7 @@ async function saveTrack(
       `UPDATE tracks SET status = 'ready', error = ?, title = ?, artist = ?, artist_id = ?, album_id = ?,
          track_no = ?, disc_no = ?, year = ?, genre = ?, record_label = ?, duration = ?, codec = ?, bitrate = ?,
          sample_rate = ?, bit_depth = ?, channels = ?, artwork_id = ?, has_lyrics = ?, search_key = ?,
-         copyright = ?, release_date = ?, metadata_version = ${METADATA_VERSION}, updated_at = ?
+         copyright = ?, release_date = ?, sync_hash = NULL, metadata_version = ${METADATA_VERSION}, updated_at = ?
        WHERE id = ?`,
     ).bind(
       error,
@@ -807,10 +821,12 @@ async function saveTrack(
 }
 
 sync.post('/finalize', async (c) => {
-  const { scanId, dir, artworkIds: rawArtworkIds } = await c.req.json<{
+  const { scanId, dir, artworkIds: rawArtworkIds, paths: rawPaths } = await c.req.json<{
     scanId: string;
     dir?: string;
     artworkIds?: string[];
+    /** Every audio path the local sync found. It skips unchanged tracks, so their scan_id is stale. */
+    paths?: string[];
   }>();
   const root = normalizePath(c.env.MUSIC_ROOT || '/');
   const scanned = assertInRoot(c.env, dir || root);
@@ -821,10 +837,18 @@ sync.post('/finalize', async (c) => {
   if (artworkIds.length !== (rawArtworkIds?.length ?? 0) || artworkIds.length > 20_000) {
     throw new HTTPException(400, { message: '封面清理清單格式錯誤' });
   }
-  const removed = await db
-    .prepare(`DELETE FROM tracks WHERE path >= ? AND path < ? AND (scan_id IS NULL OR scan_id != ?) RETURNING id`)
-    .bind(prefix, prefixEnd, scanId)
-    .all();
+  if (rawPaths !== undefined && (!Array.isArray(rawPaths) || !rawPaths.length || rawPaths.length > 50_000 ||
+      rawPaths.some((path) => typeof path !== 'string'))) {
+    throw new HTTPException(400, { message: '歌曲清單格式錯誤' });
+  }
+  const removed = await (rawPaths
+    ? db
+        .prepare(`DELETE FROM tracks WHERE path >= ? AND path < ? AND path NOT IN (SELECT value FROM json_each(?)) RETURNING id`)
+        .bind(prefix, prefixEnd, JSON.stringify(rawPaths.map((path) => normalizePath(path))))
+    : db
+        .prepare(`DELETE FROM tracks WHERE path >= ? AND path < ? AND (scan_id IS NULL OR scan_id != ?) RETURNING id`)
+        .bind(prefix, prefixEnd, scanId)
+  ).all();
   await db.batch([
     db.prepare('DELETE FROM albums WHERE NOT EXISTS (SELECT 1 FROM tracks WHERE tracks.album_id = albums.id)'),
     db.prepare(

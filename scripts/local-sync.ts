@@ -21,6 +21,9 @@ const uploadStateFile = resolve(projectRoot, `.sync-cache/upload-state${devTarge
 // download URL. A repeated 404 is still treated as a real missing file.
 const transientHttpError = /HTTP (?:404|408|425|429|500|502|503|504)\b/;
 const dailyD1LimitError = /exceeded D1's free tier daily/i;
+// Part of every track's sync hash. Bump it when /sync/import/track starts
+// writing a payload differently, so every track is uploaded once more.
+const TRACK_IMPORT_VERSION = 1;
 
 interface PreparedArtworkVariant {
   size: ArtworkSize;
@@ -80,7 +83,6 @@ interface SyncManifest {
 interface UploadState {
   scanId: string;
   artworkIndex: number;
-  trackIndex: number;
 }
 
 function concurrencyFromEnvironment(): number {
@@ -168,7 +170,7 @@ async function loadUploadState(scanId: string): Promise<UploadState> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
   }
-  return { scanId, artworkIndex: 0, trackIndex: 0 };
+  return { scanId, artworkIndex: 0 };
 }
 
 async function persistUploadState(state: UploadState): Promise<void> {
@@ -977,6 +979,41 @@ async function syncAac51Only() {
   console.log(`AAC 5.1 同步完成：${result.changed ? `更新 ${result.changed} 首` : '沒有需要更新的歌曲'}`);
 }
 
+/** JSON with sorted keys, so a track read back from the cache hashes the same as a freshly parsed one. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort()
+      .filter((key) => (value as Record<string, unknown>)[key] !== undefined)
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/**
+ * Hash of what the Worker would write for a track. Fields that only steer the
+ * local cache (scan id, Apple re-check times) are left out, so a refresh that
+ * finds the same match does not upload the track again.
+ */
+function trackSyncHash(track: PreparedTrack): string {
+  const { scanId: _scanId, appleCheckedAt: _appleCheckedAt, appleLyricsCheckedAt: _appleLyricsCheckedAt, ...payload } = track;
+  return createHash('sha256')
+    .update(canonicalJson({ importVersion: TRACK_IMPORT_VERSION, metadataVersion: METADATA_VERSION, payload }))
+    .digest('hex');
+}
+
+/** Ask the Worker for the hash of every imported track; null (e.g. an older Worker) means upload them all. */
+async function syncedTrackHashes(baseUrl: string, cookie: string): Promise<Map<string, string> | null> {
+  try {
+    const { hashes } = await post(baseUrl, cookie, '/sync/import/track/hashes', {}) as { hashes: Record<string, string> };
+    return new Map(Object.entries(hashes));
+  } catch (error) {
+    console.warn(`  無法查詢線上歌曲狀態，改為全部上傳：${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
 /** Ask the Worker which artworks R2 lacks; on failure (e.g. an older Worker) send them all. */
 async function missingArtwork(baseUrl: string, cookie: string, artworks: PreparedArtwork[]): Promise<Set<string>> {
   const ids = artworks.map((artwork) => artwork.id);
@@ -1008,9 +1045,7 @@ async function upload(manifest: SyncManifest) {
   console.log(`登入 ${baseUrl}`);
   const cookie = await login(baseUrl);
   const state = await loadUploadState(manifest.scanId);
-  if (state.artworkIndex || state.trackIndex) {
-    console.log(`續傳進度：封面 ${state.artworkIndex}/${manifest.artworks.length}、歌曲 ${state.trackIndex}/${manifest.tracks.length}`);
-  }
+  if (state.artworkIndex) console.log(`續傳進度：封面 ${state.artworkIndex}/${manifest.artworks.length}`);
 
   if (state.artworkIndex < manifest.artworks.length) {
     const missing = await missingArtwork(baseUrl, cookie, manifest.artworks.slice(state.artworkIndex));
@@ -1027,21 +1062,29 @@ async function upload(manifest: SyncManifest) {
     state.artworkIndex = manifest.artworks.length;
     await persistUploadState(state);
   }
-  for (let index = state.trackIndex; index < manifest.tracks.length; index++) {
-    const track = manifest.tracks[index];
+  // D1 keeps the hash of each imported payload, so an interrupted upload resumes
+  // where it stopped and a sync with no changes writes nothing.
+  const synced = await syncedTrackHashes(baseUrl, cookie);
+  const pending = manifest.tracks
+    .map((track) => ({ ...track, syncHash: trackSyncHash(track) }))
+    .filter((track) => synced?.get(track.path) !== track.syncHash);
+  console.log(`  歌曲：${manifest.tracks.length - pending.length} 首未變更，需上傳 ${pending.length} 首`);
+  for (let index = 0; index < pending.length; index++) {
+    const track = pending[index];
     await post(baseUrl, cookie, '/sync/import/track', track);
-    state.trackIndex = index + 1;
-    await persistUploadState(state);
-    console.log(`  上傳歌曲 ${index + 1}/${manifest.tracks.length}：${track.path.slice(track.path.lastIndexOf('/') + 1)}`);
+    console.log(`  上傳歌曲 ${index + 1}/${pending.length}：${track.path.slice(track.path.lastIndexOf('/') + 1)}`);
   }
 
   await post(baseUrl, cookie, '/sync/finalize', {
     scanId: manifest.scanId,
     dir: manifest.root,
     artworkIds: manifest.artworks.map((artwork) => artwork.id),
+    // Skipped tracks keep an older scan_id; an older Worker that ignores this
+    // list is never reached with skipped tracks, since its hash lookup fails.
+    paths: manifest.tracks.map((track) => track.path),
   });
   await clearUploadState();
-  console.log(`同步完成：${manifest.tracks.length} 首歌曲、${manifest.artworks.length} 張封面`);
+  console.log(`同步完成：${manifest.tracks.length} 首歌曲（上傳 ${pending.length} 首）、${manifest.artworks.length} 張封面`);
 }
 
 async function main() {
