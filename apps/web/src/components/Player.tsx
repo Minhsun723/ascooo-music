@@ -408,10 +408,12 @@ export function NowPlaying() {
     return () => { cancelled = true; };
   }, [open, track]);
 
+  // The AAC 5.1 copy is made from the Atmos file, so it shares the spatial timeline too.
+  const spatial = !!track && isDolbyAtmos(track);
   const timed = useMemo(() => {
     if (!lyrics?.synced) return [];
-    return lyrics.format === 'ttml' ? parseTtml(lyrics.content) : parseLrc(lyrics.content);
-  }, [lyrics]);
+    return lyrics.format === 'ttml' ? parseTtml(lyrics.content, { spatial }) : parseLrc(lyrics.content);
+  }, [lyrics, spatial]);
   const plain = useMemo(() => lyrics && !lyrics.synced ? plainLines(lyrics.content) : [], [lyrics]);
 
   useEffect(() => {

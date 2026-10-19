@@ -53,11 +53,27 @@ function ttmlTime(value: string | null): number | null {
 
 const normalizedText = (value: string | null | undefined) => (value ?? '').replace(/[\t\r\n ]+/g, ' ').trim();
 
-/** Parse Apple Music TTML without rendering its XML as HTML. */
-export function parseTtml(content: string): LyricLine[] {
+/**
+ * Apple times its TTML against the stereo master. A Dolby Atmos mix can start later, so the file
+ * carries `<audio role="spatial" lyricOffset="\u2026"/>`: the seconds to add when the spatial mix plays.
+ */
+function spatialOffset(document: Document): number {
+  const audio = Array.from(document.getElementsByTagNameNS('*', 'audio'))
+    .find((element) => element.getAttribute('role') === 'spatial');
+  const offset = Number(audio?.getAttribute('lyricOffset'));
+  return Number.isFinite(offset) ? offset : 0;
+}
+
+/** Parse Apple Music TTML without rendering its XML as HTML. Pass `spatial` when the Atmos mix is playing. */
+export function parseTtml(content: string, { spatial = false } = {}): LyricLine[] {
   if (typeof DOMParser === 'undefined') return [];
   const document = new DOMParser().parseFromString(content.replace(/^\uFEFF/, ''), 'application/xml');
   if (document.querySelector('parsererror')) return [];
+  const offset = spatial ? spatialOffset(document) : 0;
+  const at = (value: string | null) => {
+    const seconds = ttmlTime(value);
+    return seconds === null ? null : seconds + offset;
+  };
   const paragraphs = Array.from(document.getElementsByTagNameNS('*', 'p'));
   const lines: LyricLine[] = [];
 
@@ -68,9 +84,9 @@ export function parseTtml(content: string): LyricLine[] {
     });
     const words: LyricWord[] = [];
     for (const span of spans) {
-      const time = ttmlTime(span.getAttribute('begin'));
+      const time = at(span.getAttribute('begin'));
       if (time === null) continue;
-      const end = ttmlTime(span.getAttribute('end')) ?? time;
+      const end = at(span.getAttribute('end')) ?? time;
       let text = span.textContent ?? '';
       for (let sibling = span.nextSibling; sibling?.nodeType === Node.TEXT_NODE; sibling = sibling.nextSibling) {
         text += sibling.textContent ?? '';
@@ -80,9 +96,9 @@ export function parseTtml(content: string): LyricLine[] {
 
     const text = normalizedText(paragraph.textContent);
     if (!text) continue;
-    const lineTime = ttmlTime(paragraph.getAttribute('begin')) ?? words[0]?.time ?? null;
+    const lineTime = at(paragraph.getAttribute('begin')) ?? words[0]?.time ?? null;
     if (lineTime === null) continue;
-    const lineEnd = ttmlTime(paragraph.getAttribute('end')) ?? words.at(-1)?.end;
+    const lineEnd = at(paragraph.getAttribute('end')) ?? words.at(-1)?.end;
     lines.push({
       time: Math.max(0, lineTime),
       ...(lineEnd === undefined || lineEnd === null ? {} : { end: Math.max(lineTime, lineEnd) }),
