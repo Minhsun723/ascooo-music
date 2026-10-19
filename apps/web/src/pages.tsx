@@ -90,9 +90,9 @@ export function HomePage() {
   return (
     <>
       {data.quickPicks.length ? <section className="page-section"><SectionHeading title="現在就播放" link="/library?tab=tracks" /><TrackList tracks={data.quickPicks.slice(0, 10)} compact numbered={false} /></section> : null}
-      {data.recentAlbums.length ? <section className="page-section"><SectionHeading title="新進唱片櫃" link="/library?tab=albums" /><AlbumGrid albums={data.recentAlbums.slice(0, 6)} /></section> : null}
+      {data.recentAlbums.length ? <section className="page-section"><SectionHeading title="新進唱片櫃" link="/library?tab=albums" /><AlbumGrid albums={data.recentAlbums.slice(0, 12)} shelf /></section> : null}
       {data.recentPlays.length ? <section className="page-section"><SectionHeading title="最近聽過" /><TrackList tracks={data.recentPlays.slice(0, 8)} compact numbered={false} /></section> : null}
-      {data.randomAlbums.length ? <section className="page-section"><SectionHeading title="再翻一張唱片" /><AlbumGrid albums={data.randomAlbums.slice(0, 6)} /></section> : null}
+      {data.randomAlbums.length ? <section className="page-section"><SectionHeading title="再翻一張唱片" /><AlbumGrid albums={data.randomAlbums.slice(0, 12)} shelf /></section> : null}
       {!data.stats.tracks ? <EmptyState title="音樂庫還是空的" copy="到設定頁連線 PikPak，執行第一次同步後，歌曲就會出現在這裡。" action={<Link to="/settings" className="primary-button"><IconSync size={18} />前往同步設定</Link>} /> : null}
     </>
   );

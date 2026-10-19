@@ -199,6 +199,8 @@ h1, h2, h3 { font-family: var(--font-display); letter-spacing: -.035em; }
 
 /* Media cards */
 .media-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: clamp(16px, 2vw, 26px); }
+/* Home shelves get up to 12 albums and show only as many as fill whole rows at the current column count. */
+.media-grid--shelf > :nth-child(n+7) { display: none; }
 .media-card { position: relative; min-width: 0; display: flex; flex-direction: column; }
 .media-card__art { position: relative; width: 100%; display: block; transition: transform .55s var(--ease-out); }
 .media-card .artwork { box-shadow: 0 10px 30px rgba(0,0,0,.25); transition: box-shadow .4s ease, filter .4s; }
@@ -747,6 +749,8 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
 @media (max-width: 1220px) {
   :root { --sidebar: 210px; }
   .media-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .media-grid--shelf > :nth-child(n+7) { display: revert; }
+  .media-grid--shelf > :nth-child(n+9) { display: none; }
   .player-bar { grid-template-columns: minmax(140px, .75fr) minmax(270px, 1.1fr) minmax(195px, .75fr); gap: 12px; }
   .player-bar__tools { justify-content: flex-start; }
   .player-quality, .volume-range { display: none; }
@@ -824,6 +828,7 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
   .collection-hero.collection-hero--detail .collection-hero__actions { justify-content: center; margin-top: 18px; }
   .media-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 14px; }
   .media-grid--artists { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .media-grid--shelf > :nth-child(n+7) { display: none; }
   .page-section { margin-top: 56px; }
   .section-heading { align-items: center; }
   .track-row { grid-template-columns: minmax(0, 1fr) 40px 40px; }

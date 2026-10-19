@@ -51,8 +51,8 @@ export function MediaCard({ item }: { item: MediaItem }) {
   );
 }
 
-export function AlbumGrid({ albums }: { albums: Album[] }) {
-  return <div className="media-grid">{albums.map((album) => <MediaCard key={album.id} item={{ kind: 'album', data: album }} />)}</div>;
+export function AlbumGrid({ albums, shelf = false }: { albums: Album[]; shelf?: boolean }) {
+  return <div className={shelf ? 'media-grid media-grid--shelf' : 'media-grid'}>{albums.map((album) => <MediaCard key={album.id} item={{ kind: 'album', data: album }} />)}</div>;
 }
 
 export function ArtistGrid({ artists }: { artists: Artist[] }) {
