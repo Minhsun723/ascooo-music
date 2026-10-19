@@ -98,8 +98,8 @@ export function HomePage() {
   );
 }
 
-function PageIntro({ title, copy, children }: { title: string; copy?: string; children?: React.ReactNode }) {
-  return <><header className="page-intro"><h1>{title}</h1>{copy ? <p>{copy}</p> : null}</header>{children}</>;
+function PageIntro({ title, copy, className, children }: { title: string; copy?: string; className?: string; children?: React.ReactNode }) {
+  return <><header className={className ? `page-intro ${className}` : 'page-intro'}><h1>{title}</h1>{copy ? <p>{copy}</p> : null}</header>{children}</>;
 }
 
 function useDynamicPageTitle(title?: string) {
@@ -129,7 +129,7 @@ export function SearchPage() {
   if (state.error) return <RequestError message={state.error} />;
   const resultCount = (state.data?.tracks.length ?? 0) + (state.data?.albums.length ?? 0) + (state.data?.artists.length ?? 0);
 
-  return <><PageIntro title={`「${query}」`} copy={state.loading ? '正在搜尋…' : `找到 ${resultCount} 個結果`} />{state.loading && !state.data ? <LoadingBlock rows={6} /> : null}{state.data?.artists.length ? <section className="page-section"><SectionHeading title="藝人" /><ArtistGrid artists={state.data.artists} /></section> : null}{state.data?.albums.length ? <section className="page-section"><SectionHeading title="專輯" /><AlbumGrid albums={state.data.albums} /></section> : null}{state.data?.tracks.length ? <section className="page-section"><SectionHeading title="歌曲" /><TrackList tracks={state.data.tracks} /></section> : null}{state.data && !resultCount ? <EmptyState title="沒有相符的音樂" copy="試試藝人全名、專輯名稱，或縮短搜尋字詞。" /> : null}</>;
+  return <><PageIntro className="page-intro--search" title={`「${query}」`} copy={state.loading ? '正在搜尋…' : `找到 ${resultCount} 個結果`} />{state.loading && !state.data ? <LoadingBlock rows={6} /> : null}{state.data?.artists.length ? <section className="page-section"><SectionHeading title="藝人" /><ArtistGrid artists={state.data.artists} /></section> : null}{state.data?.albums.length ? <section className="page-section"><SectionHeading title="專輯" /><AlbumGrid albums={state.data.albums} /></section> : null}{state.data?.tracks.length ? <section className="page-section"><SectionHeading title="歌曲" /><TrackList tracks={state.data.tracks} /></section> : null}{state.data && !resultCount ? <EmptyState title="沒有相符的音樂" copy="試試藝人全名、專輯名稱，或縮短搜尋字詞。" /> : null}</>;
 }
 
 type LibraryData = { tracks: Track[]; total: number; albums: Album[]; artists: Artist[] };
@@ -577,9 +577,7 @@ function UserManagement({ currentUserId }: { currentUserId: number }) {
     <section className="settings-card settings-card--wide account-manager">
       <div className="account-manager__heading">
         <div>
-          <span className="eyebrow">ADMIN ONLY</span>
           <h2>帳號與權限</h2>
-          <p>建立共用成員帳號，並控制誰能管理音樂庫與其他使用者。</p>
         </div>
         <div className="account-manager__summary" aria-live="polite">
           <strong>{users.length}</strong>
@@ -591,7 +589,7 @@ function UserManagement({ currentUserId }: { currentUserId: number }) {
         <form className="account-create" onSubmit={createUser}>
           <div className="account-create__heading">
             <span className="account-create__icon"><IconPlus size={18} /></span>
-            <div><h3>新增帳號</h3><p>建立後即可使用帳號與初始密碼登入。</p></div>
+            <h3>新增帳號</h3>
           </div>
           <label htmlFor="new-account-username"><span>帳號</span></label>
           <input
@@ -625,7 +623,6 @@ function UserManagement({ currentUserId }: { currentUserId: number }) {
             <option value="user">一般使用者</option>
             <option value="admin">管理員</option>
           </select>
-          <p className="account-create__hint">管理員可同步及隱藏音樂、建立或刪除帳號。</p>
           {formError ? <p className="account-create__error" role="alert">{formError}</p> : null}
           <button type="submit" className="primary-button" disabled={creating || !form.username.trim() || form.password.length < 8}>
             <IconPlus size={17} />{creating ? '建立中…' : '建立帳號'}
@@ -634,7 +631,7 @@ function UserManagement({ currentUserId }: { currentUserId: number }) {
 
         <div className="account-list-panel">
           <div className="account-list-panel__heading">
-            <div><h3>現有帳號</h3><p>密碼不會顯示；使用者可在設定頁自行變更。</p></div>
+            <h3>現有帳號</h3>
           </div>
           {loading ? <LoadingBlock rows={3} /> : null}
           {!loading && error ? (
