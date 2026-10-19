@@ -167,6 +167,18 @@ npm run sync:local -- --upload-only
 
 > Dolby Atmos 是否能呈現取決於音訊檔、瀏覽器、作業系統與實際播放裝置；平台會串流原始檔案，不宣稱對瀏覽器端做 Atmos 解碼。
 
+### 同步到本機開發伺服器
+
+要把音樂庫匯入 `wrangler dev` 的本機 D1／R2，不必修改 `SYNC_TARGET_URL` 與帳密，先啟動 `npm run dev:api`（或 `dev:integrated`），再執行：
+
+```bash
+npm run sync:dev                    # 完整同步到 http://127.0.0.1:8787
+npm run sync:dev -- --upload-only   # 直接上傳既有快取，不重新掃描 PikPak
+npm run sync:dev:aac51              # 只重新配對 AAC 5.1
+```
+
+`--dev` 模式改讀 `.dev.vars` 中的 `DEV_SYNC_TARGET_URL`（預設 `http://127.0.0.1:8787`）、`DEV_SYNC_ADMIN_USERNAME` 與 `DEV_SYNC_ADMIN_PASSWORD`，留空時沿用對應的 `SYNC_*` 值。解析快取 `.sync-cache/library.json` 與正式站共用，續傳進度則另存在 `.sync-cache/upload-state.dev.json`，本機上傳中斷不會影響正式站的續傳。
+
 ### AAC 5.1 替代版本
 
 Chrome、Firefox 等瀏覽器無法解碼 Dolby Atmos（EC-3）。可以把轉好的 AAC 5.1 檔案平放在 PikPak 的 `AAC51_ROOT`（預設 `/ascooo-music/Music-Transcode/aac51`），檔名必須與 `/Music` 中的原始檔完全相同，例如：

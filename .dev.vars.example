@@ -19,6 +19,11 @@ JWT_SECRET=change-me-to-a-long-random-string
 SYNC_TARGET_URL=https://music.ascooo.com
 SYNC_ADMIN_USERNAME=your-admin-username
 SYNC_ADMIN_PASSWORD=your-admin-password
+# Used only by `npm run sync:dev`, which uploads to the local `wrangler dev`
+# server. Each value falls back to its SYNC_* counterpart when left empty.
+DEV_SYNC_TARGET_URL=http://127.0.0.1:8787
+DEV_SYNC_ADMIN_USERNAME=
+DEV_SYNC_ADMIN_PASSWORD=
 # Local WebDAV metadata parsing concurrency (1-8).
 SYNC_PARSE_CONCURRENCY=1
 

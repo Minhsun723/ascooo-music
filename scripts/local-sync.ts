@@ -11,8 +11,12 @@ import { AppleMusicClient, appleArtworkUrl, type AppleArtwork, type AppleMusicMa
 const COVER_NAMES = ['cover', 'folder', 'front', 'album', 'albumart', 'albumcover', 'artwork', 'jacket', '封面', '專輯封面', '专辑封面'];
 const IMAGE_EXT = ['jpg', 'jpeg', 'png', 'webp', 'avif', 'gif'];
 const projectRoot = process.cwd();
+// `--dev` uploads to the local `wrangler dev` server instead of the deployed
+// site. The parsed library cache is shared; upload progress is kept apart so an
+// interrupted dev upload never makes a production resume skip tracks.
+const devTarget = process.argv.includes('--dev');
 const cacheFile = resolve(projectRoot, '.sync-cache/library.json');
-const uploadStateFile = resolve(projectRoot, '.sync-cache/upload-state.json');
+const uploadStateFile = resolve(projectRoot, `.sync-cache/upload-state${devTarget ? '.dev' : ''}.json`);
 // PikPak occasionally returns a short-lived 404 while creating a fresh signed
 // download URL. A repeated 404 is still treated as a real missing file.
 const transientHttpError = /HTTP (?:404|408|425|429|500|502|503|504)\b/;
@@ -874,6 +878,15 @@ async function responseError(response: Response): Promise<string> {
   }
 }
 
+/** In `--dev` mode a `DEV_`-prefixed variable wins, falling back to the deployed-site value. */
+function syncSetting(name: string): string {
+  if (devTarget) {
+    const value = process.env[`DEV_${name}`]?.trim();
+    if (value) return value;
+  }
+  return required(name);
+}
+
 async function login(baseUrl: string): Promise<string> {
   let lastError = '';
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -881,7 +894,7 @@ async function login(baseUrl: string): Promise<string> {
       const response = await fetch(`${baseUrl}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: required('SYNC_ADMIN_USERNAME'), password: required('SYNC_ADMIN_PASSWORD') }),
+        body: JSON.stringify({ username: syncSetting('SYNC_ADMIN_USERNAME'), password: syncSetting('SYNC_ADMIN_PASSWORD') }),
       });
       if (response.ok) {
         const setCookie = response.headers.get('set-cookie');
@@ -922,10 +935,13 @@ async function post(baseUrl: string, cookie: string, path: string, body: unknown
 }
 
 function targetUrl(): string {
-  const baseUrl = (process.env.SYNC_TARGET_URL?.trim() || 'https://music.ascooo.com').replace(/\/$/, '');
+  const configured = devTarget
+    ? process.env.DEV_SYNC_TARGET_URL?.trim() || 'http://127.0.0.1:8787'
+    : process.env.SYNC_TARGET_URL?.trim() || 'https://music.ascooo.com';
+  const baseUrl = configured.replace(/\/$/, '');
   const target = new URL(baseUrl);
   if (target.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(target.hostname)) {
-    throw new Error('SYNC_TARGET_URL 必須使用 HTTPS（本機 localhost 除外）');
+    throw new Error(`${devTarget ? 'DEV_' : ''}SYNC_TARGET_URL 必須使用 HTTPS（本機 localhost 除外）`);
   }
   return baseUrl;
 }
