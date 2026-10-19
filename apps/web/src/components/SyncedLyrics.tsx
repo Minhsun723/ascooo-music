@@ -1,6 +1,6 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import gsap from 'gsap';
-import { activeIndex, type LyricLine } from '../lib/lrc';
+import { activeIndex, withInterludes, type LyricLine } from '../lib/lrc';
 import { getAudio, getPlaybackTime } from '../store/player';
 
 const USER_SCROLL_IDLE = 2600;
@@ -9,6 +9,8 @@ const WAVE_AFTER = 10;
 const WAVE_STAGGER = 0.05;
 const MAX_BLUR_DISTANCE = 5;
 const BLUR_PER_LINE = 0.7;
+const INTERLUDE_OUT = 0.45; // seconds the interlude dots spend shrinking away
+const LINE_LOOKAHEAD = 0.15; // activeIndex switches lines this early
 
 const prefersReducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -54,11 +56,12 @@ function splitTrailingSpace(text: string) {
   return [body, text.slice(body.length)] as const;
 }
 
-export function SyncedLyrics({ lines, panelRef, onSeek }: {
+export function SyncedLyrics({ lines: sourceLines, panelRef, onSeek }: {
   lines: LyricLine[];
   panelRef: RefObject<HTMLDivElement | null>;
   onSeek: (time: number) => void;
 }) {
+  const lines = useMemo(() => withInterludes(sourceLines), [sourceLines]);
   const [active, setActive] = useState(() => activeIndex(lines, getPlaybackTime()));
   const activeRef = useRef(active);
   const lineRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -96,17 +99,33 @@ export function SyncedLyrics({ lines, panelRef, onSeek }: {
     });
   };
 
-  /** Jump the scroll position, then let each line catch up with a staggered wave. */
-  const follow = (immediate: boolean) => {
+  /** Only the interlude being played takes room in the list; the rest stay collapsed. */
+  const openInterlude = (index: number) => {
+    lines.forEach((line, i) => {
+      const el = lineRefs.current[i];
+      if (line.interlude && el) el.toggleAttribute('data-open', i === index);
+    });
+  };
+
+  /**
+   * Jump the scroll position (after `relayout`, if any), then let each line glide back from where
+   * it was on screen with a staggered wave, so layout changes move as smoothly as scrolling does.
+   */
+  const follow = (immediate: boolean, relayout?: () => void) => {
     const panel = panelRef.current;
-    if (!panel || userScrollingRef.current) return;
+    if (!panel || userScrollingRef.current) {
+      relayout?.();
+      return;
+    }
     scrollTweenRef.current?.kill();
 
+    const before = immediate ? [] : lineRefs.current.map((el) => el?.getBoundingClientRect().top ?? 0);
+    relayout?.();
     const index = activeRef.current;
     const previous = panel.scrollTop;
     panel.scrollTop = targetScrollTop(panel, index);
     const shift = panel.scrollTop - previous;
-    if (immediate || Math.abs(shift) < 1 || Math.abs(shift) > panel.clientHeight * 1.5) {
+    if (immediate || Math.abs(shift) > panel.clientHeight * 1.5) {
       lineRefs.current.forEach((el, i) => { if (el) settleLine(el, i); });
       return;
     }
@@ -115,16 +134,19 @@ export function SyncedLyrics({ lines, panelRef, onSeek }: {
     lineRefs.current.forEach((el, i) => {
       if (!el) return;
       const offset = i - anchor;
-      if (offset < -WAVE_BEFORE - 4 || offset > WAVE_AFTER + 4) {
+      // Interlude rows pop in and out in place; collapsed ones measure at 0 and would fly in.
+      if (lines[i]?.interlude || offset < -WAVE_BEFORE - 4 || offset > WAVE_AFTER + 4) {
         settleLine(el, i);
         return;
       }
+      const delta = before[i] - el.getBoundingClientRect().top;
+      if (Math.abs(delta) < 1) return;
       const currentY = Number(gsap.getProperty(el, 'y')) || 0;
       // The previous wave must be killed by its handle: neither 'auto' overwrite nor
       // killTweensOf(el, 'y') stops a fromTo still in its delay, which then stays parked on its
       // start offset for good, leaving lines overlapping or a gap where the active line should be.
       waveTweensRef.current[i]?.kill();
-      waveTweensRef.current[i] = gsap.fromTo(el, { y: currentY + shift }, {
+      waveTweensRef.current[i] = gsap.fromTo(el, { y: currentY + delta }, {
         y: 0,
         duration: 0.9,
         ease: 'power3.out',
@@ -161,6 +183,14 @@ export function SyncedLyrics({ lines, panelRef, onSeek }: {
       // Until React commits the new line, the timeline still belongs to the old one; scrubbing it
       // to the new time would flash that line fully lit or dark for a frame.
       if (words && words.index === next) words.tl.time(gsap.utils.clamp(0, words.tl.duration(), time - words.base));
+      // Interlude dots light up one by one across the gap, then shrink away just before the next line.
+      const row = lines[next];
+      const rowEl = lineRefs.current[next];
+      if (row?.interlude && row.end !== undefined && rowEl) {
+        const outAt = row.end - LINE_LOOKAHEAD - INTERLUDE_OUT;
+        rowEl.style.setProperty('--p', String(gsap.utils.clamp(0, 1, (time - row.time) / Math.max(0.1, outAt - row.time))));
+        rowEl.style.setProperty('--fade', String(gsap.utils.clamp(0, 1, 1 - (time - outAt) / INTERLUDE_OUT)));
+      }
     };
     tick();
     gsap.ticker.add(tick);
@@ -185,7 +215,7 @@ export function SyncedLyrics({ lines, panelRef, onSeek }: {
       if (text) gsap.to(text, { scale, duration: i === active ? 0.7 : 0.5, ease: i === active ? 'back.out(1.6)' : 'power2.out', overwrite: 'auto' });
     });
 
-    follow(!hasFollowedRef.current || reduce);
+    follow(!hasFollowedRef.current || reduce, () => openInterlude(active));
     hasFollowedRef.current = true;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, lines]);
@@ -252,24 +282,30 @@ export function SyncedLyrics({ lines, panelRef, onSeek }: {
           type="button"
           key={`${line.time}-${index}`}
           ref={(node) => { lineRefs.current[index] = node; }}
-          className={index === active ? 'is-active' : ''}
-          aria-label={line.text || '♪'}
+          className={[line.interlude && 'lyrics-lines__interlude', index === active && 'is-active'].filter(Boolean).join(' ')}
+          aria-label={line.interlude ? '間奏' : line.text || '♪'}
           // Don't take focus on click, so Space keeps toggling playback instead of re-seeking.
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => { endUserScroll(); onSeek(line.time); }}
         >
-          <span className={`lyrics-lines__text${line.words?.length ? ' lyrics-lines__text--timed' : ''}`} aria-hidden="true">
-            {line.words?.length
-              ? line.words.map((word, wordIndex) => {
-                  const [body, trailing] = splitTrailingSpace(word.text);
-                  return (
-                    <Fragment key={`${word.time}-${wordIndex}`}>
-                      <span className="lyrics-word">{body}</span>{trailing}
-                    </Fragment>
-                  );
-                })
-              : line.text || '♪'}
-          </span>
+          {line.interlude ? (
+            <span className="lyrics-lines__text lyrics-interlude" aria-hidden="true">
+              <span className="lyrics-interlude__dots"><i /><i /><i /></span>
+            </span>
+          ) : (
+            <span className={`lyrics-lines__text${line.words?.length ? ' lyrics-lines__text--timed' : ''}`} aria-hidden="true">
+              {line.words?.length
+                ? line.words.map((word, wordIndex) => {
+                    const [body, trailing] = splitTrailingSpace(word.text);
+                    return (
+                      <Fragment key={`${word.time}-${wordIndex}`}>
+                        <span className="lyrics-word">{body}</span>{trailing}
+                      </Fragment>
+                    );
+                  })
+                : line.text || '♪'}
+            </span>
+          )}
         </button>
       ))}
     </div>

@@ -9,6 +9,7 @@ export interface LyricLine {
   end?: number;
   text: string;
   words?: LyricWord[];
+  interlude?: boolean; // synthesized • • • row for an instrumental gap
 }
 
 const TIME = /\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/g;
@@ -98,6 +99,28 @@ export function plainLines(content: string): string[] {
     .split(/\r?\n/)
     .map((l) => l.replace(/^\[[a-z]+:.*\]$/i, '').trim())
     .filter((l, i, arr) => l || (i > 0 && arr[i - 1]));
+}
+
+const INTERLUDE_MIN = 5; // seconds of silence before a gap earns a • • • row
+const INTERLUDE_LINGER = 1; // let the last sung line stay lit a beat before the dots take over
+
+/**
+ * TTML has no instrumental marker: a long silence between one line's end and the next line's
+ * start is the interlude (or the intro, before the first line). LRC has no end times, so it's left alone.
+ */
+export function withInterludes(lines: LyricLine[]): LyricLine[] {
+  if (!lines.some((line) => line.end !== undefined)) return lines;
+  const out: LyricLine[] = [];
+  let sungUntil = 0;
+  for (const line of lines) {
+    if (line.time - sungUntil >= INTERLUDE_MIN) {
+      out.push({ time: out.length ? sungUntil + INTERLUDE_LINGER : 0, end: line.time, text: '', interlude: true });
+    }
+    out.push(line);
+    // Overlapping lines (duets, background vocals) can end after the next one starts.
+    sungUntil = Math.max(sungUntil, line.end ?? line.time);
+  }
+  return out;
 }
 
 /** Binary search: index of the line active at `time`. */

@@ -364,6 +364,18 @@ h1, h2, h3 { font-family: var(--font-display); letter-spacing: -.035em; }
 .lyrics-panel[data-user-scrolling] .lyrics-lines button { filter: none; }
 /* The active line is never blurred; dropping the filter keeps Safari from clipping its glow to the button box. */
 .lyrics-lines button.is-active { color: #fff; text-shadow: 0 0 30px var(--now-glow); filter: none; }
+/* Interlude: collapsed until played (data-open is set from JS), then three dots pop in, fill one by one
+   across the gap (--p), breathe while it lasts and shrink away (--fade) just before the next line. */
+.lyrics-lines button.lyrics-lines__interlude:not([data-open]) { display: none; }
+.lyrics-interlude { height: 1em; }
+.lyrics-interlude__dots { display: flex; align-items: center; gap: .3em; height: 100%; transform-origin: left center; }
+.lyrics-interlude__dots i { --i: 0; width: .3em; height: .3em; border-radius: 50%; background: currentColor; scale: var(--fade, 1); animation: interlude-in .5s var(--ease-out) calc(var(--i) * 70ms) backwards; }
+.lyrics-interlude__dots i:nth-child(2) { --i: 1; }
+.lyrics-interlude__dots i:nth-child(3) { --i: 2; }
+.lyrics-lines button.is-active .lyrics-interlude__dots { animation: interlude-breathe 2.4s ease-in-out infinite; }
+.lyrics-lines button.is-active .lyrics-interlude__dots i { opacity: calc(.3 + .7 * clamp(0, var(--p, 0) * 3 - var(--i), 1)); }
+@keyframes interlude-breathe { 50% { transform: scale(1.12); } }
+@keyframes interlude-in { from { opacity: 0; transform: scale(0); } }
 .lyrics-lines--plain p { color: rgba(255,255,255,.8); font-size: clamp(1.25rem, 2.2vw, 2.3rem); }
 .lyrics-empty { min-height: 50vh; display: grid; place-content: center; justify-items: center; text-align: center; color: rgba(255,255,255,.7); }
 .lyrics-empty p { margin-top: 16px; font-size: 1.1rem; font-weight: 700; }
