@@ -14,6 +14,7 @@ import {
   IconDisc,
   IconHeart,
   IconHeartFill,
+  IconMic,
   IconMore,
   IconNextUp,
   IconPlay,
@@ -73,6 +74,8 @@ function TrackMenu({ track, onRemove }: { track: Track; onRemove?: () => void })
   const navigate = useNavigate();
   const albumMatch = useMatch('/album/:id');
   const showGoToAlbum = track.albumId !== null && albumMatch?.params.id !== String(track.albumId);
+  const artistMatch = useMatch('/artist/:id/*');
+  const showGoToArtist = track.artistId !== null && artistMatch?.params.id !== String(track.artistId);
 
   useLayoutEffect(() => {
     const details = detailsRef.current;
@@ -128,6 +131,11 @@ function TrackMenu({ track, onRemove }: { track: Track; onRemove?: () => void })
         {showGoToAlbum ? (
           <button type="button" onClick={(event) => { closeMenu(event); navigate(`/album/${track.albumId}`); }}>
             <IconDisc size={18} />前往專輯
+          </button>
+        ) : null}
+        {showGoToArtist ? (
+          <button type="button" onClick={(event) => { closeMenu(event); navigate(`/artist/${track.artistId}`, { state: { pageTitle: track.artist } }); }}>
+            <IconMic size={18} />前往藝人
           </button>
         ) : null}
         {playlists.length ? <span className="menu-popover__label">加入播放清單</span> : null}
