@@ -421,6 +421,18 @@ export function NowPlaying() {
     return () => window.removeEventListener('keydown', close);
   }, [open, setOpen]);
 
+  // Stacked (phone / portrait tablet) layouts scroll the whole sheet; the side-by-side
+  // layout clips it, so a scroll offset left over from rotating would strand the content.
+  useEffect(() => {
+    if (!shouldRender) return;
+    const resetClippedScroll = () => {
+      const player = nowPlayingRef.current;
+      if (player && player.scrollTop !== 0 && getComputedStyle(player).overflowY === 'hidden') player.scrollTop = 0;
+    };
+    window.addEventListener('resize', resetClippedScroll);
+    return () => window.removeEventListener('resize', resetClippedScroll);
+  }, [shouldRender]);
+
   useEffect(() => () => settleAnimationRef.current?.cancel(), []);
 
   const startPlayerDrag = (event: ReactPointerEvent<HTMLElement>) => {

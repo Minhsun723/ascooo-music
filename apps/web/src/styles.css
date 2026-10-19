@@ -922,6 +922,23 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
   .now-playing-queue { padding-top: 4vh; padding-bottom: 10vh; }
 }
 
+/* Portrait tablets (iPad mini/Air/Pro held upright) are too narrow for side-by-side
+   art and lyrics, so they stack like phones: controls on top, lyrics scroll below. */
+@media (orientation: portrait) and (min-width: 641px) and (max-width: 1100px) {
+  .now-playing { overflow-y: auto; overscroll-behavior-y: contain; }
+  .now-playing__header { position: sticky; top: 0; height: 68px; padding: 0 24px; background: color-mix(in srgb, var(--now-deep), transparent 20%); backdrop-filter: blur(16px); }
+  .now-playing__header::before { content: ""; position: absolute; top: 8px; left: 50%; width: 38px; height: 4px; border-radius: 999px; background: rgba(255,255,255,.28); transform: translateX(-50%); pointer-events: none; }
+  .now-playing__layout { width: 100%; min-width: 0; max-width: 100%; height: auto; min-height: calc(100dvh - 68px); grid-template-columns: minmax(0, 1fr); gap: 48px; padding: 20px clamp(32px, 7vw, 72px) 120px; }
+  .now-playing__visual { width: min(100%, 560px); justify-self: center; }
+  .now-playing__art { width: min(62vw, 480px); }
+  .now-playing__meta { margin-top: 24px; }
+  .lyrics-panel { height: 70vh; padding: 40px 0 30vh var(--glow-bleed); mask-image: linear-gradient(to bottom, black 0, black 82%, transparent 100%); }
+  .now-playing-queue { height: 70vh; padding: 40px 0 80px; }
+  .lyrics-lines button { font-size: clamp(1.9rem, 5.2vw, 3rem); }
+  .lyrics-panel.lyrics-panel--immersive { padding: 24px 0 24px var(--glow-bleed); }
+  .immersive-line { font-size: clamp(2rem, 5.2vw, 3.2rem); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
   .marquee[data-overflow="true"] { mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%); }
