@@ -21,6 +21,7 @@
     "sync:aac51": "node scripts/run-local-sync.mjs --aac51-only",
     "sync:dev": "node scripts/run-local-sync.mjs --dev",
     "sync:dev:aac51": "node scripts/run-local-sync.mjs --dev --aac51-only",
+    "sync:pull": "node scripts/pull-remote.mjs",
     "deploy": "npm run build && wrangler deploy",
     "typecheck": "npm run typecheck -w apps/worker && npm run typecheck -w apps/web"
   }

@@ -179,6 +179,18 @@ npm run sync:dev:aac51              # 只重新配對 AAC 5.1
 
 `--dev` 模式改讀 `.dev.vars` 中的 `DEV_SYNC_TARGET_URL`（預設 `http://127.0.0.1:8787`）、`DEV_SYNC_ADMIN_USERNAME` 與 `DEV_SYNC_ADMIN_PASSWORD`，留空時沿用對應的 `SYNC_*` 值。解析快取 `.sync-cache/library.json` 與正式站共用，續傳進度則另存在 `.sync-cache/upload-state.dev.json`，本機上傳中斷不會影響正式站的續傳。
 
+### 從正式站拉回本機音樂庫
+
+換電腦開發時不必重新掃描 PikPak，直接把正式站的資料庫與封面複製到本機：
+
+```bash
+npm run sync:pull                   # 匯出遠端 D1 取代本機 D1，並下載缺少的封面到本機 R2
+npm run sync:pull -- --db-only      # 只同步 D1
+npm run sync:pull -- --artwork-only # 只補本機 R2 缺少的封面（可在 dev server 執行中使用）
+```
+
+執行前需先 `npx wrangler login`，並停止 `wrangler dev`（同步 D1 時若偵測到 dev server 仍在執行會直接中止）。遠端 D1 以 `wrangler d1 export` 匯出到 `.sync-cache/remote-d1.sql`，匯出內容包含結構與 `d1_migrations`，因此本機 D1 會整個重建，不需另外跑 migration；原本的本機 D1 會先搬到 `.wrangler/state/v3/d1.bak`，下次拉取時才覆蓋。封面從 `SYNC_TARGET_URL` 的公開封面網址下載，本機已有的物件會略過。收藏、播放紀錄與播放清單也會一併變成正式站的內容。
+
 ### AAC 5.1 替代版本
 
 Chrome、Firefox 等瀏覽器無法解碼 Dolby Atmos（EC-3）。可以把轉好的 AAC 5.1 檔案平放在 PikPak 的 `AAC51_ROOT`（預設 `/ascooo-music/Music-Transcode/aac51`），檔名必須與 `/Music` 中的原始檔完全相同，例如：
