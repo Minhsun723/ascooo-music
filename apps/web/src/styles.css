@@ -93,8 +93,7 @@ h1, h2, h3 { font-family: var(--font-display); letter-spacing: -.035em; }
 
 /* Authentication */
 .app-loading { min-height: 100dvh; display: grid; place-content: center; justify-items: center; gap: 16px; color: var(--text-soft); }
-.brand-pulse { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 50%; background: var(--gradient); animation: pulse 1.8s ease-in-out infinite; }
-@keyframes pulse { 50% { box-shadow: 0 0 0 18px rgba(0,114,255,0); transform: scale(1.06); } 0%, 100% { box-shadow: 0 0 0 0 rgba(0,114,255,.25); } }
+.loading-logo { width: 64px; height: auto; color: #fefefe; }
 .auth-page { position: relative; min-height: 100dvh; display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(380px, .65fr); overflow: hidden; background: #f5f7fa; color: #0f172a; }
 .auth-page__wash { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle at 26% 17%, rgba(0,198,255,.12), transparent 30%), radial-gradient(circle at 48% 80%, rgba(255,0,127,.1), transparent 33%); }
 .auth-intro { position: relative; z-index: 1; min-height: 100dvh; padding: clamp(28px, 5vw, 74px); display: flex; flex-direction: column; justify-content: space-between; overflow: hidden; }
