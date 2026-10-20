@@ -891,6 +891,41 @@ export function SettingsPage() {
   );
 }
 
+const COPYRIGHT_SECTIONS = [
+  {
+    title: '網站內容',
+    body: 'Ascooo Music 的介面設計、程式碼、Logo 與「Ascooo」名稱，著作權與相關權利均屬 Ascooo 所有。未經書面同意，請勿重製、改作或用於商業用途。',
+  },
+  {
+    title: '音樂與相關素材',
+    body: '本平台播放的歌曲、專輯封面、歌詞與藝人資訊，著作權分屬各唱片公司、詞曲作者、藝人及其他權利人所有。Ascooo Music 為私人音樂收藏平台，僅供受邀使用者個人聆聽，不代表取得上述內容的任何授權，使用者亦不得將其重製、公開傳輸或散布。',
+  },
+  {
+    title: '商標',
+    body: 'Dolby、Dolby Atmos 和雙 D 標誌是 Dolby Laboratories Licensing Corporation 的註冊商標。本站提及的其他產品名稱與商標，均屬各自所有人所有，僅用於識別，不代表任何合作或背書關係。',
+  },
+  {
+    title: '侵權通知',
+    body: '如果您是權利人，並認為本平台的內容侵害您的權利，請附上權利證明、內容所在頁面連結與聯絡方式，透過 Ascooo 官網與我們聯絡。我們確認後會儘速移除相關內容。',
+  },
+];
+
+export function CopyrightPage() {
+  return (
+    <PageIntro title="版權聲明" className="page-intro--legal" copy="最後更新：2026 年 10 月 20 日">
+      <article className="legal-article">
+        {COPYRIGHT_SECTIONS.map(({ title, body }) => (
+          <section key={title}>
+            <h2>{title}</h2>
+            <p>{body}</p>
+          </section>
+        ))}
+        <p className="legal-article__contact"><a href="https://ascooo.com" target="_blank" rel="noopener noreferrer">前往 Ascooo 官網</a></p>
+      </article>
+    </PageIntro>
+  );
+}
+
 export function NotFoundPage() {
   const navigate = useNavigate();
   return <EmptyState title="這裡沒有音樂" copy="這個頁面可能已移動，回到音樂庫繼續聽吧。" action={<button type="button" className="primary-button" onClick={() => navigate('/discover')}><IconPlay size={18} />回到首頁</button>} />;

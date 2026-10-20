@@ -8,6 +8,7 @@ import {
   AlbumPage,
   ArtistPage,
   ArtistTracksPage,
+  CopyrightPage,
   FavoritesPage,
   HomePage,
   LibraryPage,
@@ -75,6 +76,7 @@ export default function App() {
           <Route path="artist/:id/tracks" element={<ArtistTracksPage />} />
           <Route path="playlist/:id" element={<RequireUser><PlaylistPage /></RequireUser>} />
           <Route path="settings" element={<RequireUser><SettingsPage /></RequireUser>} />
+          <Route path="copyright" element={<CopyrightPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Routes>

@@ -35,6 +35,7 @@ const searchShortcutLabel = typeof navigator !== 'undefined'
 const legalLinks = [
   { href: 'https://ascooo.com/privacy', label: '隱私權政策' },
   { href: 'https://ascooo.com/terms', label: '使用條款' },
+  { href: '/copyright', label: '版權聲明' },
 ];
 
 function getDocumentTitle(pathname: string, search: string) {
@@ -47,6 +48,7 @@ function getDocumentTitle(pathname: string, search: string) {
   } else if (pathname === '/library') pageTitle = '音樂庫';
   else if (pathname === '/favorites') pageTitle = '喜愛的歌曲';
   else if (pathname === '/settings') pageTitle = '設定';
+  else if (pathname === '/copyright') pageTitle = '版權聲明';
   else if (pathname.startsWith('/album/')) pageTitle = '專輯';
   else if (pathname.startsWith('/artist/')) pageTitle = '藝人';
   else if (pathname.startsWith('/playlist/')) pageTitle = '播放清單';
@@ -70,8 +72,9 @@ function SiteFooter() {
     <footer className="site-footer">
       <p className="site-footer__copyright">© {new Date().getFullYear()} Ascooo. All rights reserved.</p>
       <nav className="site-footer__links" aria-label="法律資訊">
-        {legalLinks.map(({ href, label }) => (
-          <a key={href} href={href} target="_blank" rel="noopener noreferrer">{label}</a>
+        {legalLinks.map(({ href, label }) => (href.startsWith('/')
+          ? <Link key={href} to={href}>{label}</Link>
+          : <a key={href} href={href} target="_blank" rel="noopener noreferrer">{label}</a>
         ))}
       </nav>
     </footer>
