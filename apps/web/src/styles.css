@@ -758,6 +758,21 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
 .dialog h2 { margin: 0 0 26px; font-size: 1.8rem; }
 .dialog form { display: grid; gap: 20px; }
 .dialog__actions { display: flex; justify-content: flex-end; gap: 8px; }
+.login-prompt-backdrop { overscroll-behavior: contain; touch-action: none; animation: login-prompt-fade .25s ease both; }
+.login-prompt-stack { width: min(780px, 100%); display: grid; justify-items: center; gap: 10px; animation: login-prompt-in .45s var(--ease-out) both; }
+.login-prompt { width: 100%; display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); align-items: center; gap: clamp(28px, 5vw, 64px); padding: clamp(28px, 5vw, 56px); border-radius: 14px; background: linear-gradient(180deg, var(--prompt-glow) 0%, transparent 88%), #18181b; box-shadow: 0 30px 90px rgba(0,0,0,.55); }
+.login-prompt--plain { width: min(440px, 100%); grid-template-columns: 1fr; justify-items: center; gap: 28px; }
+.login-prompt__art { width: 100%; box-shadow: 0 18px 50px rgba(0,0,0,.45); }
+.login-prompt__brand { width: min(220px, 70%); height: auto; }
+.login-prompt__body { min-width: 0; display: grid; justify-items: center; text-align: center; }
+.login-prompt__body h2 { margin: 0 0 12px; font-size: clamp(1.45rem, 2.6vw, 1.95rem); line-height: 1.35; text-wrap: balance; word-break: keep-all; overflow-wrap: anywhere; }
+.login-prompt__track { max-width: 100%; margin: 0 0 26px; overflow: hidden; color: var(--text-soft); font-size: .84rem; white-space: nowrap; text-overflow: ellipsis; }
+.login-prompt--plain .login-prompt__body h2 { margin-bottom: 26px; }
+.login-prompt__body .primary-button { min-width: 168px; }
+.login-prompt__close { min-height: 44px; padding: 0 22px; border: 0; color: #fff; background: transparent; font: 700 .88rem/1 var(--font-display); }
+.login-prompt__close:hover { text-decoration: underline; text-underline-offset: 4px; }
+@keyframes login-prompt-fade { from { opacity: 0; } }
+@keyframes login-prompt-in { from { opacity: 0; transform: translateY(16px) scale(.98); } }
 
 @media (max-width: 1220px) {
   :root { --sidebar: 210px; }
@@ -828,6 +843,8 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
 }
 
 @media (max-width: 640px) {
+  .login-prompt { grid-template-columns: 1fr; justify-items: center; gap: 24px; padding: 32px 22px 28px; }
+  .login-prompt__art { width: min(200px, 62vw); }
   .site-footer { align-items: flex-start; flex-direction: column-reverse; gap: 2px; padding: 48px 18px 24px; }
   .site-footer__links { gap: 20px; }
   .collection-hero.collection-hero--detail { min-height: 0; display: flex; flex-direction: column; align-items: center; gap: 0; padding: 18px 18px 24px; text-align: center; }

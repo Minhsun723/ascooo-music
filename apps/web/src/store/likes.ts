@@ -16,7 +16,7 @@ export const useLikes = create<LikesState>((set, get) => ({
   epoch: 0,
   overrides: {},
   async toggle(t) {
-    if (!requireLogin()) return;
+    if (!requireLogin({ title: '登入後收藏喜愛的歌曲' })) return;
     const epoch = get().epoch;
     const was = get().overrides[t.id] ?? t.liked;
     set({ overrides: { ...get().overrides, [t.id]: !was } });

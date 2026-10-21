@@ -300,7 +300,7 @@ export function Shell() {
   }, []);
 
   const loginState = { from: location.pathname + location.search + location.hash };
-  const openCreatePlaylist = () => { if (requireLogin()) setCreateOpen(true); };
+  const openCreatePlaylist = () => { if (requireLogin({ title: '登入後建立播放清單' })) setCreateOpen(true); };
 
   function search(event: FormEvent) {
     event.preventDefault();

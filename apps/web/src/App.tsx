@@ -1,7 +1,8 @@
 import { useEffect } from 'react';
-import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 import { setUnauthorizedHandler } from './api/client';
 import { AuthGate, LoginPage, RequireUser } from './components/Auth';
+import { LoginPromptDialog } from './components/LoginPrompt';
 import { setLoginGate } from './lib/login-gate';
 import { Shell } from './components/Shell';
 import {
@@ -17,6 +18,7 @@ import {
   SearchPage,
   SettingsPage,
 } from './pages';
+import { useLoginPrompt } from './store/loginPrompt';
 import { useSession } from './store/session';
 import { useToasts } from './store/toast';
 
@@ -32,21 +34,19 @@ function ToastViewport() {
 
 export default function App() {
   const setUser = useSession((s) => s.setUser);
-  const navigate = useNavigate();
   useEffect(() => {
     setUnauthorizedHandler(() => setUser(null));
     return () => setUnauthorizedHandler(() => {});
   }, [setUser]);
 
   useEffect(() => {
-    setLoginGate(() => {
+    setLoginGate((prompt = {}) => {
       if (useSession.getState().user) return true;
-      const { pathname, search, hash } = window.location;
-      navigate('/login', { state: { from: pathname + search + hash } });
+      useLoginPrompt.getState().show(prompt);
       return false;
     });
     return () => setLoginGate(() => true);
-  }, [navigate]);
+  }, []);
 
   useEffect(() => {
     const preventImageInteraction = (event: Event) => {
@@ -80,6 +80,7 @@ export default function App() {
           <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Routes>
+      <LoginPromptDialog />
       <ToastViewport />
     </AuthGate>
   );
