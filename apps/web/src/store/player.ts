@@ -133,6 +133,7 @@ export const usePlayer = create<PlayerState>()(
         const source = pickSource(track);
         set({ index, currentTime: 0, duration: track.duration || 0, bufferedEnd: 0, error: null, source });
         reportedFor = null;
+        pendingSeek = null;
         audio.src = streamUrl(track.id, source);
         if (autoplay) {
           set({ isBuffering: true });
@@ -226,9 +227,13 @@ export const usePlayer = create<PlayerState>()(
         },
 
         seek(t) {
-          if (!audio.src) {
+          if (!audio.src) load(get().index, true);
+          // Until metadata arrives the element can't seek, so keep only the latest position
+          // (a scrub sends many) for loadedmetadata to apply.
+          if (audio.readyState < audio.HAVE_METADATA) {
             pendingSeek = t;
-            return load(get().index, true);
+            set({ currentTime: t });
+            return;
           }
           audio.currentTime = t;
           set({ currentTime: t });
@@ -357,7 +362,8 @@ if (audio) {
   });
   audio.addEventListener('timeupdate', () => {
     const now = performance.now();
-    if (now - lastTick < 250) return;
+    // A seek waiting on metadata owns the playhead; the element still reports 0 until it lands.
+    if (pendingSeek != null || now - lastTick < 250) return;
     lastTick = now;
     const t = audio.currentTime;
     const b = audio.buffered;

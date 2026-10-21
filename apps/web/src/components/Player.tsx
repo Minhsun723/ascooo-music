@@ -166,20 +166,77 @@ function BylineMenu({ track }: { track: Track }) {
   );
 }
 
-function Range({ value, max, onChange, label, className = '' }: { value: number; max: number; onChange: (n: number) => void; label: string; className?: string }) {
-  const percentage = max > 0 ? Math.min(100, Math.max(0, value / max * 100)) : 0;
+const RANGE_THUMB = 12;
+
+function Range({ value, max, onChange, label, className = '', commitOnRelease = false }: {
+  value: number;
+  max: number;
+  onChange: (n: number) => void;
+  label: string;
+  className?: string;
+  /** Touch scrubs only preview until the finger lifts. Phones grant media playback to the lift,
+   *  not the press, so a seek that has to load an idle track must happen then. */
+  commitOnRelease?: boolean;
+}) {
+  const [preview, setPreview] = useState<number | null>(null);
+  const shown = preview ?? value;
+  const percentage = max > 0 ? Math.min(100, Math.max(0, shown / max * 100)) : 0;
+  const scrubRef = useRef<number | null>(null);
+  const previewRef = useRef<number | null>(null);
+
+  // Touch screens make the input itself inert (see .range-field in styles.css): iOS only drags a
+  // native range by its thumb and lets vertical wobble scroll the sheet, so the wrapper scrubs
+  // from wherever the finger lands. With a mouse the input receives the press and works natively.
+  const scrubTo = (field: HTMLElement, clientX: number) => {
+    if (max <= 0) return;
+    const rect = field.getBoundingClientRect();
+    const ratio = (clientX - rect.left - RANGE_THUMB / 2) / Math.max(1, rect.width - RANGE_THUMB);
+    const next = Math.min(1, Math.max(0, ratio)) * max;
+    if (!commitOnRelease) return onChange(next);
+    previewRef.current = next;
+    setPreview(next);
+  };
+
+  const endScrub = (event: ReactPointerEvent<HTMLDivElement>, commit: boolean) => {
+    if (scrubRef.current !== event.pointerId) return;
+    scrubRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    event.currentTarget.removeAttribute('data-scrubbing');
+    const committed = previewRef.current;
+    previewRef.current = null;
+    setPreview(null);
+    if (commit && committed !== null) onChange(committed);
+  };
+
   return (
-    <input
-      className={`range ${className}`}
-      type="range"
-      min="0"
-      max={max || 1}
-      step="0.1"
-      value={Math.min(value, max || 1)}
-      aria-label={label}
-      style={{ '--range-progress': `${percentage}%` } as CSSProperties}
-      onChange={(event) => onChange(Number(event.target.value))}
-    />
+    <div
+      className={`range-field ${className}`}
+      onPointerDown={(event) => {
+        if (event.target !== event.currentTarget || !event.isPrimary || event.button !== 0) return;
+        scrubRef.current = event.pointerId;
+        event.currentTarget.dataset.scrubbing = 'true';
+        try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* still scrubs while over the bar */ }
+        scrubTo(event.currentTarget, event.clientX);
+      }}
+      onPointerMove={(event) => {
+        if (scrubRef.current === event.pointerId) scrubTo(event.currentTarget, event.clientX);
+      }}
+      onPointerUp={(event) => endScrub(event, true)}
+      onPointerCancel={(event) => endScrub(event, false)}
+      onLostPointerCapture={(event) => endScrub(event, false)}
+    >
+      <input
+        className="range"
+        type="range"
+        min="0"
+        max={max || 1}
+        step="0.1"
+        value={Math.min(shown, max || 1)}
+        aria-label={label}
+        style={{ '--range-progress': `${percentage}%` } as CSSProperties}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+    </div>
   );
 }
 
@@ -241,7 +298,7 @@ export function PlayerBar() {
         <CoreControls />
         <div className="player-progress">
           <span>{formatTime(currentTime)}</span>
-          <Range value={currentTime} max={duration} onChange={seek} label="播放進度" />
+          <Range value={currentTime} max={duration} onChange={seek} label="播放進度" commitOnRelease />
           <span>{formatTime(duration)}</span>
         </div>
         {error ? <span className="player-error" role="status">{error}</span> : null}
@@ -565,7 +622,7 @@ export function NowPlaying() {
               </div>
             </div>
           </div>
-          <Range value={currentTime} max={duration} onChange={seek} label="播放進度" />
+          <Range value={currentTime} max={duration} onChange={seek} label="播放進度" commitOnRelease />
           <div className="now-playing__time"><span>{formatTime(currentTime)}</span><span>-{formatTime(Math.max(0, duration - currentTime))}</span></div>
           <div className="now-playing__controls">
             <div className="now-playing__volume">
