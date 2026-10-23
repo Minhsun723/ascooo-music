@@ -6,6 +6,9 @@ import type { AppEnv, SessionUser } from '../env';
 
 const COOKIE = 'am_session';
 const SESSION_DAYS = 30;
+// A session is trusted on its signature alone for this long; after that D1
+// confirms the account still exists and the session was not revoked.
+const RECHECK_SECONDS = 60 * 60;
 // Workers caps PBKDF2 at 100k iterations; 60k keeps login well under CPU limits.
 const ITERATIONS = 60000;
 
@@ -34,15 +37,28 @@ export async function verifyPassword(password: string, stored: string): Promise<
   return diff === 0;
 }
 
-export async function startSession(c: Context<AppEnv>, user: SessionUser) {
-  const exp = Math.floor(Date.now() / 1000) + SESSION_DAYS * 86400;
-  const token = await sign({ sub: user.id, name: user.username, role: user.role, exp }, c.env.JWT_SECRET, 'HS256');
+/**
+ * `version` is the user's session_version. The hourly re-check passes the
+ * original `exp`, so renewing a session never extends its lifetime.
+ */
+export async function startSession(
+  c: Context<AppEnv>,
+  user: SessionUser,
+  version: number,
+  exp = Math.floor(Date.now() / 1000) + SESSION_DAYS * 86400,
+) {
+  const iat = Math.floor(Date.now() / 1000);
+  const token = await sign(
+    { sub: user.id, name: user.username, role: user.role, ver: version, iat, exp },
+    c.env.JWT_SECRET,
+    'HS256',
+  );
   setCookie(c, COOKIE, token, {
     httpOnly: true,
     secure: new URL(c.req.url).protocol === 'https:',
     sameSite: 'Lax',
     path: '/',
-    maxAge: SESSION_DAYS * 86400,
+    maxAge: exp - iat,
   });
 }
 
@@ -50,15 +66,33 @@ export function endSession(c: Context<AppEnv>) {
   deleteCookie(c, COOKIE, { path: '/' });
 }
 
+/** Drop a cookie that no longer grants a session, so later requests skip the D1 re-check. */
+export function clearStaleSession(c: Context<AppEnv>) {
+  if (getCookie(c, COOKIE)) endSession(c);
+}
+
 export async function readSession(c: Context<AppEnv>): Promise<SessionUser | null> {
   const token = getCookie(c, COOKIE);
   if (!token) return null;
+  let p: Awaited<ReturnType<typeof verify>>;
   try {
-    const p = await verify(token, c.env.JWT_SECRET, 'HS256');
-    return { id: Number(p.sub), username: String(p.name), role: p.role === 'admin' ? 'admin' : 'user' };
+    p = await verify(token, c.env.JWT_SECRET, 'HS256');
   } catch {
     return null;
   }
+  const id = Number(p.sub);
+  if (typeof p.iat === 'number' && Math.floor(Date.now() / 1000) - p.iat < RECHECK_SECONDS) {
+    return { id, username: String(p.name), role: p.role === 'admin' ? 'admin' : 'user' };
+  }
+
+  // Tokens issued before session_version existed carry no `ver` and match the column default.
+  const row = await c.env.DB.prepare('SELECT username, role, session_version FROM users WHERE id = ?')
+    .bind(id)
+    .first<{ username: string; role: string; session_version: number }>();
+  if (!row || row.session_version !== Number(p.ver ?? 0)) return null;
+  const user: SessionUser = { id, username: row.username, role: row.role === 'admin' ? 'admin' : 'user' };
+  await startSession(c, user, row.session_version, Number(p.exp));
+  return user;
 }
 
 /** Attach the signed-in user when there is one; signed-out requests continue as anonymous. */
@@ -70,12 +104,15 @@ export const loadUser: MiddlewareHandler<AppEnv> = async (c, next) => {
 
 export const requireUser: MiddlewareHandler<AppEnv> = async (c, next) => {
   const user = c.get('user') ?? (await readSession(c));
-  if (!user) throw new HTTPException(401, { message: '請先登入' });
+  if (!user) {
+    clearStaleSession(c);
+    throw new HTTPException(401, { message: '請先登入' });
+  }
   c.set('user', user);
   await next();
 };
 
-/** Trust the admin role in the signed session without performing a D1 lookup. */
+/** Trust the admin role in the signed session without a D1 lookup; readSession re-confirms it hourly. */
 export const requireSessionAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
   if (c.get('user')?.role !== 'admin') throw new HTTPException(403, { message: '需要管理員權限' });
   await next();

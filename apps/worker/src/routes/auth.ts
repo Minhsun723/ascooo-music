@@ -1,7 +1,16 @@
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import type { AppEnv, SessionUser } from '../env';
-import { endSession, hashPassword, readSession, requireAdmin, requireUser, startSession, verifyPassword } from '../lib/auth';
+import {
+  clearStaleSession,
+  endSession,
+  hashPassword,
+  readSession,
+  requireAdmin,
+  requireUser,
+  startSession,
+  verifyPassword,
+} from '../lib/auth';
 
 const auth = new Hono<AppEnv>();
 
@@ -24,6 +33,7 @@ let setupComplete = false;
 
 auth.get('/status', async (c) => {
   const user = await readSession(c);
+  if (!user) clearStaleSession(c);
   if (!setupComplete) setupComplete = Boolean(user) || (await userCount(c.env.DB)) > 0;
   return c.json({ needsSetup: !setupComplete, user });
 });
@@ -40,20 +50,22 @@ auth.post('/setup', async (c) => {
     .first<{ id: number }>();
   const user: SessionUser = { id: r!.id, username, role: 'admin' };
   setupComplete = true;
-  await startSession(c, user);
+  await startSession(c, user, 0);
   return c.json({ user });
 });
 
 auth.post('/login', async (c) => {
   const body = await c.req.json<{ username?: string; password?: string }>();
-  const row = await c.env.DB.prepare('SELECT id, username, password_hash, role FROM users WHERE username = ?')
+  const row = await c.env.DB.prepare(
+    'SELECT id, username, password_hash, role, session_version FROM users WHERE username = ?',
+  )
     .bind(String(body.username ?? '').trim())
-    .first<{ id: number; username: string; password_hash: string; role: 'admin' | 'user' }>();
+    .first<{ id: number; username: string; password_hash: string; role: 'admin' | 'user'; session_version: number }>();
   if (!row || !(await verifyPassword(String(body.password ?? ''), row.password_hash))) {
     throw new HTTPException(401, { message: '帳號或密碼錯誤' });
   }
   const user: SessionUser = { id: row.id, username: row.username, role: row.role };
-  await startSession(c, user);
+  await startSession(c, user, row.session_version);
   return c.json({ user });
 });
 
@@ -99,9 +111,18 @@ auth.post('/password', requireUser, async (c) => {
     throw new HTTPException(401, { message: '目前密碼不正確' });
   }
   if (String(body.next ?? '').length < 8) throw new HTTPException(400, { message: '新密碼至少需要 8 個字元' });
-  await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?')
+  const updated = await c.env.DB.prepare(
+    `UPDATE users SET password_hash = ?, session_version = session_version + 1 WHERE id = ?
+     RETURNING username, role, session_version`,
+  )
     .bind(await hashPassword(String(body.next)), c.get('user').id)
-    .run();
+    .first<{ username: string; role: 'admin' | 'user'; session_version: number }>();
+  // Other devices fail their next hourly re-check; this one stays signed in.
+  await startSession(
+    c,
+    { id: c.get('user').id, username: updated!.username, role: updated!.role },
+    updated!.session_version,
+  );
   return c.json({ ok: true });
 });
 
