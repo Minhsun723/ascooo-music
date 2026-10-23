@@ -308,7 +308,7 @@ export function PlayerBar() {
         {quality ? <span className="quality-badge player-quality">{quality}</span> : null}
         {track.hasLyrics ? <button type="button" className="icon-button" aria-label="顯示歌詞" onClick={() => setNowPlaying(true)}><IconLyrics size={19} /></button> : null}
         <LikeButton track={track} className="player-like" />
-        <button type="button" className={`icon-button ${queueOpen ? 'is-active' : ''}`} aria-label="播放佇列" aria-pressed={queueOpen} onClick={() => setQueueOpen(!queueOpen)}><IconQueue size={20} /></button>
+        <button type="button" className={`icon-button ${queueOpen ? 'is-active' : ''}`} aria-label="播放佇列" aria-pressed={queueOpen} data-queue-toggle onClick={() => setQueueOpen(!queueOpen)}><IconQueue size={20} /></button>
         <button type="button" className="icon-button" aria-label={muted ? '取消靜音' : '靜音'} onClick={toggleMute}>
           {muted || volume === 0 ? <IconMute size={19} /> : volume < 0.5 ? <IconVolumeLow size={19} /> : <IconVolume size={19} />}
         </button>
@@ -327,8 +327,10 @@ export function QueuePanel() {
   useEffect(() => {
     if (!open || nowPlayingOpen) return;
 
+    // The toggle button handles its own click; dismissing here first would make that click reopen the panel.
     const dismissOnOutsidePress = (event: PointerEvent) => {
       const panel = panelRef.current;
+      if (event.target instanceof Element && event.target.closest('[data-queue-toggle]')) return;
       if (panel && event.target instanceof Node && !panel.contains(event.target)) setOpen(false);
     };
     const dismissOnEscape = (event: KeyboardEvent) => {
