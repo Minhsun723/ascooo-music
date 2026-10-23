@@ -122,6 +122,12 @@ function pickSource(track: Track): AudioSource {
 let reportedFor: number | null = null;
 let pendingSeek: number | null = null;
 
+// Near the end of a track, one byte of the next stream is requested so the Worker resolves
+// its PikPak link while this one still plays. The change of track then skips that round-trip,
+// which matters most on iOS: a page in the background is suspended soon after it goes silent.
+const WARM_AHEAD = 30; // seconds before the end
+let warmedUrl: string | null = null;
+
 export const usePlayer = create<PlayerState>()(
   persist(
     (set, get) => {
@@ -134,6 +140,7 @@ export const usePlayer = create<PlayerState>()(
         set({ index, currentTime: 0, duration: track.duration || 0, bufferedEnd: 0, error: null, source });
         reportedFor = null;
         pendingSeek = null;
+        warmedUrl = null;
         audio.src = streamUrl(track.id, source);
         if (autoplay) {
           set({ isBuffering: true });
@@ -377,10 +384,21 @@ if (audio) {
     const b = audio.buffered;
     s({ currentTime: t, bufferedEnd: b.length ? b.end(b.length - 1) : 0 });
 
-    const track = usePlayer.getState().queue[usePlayer.getState().index];
+    const { queue, index, repeat } = usePlayer.getState();
+    const track = queue[index];
     if (track && reportedFor !== track.id && t > Math.min(30, (track.duration || 60) / 2)) {
       reportedFor = track.id;
       api.history(track.id).catch(() => {});
+    }
+    const total = Number.isFinite(audio.duration) ? audio.duration : track?.duration || 0;
+    if (total && total - t < WARM_AHEAD && repeat !== 'one') {
+      const upcoming = index + 1 < queue.length ? queue[index + 1] : repeat === 'all' ? queue[0] : undefined;
+      const url = upcoming ? streamUrl(upcoming.id, pickSource(upcoming)) : null;
+      // Compared each tick, so a queue or setting change before the end warms the new pick.
+      if (url && url !== warmedUrl) {
+        warmedUrl = url;
+        fetch(url, { headers: { Range: 'bytes=0-0' } }).then((res) => res.body?.cancel()).catch(() => {});
+      }
     }
     if ('mediaSession' in navigator && Number.isFinite(audio.duration)) {
       try {

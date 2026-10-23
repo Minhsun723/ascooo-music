@@ -12,10 +12,14 @@ export interface DavEntry {
 /**
  * PikPak answers file GETs with a 302 to a signed CDN URL. Following that
  * redirect costs a round-trip on every seek, so we keep resolved links for a
- * few minutes inside the isolate.
+ * few minutes inside the isolate and in the colo's cache, where the other
+ * isolates serving the same listener find them too.
  */
 const linkCache = new Map<string, { url: string; expires: number }>();
 const LINK_TTL = 10 * 60 * 1000;
+
+/** The Workers cache; absent when local sync runs this module in Node. */
+const coloCache = () => (typeof caches === 'undefined' ? null : caches.default);
 
 function tag(xml: string, name: string): string | null {
   const re = new RegExp(`<(?:[\\w-]+:)?${name}\\b[^>]*>([\\s\\S]*?)</(?:[\\w-]+:)?${name}>`, 'i');
@@ -198,17 +202,59 @@ export class WebDAV {
     }
   }
 
+  /** Keyed under the WebDAV host, so no request to this site can ever read it back. */
+  private linkKey(path: string): Request {
+    return new Request(`${this.url(path)}?cdn-link`);
+  }
+
+  private async cachedLink(path: string): Promise<string | null> {
+    const memo = linkCache.get(path);
+    if (memo && memo.expires > Date.now()) return memo.url;
+    try {
+      const hit = await coloCache()?.match(this.linkKey(path));
+      if (!hit) return null;
+      const link = await hit.json<{ url: string; expires: number }>();
+      if (link.expires <= Date.now()) return null;
+      linkCache.set(path, link);
+      return link.url;
+    } catch {
+      return null;
+    }
+  }
+
+  private async rememberLink(path: string, url: string): Promise<void> {
+    const link = { url, expires: Date.now() + LINK_TTL };
+    linkCache.set(path, link);
+    try {
+      await coloCache()?.put(this.linkKey(path), new Response(JSON.stringify(link), {
+        headers: { 'Cache-Control': `max-age=${LINK_TTL / 1000}` },
+      }));
+    } catch {
+      /* the isolate's copy still works */
+    }
+  }
+
+  private async forgetLink(path: string): Promise<void> {
+    linkCache.delete(path);
+    try {
+      await coloCache()?.delete(this.linkKey(path));
+    } catch {
+      /* it expires on its own */
+    }
+  }
+
   /** GET a file, following PikPak's CDN redirect and forwarding Range headers. */
   async fetchFile(path: string, init: { range?: string | null; ifRange?: string | null } = {}): Promise<Response> {
     const key = normalizePath(path);
     const headers: Record<string, string> = {};
     if (init.range) headers.Range = init.range;
 
-    const cached = linkCache.get(key);
-    if (cached && cached.expires > Date.now()) {
-      const res = await fetch(cached.url, { headers, redirect: 'manual' });
+    const cached = await this.cachedLink(key);
+    if (cached) {
+      const res = await fetch(cached, { headers, redirect: 'manual' });
       if (res.ok || res.status === 206 || res.status === 416) return res;
-      linkCache.delete(key);
+      await res.body?.cancel().catch(() => {});
+      await this.forgetLink(key);
     }
 
     let url = this.url(key);
@@ -229,9 +275,7 @@ export class WebDAV {
       res = sameOrigin
         ? await this.fetchWithAuth(url, { headers, redirect: 'manual' })
         : await fetch(url, { headers, redirect: 'manual' });
-      if (!sameOrigin && (res.ok || res.status === 206)) {
-        linkCache.set(key, { url, expires: Date.now() + LINK_TTL });
-      }
+      if (!sameOrigin && (res.ok || res.status === 206)) await this.rememberLink(key, url);
     }
     return res;
   }
