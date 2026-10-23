@@ -13,6 +13,16 @@ const app = new Hono<AppEnv>().basePath('/api');
 
 app.use('*', logger());
 
+// API responses are data, never pages: opened directly (a cover, an audio file,
+// JSON), the browser must not sniff them into HTML or run scripts inside them.
+app.use('*', async (c, next) => {
+  await next();
+  // Responses from fetch() and the Cache API have immutable headers.
+  c.res = new Response(c.res.body, c.res);
+  c.res.headers.set('X-Content-Type-Options', 'nosniff');
+  c.res.headers.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox; frame-ancestors 'none'");
+});
+
 app.get('/health', (c) => c.json({ ok: true }));
 app.route('/auth', auth);
 app.route('/', artwork);
