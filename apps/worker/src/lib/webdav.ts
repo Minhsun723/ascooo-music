@@ -181,6 +181,23 @@ export class WebDAV {
     await res.body?.cancel().catch(() => {});
   }
 
+  /**
+   * PikPak's WebDAV can answer 404 for a file that exists, for minutes at a
+   * time, until the folders above it are listed again. Listing them from the
+   * root down brings the path back.
+   */
+  private async relistAncestors(path: string): Promise<void> {
+    const segments = parentDir(path).split('/').filter(Boolean);
+    for (let depth = 0; depth <= segments.length; depth++) {
+      const dir = '/' + segments.slice(0, depth).join('/');
+      const res = await this.fetchWithAuth(this.url(dir) + (dir === '/' ? '' : '/'), {
+        method: 'PROPFIND',
+        headers: { Depth: '1' },
+      });
+      await res.arrayBuffer().catch(() => {});
+    }
+  }
+
   /** GET a file, following PikPak's CDN redirect and forwarding Range headers. */
   async fetchFile(path: string, init: { range?: string | null; ifRange?: string | null } = {}): Promise<Response> {
     const key = normalizePath(path);
@@ -196,6 +213,12 @@ export class WebDAV {
 
     let url = this.url(key);
     let res = await this.fetchWithAuth(url, { headers, redirect: 'manual' });
+    // Every caller asks for a file it found in a listing, so a 404 is PikPak losing the path.
+    if (res.status === 404) {
+      await res.body?.cancel().catch(() => {});
+      await this.relistAncestors(key);
+      res = await this.fetchWithAuth(url, { headers, redirect: 'manual' });
+    }
 
     for (let hop = 0; hop < 5 && res.status >= 300 && res.status < 400; hop++) {
       const loc = res.headers.get('location');

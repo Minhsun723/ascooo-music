@@ -206,6 +206,13 @@ export const usePlayer = create<PlayerState>()(
           const track = current();
           if (!track || !requireLogin({ track })) return;
           if (!audio.src) return load(get().index, true);
+          // A failed element won't fetch again on play(), so reload the track where it stopped.
+          if (audio.error) {
+            const at = audio.currentTime;
+            load(get().index, true);
+            if (at > 0) get().seek(at);
+            return;
+          }
           if (audio.paused) audio.play().catch(() => {});
           else audio.pause();
         },
@@ -404,11 +411,24 @@ if (audio) {
       switchSource('aac51');
       return;
     }
-    const msg =
-      code === 4
-        ? `瀏覽器無法播放此格式${track?.codec === 'alac' ? '（ALAC 僅 Safari 支援）' : ''}`
-        : '無法從 PikPak 載入音訊，請稍後再試';
-    s({ isPlaying: false, isBuffering: false, error: msg });
+    s({ isPlaying: false, isBuffering: false });
+    // Chrome reports any failure before metadata, an HTTP error included, as an unsupported
+    // source, so it is a format problem only when the stream itself answers.
+    const src = audio.src;
+    const answered = code === 4
+      ? fetch(src, { headers: { Range: 'bytes=0-0' } }).then((res) => {
+          res.body?.cancel().catch(() => {});
+          return res.ok;
+        }, () => false)
+      : Promise.resolve(false);
+    void answered.then((ok) => {
+      if (audio.src !== src || !audio.error) return;
+      s({
+        error: ok
+          ? `瀏覽器無法播放此格式${track?.codec === 'alac' ? '（ALAC 僅 Safari 支援）' : ''}`
+          : '暫時無法載入音訊，請稍後再試',
+      });
+    });
   });
 
   if ('mediaSession' in navigator) {
