@@ -1,5 +1,6 @@
 # Static assets only; /api responses get their headers from the Worker.
-# Scripts and styles load only from this site, plus Google Fonts.
+# Scripts and styles load only from this site, plus Google Fonts and the
+# Cloudflare Web Analytics beacon that Cloudflare injects into the page.
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; media-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; media-src 'self'; connect-src 'self' https://cloudflareinsights.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
   X-Content-Type-Options: nosniff
