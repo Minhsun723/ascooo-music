@@ -2,6 +2,7 @@ export interface Env {
   DB: D1Database;
   ARTWORK: R2Bucket;
   ANONYMOUS_LIMITER: RateLimit;
+  LOGIN_LIMITER: RateLimit;
   WEBDAV_URL: string;
   MUSIC_ROOT: string;
   AAC51_ROOT?: string;

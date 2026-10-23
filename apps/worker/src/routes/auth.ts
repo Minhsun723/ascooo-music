@@ -9,6 +9,7 @@ import {
   requireAdmin,
   requireUser,
   startSession,
+  verifyLogin,
   verifyPassword,
 } from '../lib/auth';
 
@@ -55,15 +56,19 @@ auth.post('/setup', async (c) => {
 });
 
 auth.post('/login', async (c) => {
+  // Throttle per IP before spending a D1 read and PBKDF2 work on the attempt.
+  const { success } = await c.env.LOGIN_LIMITER.limit({ key: c.req.header('cf-connecting-ip') ?? 'unknown' });
+  if (!success) {
+    return c.json({ error: '登入嘗試次數過多，請稍後再試' }, 429, { 'Retry-After': '60' });
+  }
   const body = await c.req.json<{ username?: string; password?: string }>();
   const row = await c.env.DB.prepare(
     'SELECT id, username, password_hash, role, session_version FROM users WHERE username = ?',
   )
     .bind(String(body.username ?? '').trim())
     .first<{ id: number; username: string; password_hash: string; role: 'admin' | 'user'; session_version: number }>();
-  if (!row || !(await verifyPassword(String(body.password ?? ''), row.password_hash))) {
-    throw new HTTPException(401, { message: '帳號或密碼錯誤' });
-  }
+  const valid = await verifyLogin(String(body.password ?? ''), row?.password_hash);
+  if (!row || !valid) throw new HTTPException(401, { message: '帳號或密碼錯誤' });
   const user: SessionUser = { id: row.id, username: row.username, role: row.role };
   await startSession(c, user, row.session_version);
   return c.json({ user });

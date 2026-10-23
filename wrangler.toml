@@ -36,5 +36,11 @@ name = "ANONYMOUS_LIMITER"
 namespace_id = "1001"
 simple = { limit = 30, period = 60 }
 
+# Caps login attempts (including successful ones) from one IP.
+[[ratelimits]]
+name = "LOGIN_LIMITER"
+namespace_id = "1002"
+simple = { limit = 10, period = 60 }
+
 [observability]
 enabled = true

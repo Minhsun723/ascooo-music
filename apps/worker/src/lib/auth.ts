@@ -37,6 +37,16 @@ export async function verifyPassword(password: string, stored: string): Promise<
   return diff === 0;
 }
 
+// Unknown usernames are checked against this, so a failed login costs the same
+// PBKDF2 work whether or not the account exists.
+const MISSING_USER_HASH = `pbkdf2$${ITERATIONS}$${b64(new Uint8Array(16))}$${b64(new Uint8Array(32))}`;
+
+/** Verify a login without revealing through response time whether the username exists. */
+export async function verifyLogin(password: string, stored: string | undefined): Promise<boolean> {
+  const valid = await verifyPassword(password, stored ?? MISSING_USER_HASH);
+  return valid && stored !== undefined;
+}
+
 /**
  * `version` is the user's session_version. The hourly re-check passes the
  * original `exp`, so renewing a session never extends its lifetime.
