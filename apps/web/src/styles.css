@@ -777,7 +777,7 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
 @media (max-width: 1220px) {
   :root { --sidebar: 210px; }
   .media-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .media-grid--shelf > :nth-child(n+7) { display: revert; }
+  .media-grid--shelf > :nth-child(n+7) { display: flex; }
   .media-grid--shelf > :nth-child(n+9) { display: none; }
   .player-bar { grid-template-columns: minmax(140px, .75fr) minmax(270px, 1.1fr) minmax(195px, .75fr); gap: 12px; }
   .player-bar__tools { justify-content: flex-start; }
@@ -829,6 +829,10 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
   .toast-viewport { right: 12px; bottom: calc(var(--mobile-nav) + var(--player) + 20px); }
   .collection-hero { grid-template-columns: minmax(150px, 230px) minmax(0,1fr); min-height: 330px; margin: -18px -18px 0; padding-inline: 18px; }
   .collection-hero__mobile-back { position: absolute; z-index: 2; top: 14px; left: 18px; display: flex; }
+  /* Detail heroes carry the back button: 14px offset + 44px button + 18px gap before the art. */
+  .collection-hero--detail { padding-top: 76px; }
+  /* Pin the art to the top so a multi-line title can't push it away from the back button. */
+  .collection-hero--detail .collection-hero__art { align-self: start; }
   .collection-hero__menu { top: 14px; right: 14px; }
   .collection-hero h1 { font-size: clamp(2.8rem, 8vw, 5.5rem); }
   .collection-hero--compact-title h1 { font-size: clamp(2rem, 5vw, 3.4rem); }
