@@ -262,6 +262,8 @@ interface ImportedTrack {
   trackArtworkId: string | null;
   folderArtworkId: string | null;
   aac51?: AlternateSource | null;
+  /** Apple identity of the album artist, taken from the album's own tracks by that artist. */
+  albumArtistApple?: { artistId: string; artistName: string } | null;
   /** Local-sync hash of this payload; stored so an unchanged track is not uploaded again. */
   syncHash?: string | null;
 }
@@ -502,6 +504,10 @@ sync.post('/import/track', async (c) => {
       throw new HTTPException(400, { message: 'Apple Music 配對資料格式錯誤' });
     }
   }
+  if (item.albumArtistApple && (!/^\d+$/.test(item.albumArtistApple.artistId) ||
+      typeof item.albumArtistApple.artistName !== 'string' || !item.albumArtistApple.artistName.trim())) {
+    throw new HTTPException(400, { message: '專輯歌手 Apple Music 資料格式錯誤' });
+  }
 
   const meta = item.metadata ?? {};
   const guess = guessFromFilename(path);
@@ -523,11 +529,21 @@ sync.post('/import/track', async (c) => {
         artworkId: apple.artistArtworkId,
       }
     : null;
+  // Without it an alias album artist ("Riria.") misses the row its own tracks
+  // merged into through Apple ("りりあ。") and the album splits in two.
+  const albumArtistEnrichment = item.albumArtistApple
+    ? {
+        appleMusicId: item.albumArtistApple.artistId,
+        appleMusicName: item.albumArtistApple.artistName.trim().slice(0, 500),
+        displayName: null,
+        artworkId: null,
+      }
+    : null;
 
   const artistRow = await upsertArtist(db, artist, artistEnrichment);
   const albumArtistRow = albumArtist.toLowerCase() === artist.toLowerCase()
     ? artistRow
-    : await upsertArtist(db, albumArtist);
+    : await upsertArtist(db, albumArtist, albumArtistEnrichment);
   const album = await upsertAlbum(db, albumTitle, albumArtistRow!.id, meta.year);
 
   // Display names survive a sync without an Apple match (COALESCE below), so

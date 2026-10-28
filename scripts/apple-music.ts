@@ -56,6 +56,7 @@ interface AppleSong {
         attributes?: { name?: string; artwork?: AppleArtwork };
       }>;
     };
+    albums?: { data?: Array<{ id?: string }> };
   };
 }
 
@@ -193,6 +194,7 @@ export class AppleMusicClient {
   private bearerTokens: string[] = [];
   private bearerIndex = 0;
   private initialized = false;
+  private albumLocales = new Map<string, Promise<string | null>>();
 
   constructor(options: AppleMusicOptions = {}) {
     this.providedDeveloperToken = stripBearer(options.developerToken);
@@ -273,6 +275,29 @@ export class AppleMusicClient {
     throw new Error(`Apple Music API：${lastError}`);
   }
 
+  /**
+   * Most common sung locale on an album. Instrumentals are tagged "zxx" (no
+   * linguistic content), which says nothing about the release they belong to.
+   */
+  private albumAudioLocale(storefront: string, albumId: string): Promise<string | null> {
+    const key = `${storefront}/${albumId}`;
+    let locale = this.albumLocales.get(key);
+    if (!locale) {
+      locale = this.get(`catalog/${storefront}/albums/${albumId}/tracks`, {}).then((payload) => {
+        const counts = new Map<string, number>();
+        for (const track of (payload.data as unknown as AppleSong[] | undefined) ?? []) {
+          const value = track.attributes?.audioLocale?.trim().toLowerCase();
+          if (value && value !== 'zxx') counts.set(value, (counts.get(value) ?? 0) + 1);
+        }
+        return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+      });
+      // A failed lookup must not stick for the rest of the run.
+      locale.catch(() => this.albumLocales.delete(key));
+      this.albumLocales.set(key, locale);
+    }
+    return locale;
+  }
+
   private async matchTrackAt(
     input: SearchInput,
     storefront: string,
@@ -285,7 +310,7 @@ export class AppleMusicClient {
       types: 'songs',
       limit: '10',
       l: language,
-      'include[songs]': 'artists',
+      'include[songs]': 'artists,albums',
     });
     const candidates = payload.results?.songs?.data ?? [];
     const ranked = candidates
@@ -295,7 +320,12 @@ export class AppleMusicClient {
     if (!best || best.score < 45) return null;
 
     let song = best.song;
-    const japanese = (song.attributes?.audioLocale ?? '').toLowerCase().startsWith('ja');
+    let locale = (song.attributes?.audioLocale ?? '').toLowerCase();
+    const albumId = song.relationships?.albums?.data?.[0]?.id;
+    // An instrumental follows its album, so it carries the same credits as the
+    // vocal version ("りりあ。", not "Riria.") and lands on the same artist.
+    if (locale === 'zxx' && albumId) locale = await this.albumAudioLocale(storefront, albumId) ?? locale;
+    const japanese = locale.startsWith('ja');
     // A ja-JP catalog request transliterates Western credits into katakana
     // ("Camila Cabello" -> "カミラ・カベロ"). Only Japanese songs should carry
     // localized names, so re-read everything else in English.

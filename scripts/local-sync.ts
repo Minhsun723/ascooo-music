@@ -5,7 +5,7 @@ import sharp from 'sharp';
 import { type Aac51Pairing, type AlternateSource, aac51Root, pairAac51 } from '../apps/worker/src/lib/aac51';
 import { ARTWORK_SIZES, type ArtworkSize } from '../apps/worker/src/lib/artwork';
 import { AUDIO_EXTENSIONS, type AudioMetadata, METADATA_VERSION, extOf, extractMetadata, guessFromFilename } from '../apps/worker/src/lib/metadata';
-import { type DavEntry, WebDAV, normalizePath } from '../apps/worker/src/lib/webdav';
+import { type DavEntry, WebDAV, normalizePath, parentDir } from '../apps/worker/src/lib/webdav';
 import { AppleMusicClient, appleArtworkUrl, type AppleArtwork, type AppleMusicMatch } from './apple-music';
 
 const COVER_NAMES = ['cover', 'folder', 'front', 'album', 'albumart', 'albumcover', 'artwork', 'jacket', '封面', '專輯封面', '专辑封面'];
@@ -69,6 +69,8 @@ interface PreparedTrack {
   trackArtworkId: string | null;
   folderArtworkId: string | null;
   aac51?: AlternateSource | null;
+  /** Apple identity of the album artist, taken from the album's own tracks by that artist. */
+  albumArtistApple?: { artistId: string; artistName: string };
 }
 
 interface SyncManifest {
@@ -246,7 +248,7 @@ const INSTRUMENTAL_TITLE = /\b(?:instrumental|karaoke|off[\s-]?vocal)\b|伴奏|�
 const DOLBY_ATMOS_CODECS = new Set(['ec-3', 'eac3', 'e-ac-3']);
 // Bump when Apple Music scoring changes so cached matches (and the TTML they
 // selected) are re-resolved once instead of waiting for the refresh interval.
-const APPLE_MATCH_VERSION = 2;
+const APPLE_MATCH_VERSION = 3;
 
 function lyricsFormat(path: string, content: string): 'lrc' | 'ttml' | 'plain' {
   if (extOf(path) === 'ttml' || /<tt(?:\s|>)/i.test(content)) return 'ttml';
@@ -380,6 +382,48 @@ function attachAac51(
   const pairing = pairAac51(tracks.map((track) => track.path), altFiles);
   for (const track of tracks) track.aac51 = pairing.pairs.get(track.path) ?? null;
   return pairing;
+}
+
+const nfc = (value: string | null | undefined) => (value ?? '').normalize('NFC');
+
+/**
+ * The Worker files an album under its album artist. When that differs from the
+ * track artist (a character-voice version on a singer's EP), the album artist is
+ * looked up by name alone and misses the Apple-merged alias ("Riria." resolves
+ * to "りりあ。" only through Apple), splitting the album in two. Lend it the Apple
+ * identity of the album's tracks by that artist. Credits mirror /sync/import/track.
+ */
+function attachAlbumArtistApple(tracks: PreparedTrack[], root: string): void {
+  const credited = tracks.map((track) => {
+    const meta = track.metadata;
+    const folder = parentDir(track.path);
+    const folderName = folder === root ? '' : folder.slice(folder.lastIndexOf('/') + 1);
+    const artist = nfc(meta.artist || guessFromFilename(track.path).artist || meta.albumArtist ||
+      track.appleMusic?.artistName.trim() || '未知歌手');
+    const albumArtist = nfc(meta.albumArtist) || artist;
+    return {
+      track,
+      album: `${nfc(meta.album || folderName || '未知專輯').toLowerCase()}\u0000${albumArtist.toLowerCase()}`,
+      byAlbumArtist: artist.toLowerCase() === albumArtist.toLowerCase(),
+    };
+  });
+  const identities = new Map<string, Map<string, { artistId: string; artistName: string; count: number }>>();
+  for (const { track, album, byAlbumArtist } of credited) {
+    const apple = track.appleMusic;
+    if (!byAlbumArtist || !apple?.artistId) continue;
+    const votes = identities.get(album) ?? new Map();
+    identities.set(album, votes);
+    const key = `${apple.artistId}\u0000${apple.artistName}`;
+    const vote = votes.get(key) ?? { artistId: apple.artistId, artistName: apple.artistName, count: 0 };
+    vote.count++;
+    votes.set(key, vote);
+  }
+  for (const { track, album, byAlbumArtist } of credited) {
+    const best = byAlbumArtist ? undefined : [...identities.get(album)?.values() ?? []].sort((a, b) => b.count - a.count)[0];
+    // Left unset otherwise, so tracks it does not concern keep their sync hash.
+    if (best) track.albumArtistApple = { artistId: best.artistId, artistName: best.artistName };
+    else delete track.albumArtistApple;
+  }
 }
 
 function reportAac51(paired: number, ambiguous: string[], orphans: string[]): void {
@@ -604,11 +648,15 @@ async function prepare(): Promise<SyncManifest> {
       const cachedGuess = cached ? guessFromFilename(cached.path) : null;
       const cachedNeedsArtistRecovery = !!cached && !cached.appleMusic &&
         !(cached.metadata.artist || cached.metadata.albumArtist || cachedGuess?.artist);
-      // Earlier syncs stored ja-JP transliterations for non-Japanese songs.
+      const cachedAppleLocale = (cached?.appleMusic?.audioLocale ?? '').toLowerCase();
+      // Earlier syncs stored ja-JP transliterations for non-Japanese songs. An
+      // instrumental ("zxx") takes its album's language, so katakana is expected there.
       const cachedAppleNameLocalized = !!cached?.appleMusic &&
-        !(cached.appleMusic.audioLocale ?? '').toLowerCase().startsWith('ja') &&
+        !cachedAppleLocale.startsWith('ja') && cachedAppleLocale !== 'zxx' &&
         /\p{Script=Katakana}/u.test(`${cached.appleMusic.artistName}${cached.appleMusic.title}`);
-      const cachedAppleMatchCurrent = cached?.appleMatchVersion === APPLE_MATCH_VERSION;
+      // Version 3 only changed how instrumentals pick their language.
+      const cachedAppleMatchCurrent = cached?.appleMatchVersion === APPLE_MATCH_VERSION ||
+        cached?.appleMatchVersion === 2 && cachedAppleLocale !== 'zxx';
       const appleFresh = !apple || !cachedNeedsArtistRecovery && !cachedAppleNameLocalized && cachedAppleMatchCurrent &&
         !!cached?.appleCheckedAt && Date.now() - cached.appleCheckedAt < refreshInterval();
       const cachedLyricsReusable = !!cached?.lyrics && cached.lrcPath === currentLyricsPath;
@@ -851,6 +899,7 @@ async function prepare(): Promise<SyncManifest> {
       return track;
   });
   tracks.push(...preparedTracks);
+  attachAlbumArtistApple(tracks, root);
   const pairing = attachAac51(tracks, altFiles, previousByPath);
   if (pairing) reportAac51(pairing.pairs.size, pairing.ambiguous, pairing.orphans);
 
