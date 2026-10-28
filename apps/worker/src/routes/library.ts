@@ -9,6 +9,7 @@ import {
   ALBUM_FROM,
   ALBUM_SELECT,
   type AlbumRow,
+  genreOf,
   TRACK_JOINS,
   TRACK_SELECT,
   type TrackRow,
@@ -169,10 +170,10 @@ catalog.get('/albums/:id', anonymousEdgeCache, async (c) => {
   const db = c.env.DB;
   const album = await db.prepare(`SELECT ${ALBUM_SELECT} ${ALBUM_FROM} WHERE al.id = ? GROUP BY al.id`).bind(id).first<AlbumRow>();
   if (!album) throw new HTTPException(404, { message: '找不到這張專輯' });
-  // Tracks on one album normally share both values; take the most common so one odd tag cannot win.
-  const mostCommon = (column: 'copyright' | 'release_date') =>
-    `(SELECT ${column} FROM tracks WHERE album_id = ?1 AND status = 'ready' AND visible = 1 AND ${column} IS NOT NULL
-      GROUP BY ${column} ORDER BY COUNT(*) DESC, ${column} LIMIT 1) AS ${column}`;
+  // Tracks on one album normally share these values; take the most common so one odd tag cannot win.
+  const mostCommon = (column: 'copyright' | 'release_date' | 'genre', value: string = column) =>
+    `(SELECT ${value} FROM tracks WHERE album_id = ?1 AND status = 'ready' AND visible = 1 AND ${value} IS NOT NULL
+      GROUP BY ${value} ORDER BY COUNT(*) DESC, ${value} LIMIT 1) AS ${column}`;
   const [tracks, more, credits] = await db.batch([
     db.prepare(
       `SELECT ${TRACK_SELECT} FROM tracks t ${TRACK_JOINS} WHERE t.album_id = ? AND t.status = 'ready' AND t.visible = 1
@@ -182,11 +183,20 @@ catalog.get('/albums/:id', anonymousEdgeCache, async (c) => {
       album.artist_id,
       id,
     ),
-    db.prepare(`SELECT ${mostCommon('copyright')}, ${mostCommon('release_date')}`).bind(id),
+    db.prepare(
+      `SELECT ${mostCommon('copyright')}, ${mostCommon('release_date')}, ${mostCommon('genre', genreOf('tracks'))}`,
+    ).bind(id),
   ]);
-  const credit = credits.results[0] as { copyright: string | null; release_date: string | null } | undefined;
+  const credit = credits.results[0] as
+    | { copyright: string | null; release_date: string | null; genre: string | null }
+    | undefined;
   return c.json({
-    album: { ...toAlbum(album), copyright: credit?.copyright ?? null, releaseDate: credit?.release_date ?? null },
+    album: {
+      ...toAlbum(album),
+      genre: credit?.genre ?? null,
+      copyright: credit?.copyright ?? null,
+      releaseDate: credit?.release_date ?? null,
+    },
     tracks: (tracks.results as TrackRow[]).map(toTrack),
     moreByArtist: (more.results as AlbumRow[]).map(toAlbum),
   });

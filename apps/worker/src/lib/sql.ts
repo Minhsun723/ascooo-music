@@ -1,11 +1,14 @@
 /** Shared SQL fragments that shape rows into the API's Track JSON. */
 
+/** Apple's Traditional Chinese genre, else its English one, else the file's own tag. */
+export const genreOf = (table: string) => `COALESCE(${table}.genre_zh, ${table}.genre_en, NULLIF(${table}.genre, ''))`;
+
 export const TRACK_SELECT = `
   t.id, COALESCE(t.display_title, t.title) AS title,
   COALESCE(t.display_artist, t.artist) AS artist,
   t.artist_id, t.album_id, al.title AS album,
   COALESCE(aa.display_name, aa.name) AS album_artist,
-  t.track_no, t.disc_no, t.year, t.genre, t.duration, t.codec, t.bitrate, t.sample_rate,
+  t.track_no, t.disc_no, t.year, ${genreOf('t')} AS genre, t.duration, t.codec, t.bitrate, t.sample_rate,
   t.bit_depth, t.channels, COALESCE(t.artwork_id, al.artwork_id) AS artwork_id, t.has_lyrics,
   t.alt_path IS NOT NULL AS has_aac51,
   t.added_at, CASE WHEN f.track_id IS NULL THEN 0 ELSE 1 END AS liked
@@ -74,7 +77,7 @@ export const ALBUM_SELECT = `
   COALESCE(ar.display_name, ar.name) AS artist,
   COUNT(t.id) AS track_count, COALESCE(SUM(t.duration), 0) AS duration,
   MAX(t.added_at) AS added_at,
-  MAX(NULLIF(t.genre, '')) AS genre,
+  MAX(${genreOf('t')}) AS genre,
   MAX(NULLIF(t.record_label, '')) AS record_label,
   MAX(CASE WHEN t.codec IN ('flac','alac','wav') THEN 1 ELSE 0 END) AS lossless,
   MAX(CASE WHEN LOWER(t.codec) IN ('ec-3','eac3','e-ac-3') THEN 1 ELSE 0 END) AS atmos,

@@ -6,7 +6,7 @@ import { type Aac51Pairing, type AlternateSource, aac51Root, pairAac51 } from '.
 import { ARTWORK_SIZES, type ArtworkSize } from '../apps/worker/src/lib/artwork';
 import { AUDIO_EXTENSIONS, type AudioMetadata, METADATA_VERSION, extOf, extractMetadata, guessFromFilename } from '../apps/worker/src/lib/metadata';
 import { type DavEntry, WebDAV, normalizePath, parentDir } from '../apps/worker/src/lib/webdav';
-import { AppleMusicClient, appleArtworkUrl, type AppleArtwork, type AppleMusicMatch } from './apple-music';
+import { AppleMusicClient, appleArtworkUrl, type AppleArtwork, type AppleGenre, type AppleMusicMatch } from './apple-music';
 
 const COVER_NAMES = ['cover', 'folder', 'front', 'album', 'albumart', 'albumcover', 'artwork', 'jacket', '封面', '專輯封面', '专辑封面'];
 const IMAGE_EXT = ['jpg', 'jpeg', 'png', 'webp', 'avif', 'gif'];
@@ -62,6 +62,10 @@ interface PreparedTrack {
     lyricsSongId: string | null;
     lyricsAudioLocale: string | null;
     lyricsHasTimeSyncedLyrics: boolean | null;
+    /** Null when Apple carries no genre for the song. */
+    genre?: AppleGenre | null;
+    /** APPLE_GENRE_VERSION that produced `genre`; any other value is looked up again. */
+    genreVersion?: number;
   }) | null;
   appleCheckedAt: number | null;
   appleMatchVersion?: number;
@@ -71,6 +75,8 @@ interface PreparedTrack {
   aac51?: AlternateSource | null;
   /** Apple identity of the album artist, taken from the album's own tracks by that artist. */
   albumArtistApple?: { artistId: string; artistName: string };
+  /** Apple's genre, or the tag translated through Apple's names; metadata.genre keeps the tag. */
+  displayGenre?: { zh: string | null; en: string };
 }
 
 interface SyncManifest {
@@ -249,6 +255,10 @@ const DOLBY_ATMOS_CODECS = new Set(['ec-3', 'eac3', 'e-ac-3']);
 // Bump when Apple Music scoring changes so cached matches (and the TTML they
 // selected) are re-resolved once instead of waiting for the refresh interval.
 const APPLE_MATCH_VERSION = 3;
+// Bump when the genre lookup changes so cached genres are looked up again.
+// Version 2 reads subgenres ("Mandopop"), which version 1 folded into "Pop";
+// version 3 finds songs Taiwan lists under another ID by ISRC.
+const APPLE_GENRE_VERSION = 3;
 
 function lyricsFormat(path: string, content: string): 'lrc' | 'ttml' | 'plain' {
   if (extOf(path) === 'ttml' || /<tt(?:\s|>)/i.test(content)) return 'ttml';
@@ -423,6 +433,51 @@ function attachAlbumArtistApple(tracks: PreparedTrack[], root: string): void {
     // Left unset otherwise, so tracks it does not concern keep their sync hash.
     if (best) track.albumArtistApple = { artistId: best.artistId, artistName: best.artistName };
     else delete track.albumArtistApple;
+  }
+}
+
+const genreKey = (name: string) => name.normalize('NFKC').toLocaleLowerCase('en').replace(/[\s_-]+/g, '');
+
+/**
+ * Tags name one genre in several languages ("J-Pop" / "日本流行樂"), so Apple's
+ * genre wins. Matched songs missing one are looked up in a few batched requests.
+ * A genre with only an English name (the song is not sold in Taiwan), or an
+ * unmatched track's tag, is translated through the pairs Apple gave the rest of
+ * the library; a name Apple never used is left as is.
+ */
+async function attachGenres(tracks: PreparedTrack[], apple: AppleMusicClient | null): Promise<void> {
+  const pending = tracks.filter((track) => track.appleMusic && track.appleMusic.genreVersion !== APPLE_GENRE_VERSION);
+  if (apple && pending.length) {
+    try {
+      const songs = new Map(pending.map((track) => [track.appleMusic!.songId, {
+        songId: track.appleMusic!.songId,
+        isrc: track.appleMusic!.isrc ?? track.metadata.isrc ?? null,
+      }]));
+      const genres = await apple.songGenres([...songs.values()]);
+      for (const track of pending) {
+        track.appleMusic!.genre = genres.get(track.appleMusic!.songId) ?? null;
+        track.appleMusic!.genreVersion = APPLE_GENRE_VERSION;
+      }
+      console.log(`  Apple Music 曲風：查詢 ${pending.length} 首`);
+    } catch (error) {
+      warnOnce('apple-genre', `  Apple Music 曲風暫停，下次同步再補：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  const known = new Map<string, AppleGenre>();
+  for (const track of tracks) {
+    const genre = track.appleMusic?.genre;
+    if (!genre?.zh) continue;
+    for (const name of [genre.zh, genre.en]) known.set(genreKey(name), genre);
+  }
+  for (const track of tracks) {
+    const appleGenre = track.appleMusic?.genre;
+    const tag = track.metadata.genre?.trim();
+    const translated = appleGenre?.zh ? undefined : known.get(genreKey(appleGenre?.en ?? tag ?? ''));
+    const genre = translated ?? appleGenre;
+    // Left unset otherwise, so tracks without a genre keep their sync hash.
+    if (genre) track.displayGenre = { zh: genre.zh, en: genre.en };
+    else delete track.displayGenre;
   }
 }
 
@@ -759,6 +814,9 @@ async function prepare(): Promise<SyncManifest> {
               lyricsSongId: keepLyricsSong ? previous!.lyricsSongId : null,
               lyricsAudioLocale: keepLyricsSong ? previous!.lyricsAudioLocale : null,
               lyricsHasTimeSyncedLyrics: keepLyricsSong ? previous!.lyricsHasTimeSyncedLyrics : null,
+              ...(previous?.songId === match.songId
+                ? { genre: previous.genre, genreVersion: previous.genreVersion }
+                : {}),
             };
           } else {
             appleMusic = null;
@@ -900,6 +958,7 @@ async function prepare(): Promise<SyncManifest> {
   });
   tracks.push(...preparedTracks);
   attachAlbumArtistApple(tracks, root);
+  await attachGenres(tracks, apple);
   const pairing = attachAac51(tracks, altFiles, previousByPath);
   if (pairing) reportAac51(pairing.pairs.size, pairing.ambiguous, pairing.orphans);
 

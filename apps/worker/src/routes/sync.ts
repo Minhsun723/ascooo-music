@@ -264,6 +264,8 @@ interface ImportedTrack {
   aac51?: AlternateSource | null;
   /** Apple identity of the album artist, taken from the album's own tracks by that artist. */
   albumArtistApple?: { artistId: string; artistName: string } | null;
+  /** Apple's genre, or the tag translated through Apple's names; metadata.genre keeps the tag. */
+  displayGenre?: { zh: string | null; en: string } | null;
   /** Local-sync hash of this payload; stored so an unchanged track is not uploaded again. */
   syncHash?: string | null;
 }
@@ -508,6 +510,10 @@ sync.post('/import/track', async (c) => {
       typeof item.albumArtistApple.artistName !== 'string' || !item.albumArtistApple.artistName.trim())) {
     throw new HTTPException(400, { message: '專輯歌手 Apple Music 資料格式錯誤' });
   }
+  if (item.displayGenre && (typeof item.displayGenre.en !== 'string' || !item.displayGenre.en.trim() ||
+      item.displayGenre.zh !== null && typeof item.displayGenre.zh !== 'string')) {
+    throw new HTTPException(400, { message: '曲風資料格式錯誤' });
+  }
 
   const meta = item.metadata ?? {};
   const guess = guessFromFilename(path);
@@ -521,6 +527,8 @@ sync.post('/import/track', async (c) => {
   const db = c.env.DB;
   const displayTitle = nfc(apple?.displayTitle?.trim().slice(0, 500)) || null;
   const displayArtist = nfc(apple?.displayArtist?.trim().slice(0, 500)) || null;
+  const genreZh = nfc(item.displayGenre?.zh?.trim().slice(0, 200)) || null;
+  const genreEn = nfc(item.displayGenre?.en.trim().slice(0, 200)) || null;
   const artistEnrichment = apple?.artistId && apple.artistName.trim()
     ? {
         appleMusicId: apple.artistId,
@@ -564,10 +572,10 @@ sync.post('/import/track', async (c) => {
        path, lrc_path, cover_path, cover_signature, size, etag, mtime, scan_id, status, error,
        title, artist, artist_id, album_id, track_no, disc_no, year, genre, record_label,
        duration, codec, bitrate, sample_rate, bit_depth, channels, artwork_id, has_lyrics,
-       display_title, display_artist, apple_music_id, apple_isrc, search_key,
+       display_title, display_artist, genre_zh, genre_en, apple_music_id, apple_isrc, search_key,
        alt_path, alt_size, alt_etag, copyright, release_date, sync_hash, metadata_version, added_at, updated_at
      ) VALUES (
-       ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${METADATA_VERSION}, ?, ?
+       ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${METADATA_VERSION}, ?, ?
      )
      ON CONFLICT(path) DO UPDATE SET
        lrc_path = excluded.lrc_path, cover_path = excluded.cover_path,
@@ -581,6 +589,9 @@ sync.post('/import/track', async (c) => {
        artwork_id = excluded.artwork_id, has_lyrics = excluded.has_lyrics,
        display_title = COALESCE(excluded.display_title, tracks.display_title),
        display_artist = COALESCE(excluded.display_artist, tracks.display_artist),
+       -- Like the display names, but kept as a pair: every known genre has an English name.
+       genre_zh = CASE WHEN excluded.genre_en IS NULL THEN tracks.genre_zh ELSE excluded.genre_zh END,
+       genre_en = COALESCE(excluded.genre_en, tracks.genre_en),
        apple_music_id = COALESCE(excluded.apple_music_id, tracks.apple_music_id),
        apple_isrc = COALESCE(excluded.apple_isrc, tracks.apple_isrc),
        search_key = excluded.search_key,
@@ -617,6 +628,8 @@ sync.post('/import/track', async (c) => {
     item.lyrics ? 1 : 0,
     displayTitle,
     displayArtist,
+    genreZh,
+    genreEn,
     apple?.songId ?? null,
     apple?.isrc ?? null,
     key,

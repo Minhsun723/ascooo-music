@@ -1,11 +1,24 @@
 const AMP_API = 'https://amp-api.music.apple.com/v1';
 const APPLE_MUSIC_WEB = 'https://music.apple.com';
 const APPLE_MUSIC_BOOTSTRAP = 'https://beta.music.apple.com';
+const ITUNES_LOOKUP = 'https://itunes.apple.com/lookup';
+// Taiwan's catalog names genres in Traditional Chinese, or in English with lang=en_us.
+const GENRE_STOREFRONT = 'tw';
 
 export interface AppleArtwork {
   url: string;
   width: number;
   height: number;
+}
+
+export interface AppleGenre {
+  /** Name in the Taiwan catalog; null when that catalog does not carry the song. */
+  zh: string | null;
+  en: string;
+}
+
+interface ITunesLookup {
+  results?: Array<{ trackId?: number; primaryGenreName?: string }>;
 }
 
 export interface AppleMusicMatch {
@@ -372,6 +385,84 @@ export class AppleMusicClient {
         ? 'zh-TW'
         : 'en-US';
     return this.matchTrackAt(input, this.lyricsStorefront, language);
+  }
+
+  /**
+   * Primary genre of each song, from the public iTunes lookup. The catalog
+   * API's genre relationship only reaches top-level genres, so "Mandopop" came
+   * back as "Pop". Both names come from the Taiwan catalog and so name the same
+   * genre. Catalog IDs can differ between storefronts, so a song Taiwan does not
+   * know by the match's ID is found there by ISRC. A song Taiwan lacks gets only
+   * an English name, from the match's storefront. Songs neither carries map to null.
+   */
+  async songGenres(songs: Array<{ songId: string; isrc: string | null }>): Promise<Map<string, AppleGenre | null>> {
+    const zh = await this.lookupGenres(songs.map((song) => song.songId), GENRE_STOREFRONT);
+    const taiwanIds = new Map(songs.filter((song) => zh.has(song.songId)).map((song) => [song.songId, song.songId]));
+    const byIsrc = await this.songIdsByIsrc(
+      GENRE_STOREFRONT,
+      songs.flatMap((song) => !taiwanIds.has(song.songId) && song.isrc ? [song.isrc] : []),
+    );
+    for (const song of songs) {
+      const taiwanId = !taiwanIds.has(song.songId) && song.isrc ? byIsrc.get(song.isrc.toUpperCase()) : undefined;
+      if (taiwanId) taiwanIds.set(song.songId, taiwanId);
+    }
+    for (const [id, name] of await this.lookupGenres([...byIsrc.values()], GENRE_STOREFRONT)) zh.set(id, name);
+    const en = await this.lookupGenres([...new Set(taiwanIds.values())], GENRE_STOREFRONT, 'en_us');
+
+    const elsewhere = songs.filter((song) => !en.has(taiwanIds.get(song.songId) ?? '')).map((song) => song.songId);
+    const fallback = elsewhere.length && this.storefront !== GENRE_STOREFRONT
+      ? await this.lookupGenres(elsewhere, this.storefront, 'en_us')
+      : new Map<string, string>();
+    return new Map(songs.map((song) => {
+      const taiwanId = taiwanIds.get(song.songId) ?? '';
+      const name = en.get(taiwanId);
+      if (name) return [song.songId, { zh: zh.get(taiwanId) ?? null, en: name }];
+      const english = fallback.get(song.songId);
+      return [song.songId, english ? { zh: null, en: english } : null];
+    }));
+  }
+
+  /** One song ID per ISRC in the storefront; a single and its album often share one ISRC. */
+  private async songIdsByIsrc(storefront: string, isrcs: string[]): Promise<Map<string, string>> {
+    const ids = new Map<string, string>();
+    const unique = [...new Set(isrcs.map((isrc) => isrc.toUpperCase()))];
+    for (let i = 0; i < unique.length; i += 25) {
+      const payload = await this.get(`catalog/${storefront}/songs`, { 'filter[isrc]': unique.slice(i, i + 25).join(',') });
+      for (const song of (payload.data as unknown as AppleSong[] | undefined) ?? []) {
+        const isrc = song.attributes?.isrc?.toUpperCase();
+        if (isrc && !ids.has(isrc)) ids.set(isrc, song.id);
+      }
+    }
+    return ids;
+  }
+
+  /** primaryGenreName of each song the storefront carries; lang=en_us names it in English. */
+  private async lookupGenres(songIds: string[], country: string, lang?: 'en_us'): Promise<Map<string, string>> {
+    const names = new Map<string, string>();
+    for (let i = 0; i < songIds.length; i += 150) {
+      const url = new URL(ITUNES_LOOKUP);
+      url.searchParams.set('id', songIds.slice(i, i + 150).join(','));
+      url.searchParams.set('country', country);
+      if (lang) url.searchParams.set('lang', lang);
+      for (const result of (await this.lookup(url)).results ?? []) {
+        const name = result.primaryGenreName?.trim();
+        if (result.trackId && name) names.set(String(result.trackId), name);
+      }
+    }
+    return names;
+  }
+
+  /** The lookup allows about 20 requests a minute and answers 403 past that. */
+  private async lookup(url: URL): Promise<ITunesLookup> {
+    let status = 0;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const response = await fetch(url);
+      if (response.ok) return await response.json() as ITunesLookup;
+      status = response.status;
+      if (status !== 403 && status !== 429 && status < 500) break;
+      await delay(5000 * 2 ** attempt);
+    }
+    throw new Error(`iTunes 查詢失敗：HTTP ${status}`);
   }
 
   async fetchLyrics(songId: string, audioLocale: string | null): Promise<string | null> {
