@@ -20,9 +20,6 @@ interface WordTimeline {
   index: number;
 }
 
-/** Held notes swell and glow; only they carry the glow filter, so the rest of the line paints without one. */
-const isHeld = (word: LyricWord) => word.end - word.time >= 1 && word.text.trim().length <= 10;
-
 /**
  * One paused timeline per active line; the ticker scrubs it to the audio clock, so seeking just works.
  * `sung` lists the line's words in the order they're rendered, which `words` and `glows` follow.
@@ -31,8 +28,7 @@ function buildWordTimeline(line: LyricLine, sung: LyricWord[], index: number, wo
   // A line sung before (seeking back) keeps its words' last inline state, and the tweens below
   // don't render until the playhead reaches them, so unsung words would show already lit.
   gsap.killTweensOf([...words, ...glows]);
-  gsap.set([...words, ...glows], { '--p': 0 });
-  gsap.set(words, { '--glow': 0, yPercent: 0, scale: 1 });
+  gsap.set([...words, ...glows], { '--p': 0, '--glow': 0, yPercent: 0, scale: 1 });
 
   // GSAP's default force3D lifts a word onto its own layer only while it moves, and every lift and
   // drop re-rasterizes the rest of the line, which costs more with each row the line wraps to.
@@ -44,16 +40,18 @@ function buildWordTimeline(line: LyricLine, sung: LyricWord[], index: number, wo
     if (!el) return;
     const start = Math.max(0, word.time - base);
     const duration = Math.max(0.05, word.end - word.time);
+    // The glow copy moves with its word, so the halo stays on it as it lifts and swells.
+    const pair = glows[index] ? [el, glows[index]] : el;
 
-    tl.fromTo(glows[index] ? [el, glows[index]] : el, { '--p': 0 }, { '--p': 1, duration, ease: 'none', immediateRender: false }, start);
+    tl.fromTo(pair, { '--p': 0 }, { '--p': 1, duration, ease: 'none', immediateRender: false }, start);
     if (reduce) return;
-    tl.fromTo(el, { yPercent: 0 }, { yPercent: -6, duration: Math.max(0.4, duration), ease: 'power2.out', immediateRender: false }, start);
+    tl.fromTo(pair, { yPercent: 0 }, { yPercent: -6, duration: Math.max(0.4, duration), ease: 'power2.out', immediateRender: false }, start);
 
     // Held notes swell and glow, then settle back.
-    if (isHeld(word)) {
+    if (duration >= 1 && word.text.trim().length <= 10) {
       const rise = duration * 0.55;
-      tl.fromTo(el, { '--glow': 0, scale: 1 }, { '--glow': 1, scale: 1.06, duration: rise, ease: 'sine.out', immediateRender: false }, start);
-      tl.fromTo(el, { '--glow': 1, scale: 1.06 }, { '--glow': 0, scale: 1, duration: duration - rise + 0.3, ease: 'sine.inOut', immediateRender: false }, start + rise);
+      tl.fromTo(pair, { '--glow': 0, scale: 1 }, { '--glow': 1, scale: 1.06, duration: rise, ease: 'sine.out', immediateRender: false }, start);
+      tl.fromTo(pair, { '--glow': 1, scale: 1.06 }, { '--glow': 0, scale: 1, duration: duration - rise + 0.3, ease: 'sine.inOut', immediateRender: false }, start + rise);
     }
   });
 
@@ -69,10 +67,9 @@ function splitTrailingSpace(text: string) {
 function timedWords(words: LyricWord[], glow = false) {
   return words.map((word, wordIndex) => {
     const [body, trailing] = splitTrailingSpace(word.text);
-    const className = glow ? undefined : isHeld(word) ? 'lyrics-word lyrics-word--held' : 'lyrics-word';
     return (
       <Fragment key={`${word.time}-${wordIndex}`}>
-        <span className={className}>{body}</span>{trailing}
+        <span className={glow ? undefined : 'lyrics-word'}>{body}</span>{trailing}
       </Fragment>
     );
   });

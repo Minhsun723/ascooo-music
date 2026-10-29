@@ -366,9 +366,16 @@ h1, h2, h3 { font-family: var(--font-display); letter-spacing: -.035em; }
    over every row the line wraps to on each frame the fill moves, which stutters phones and tablets. */
 .lyrics-lines button.is-active .lyrics-lines__text--timed { position: relative; isolation: isolate; text-shadow: none; }
 .lyrics-lines__glow { position: absolute; inset: 0; z-index: -1; color: transparent; pointer-events: none; }
-/* Strength follows the fill, as a drop-shadow of the .34-alpha unsung text would. 36px matches the
-   old drop-shadow(18px), whose length is a standard deviation rather than a blur radius. */
-.lyrics-lines__glow > span { display: inline-block; text-shadow: 0 0 36px color-mix(in srgb, var(--now-glow) calc(34% + 66% * var(--p, 0)), transparent); }
+/* Strength follows the fill, as a drop-shadow of the .34-alpha unsung text would; held notes add a white
+   halo with --glow. Blur radii are twice the old drop-shadow() lengths, which are standard deviations.
+   A filter on the word instead gets cut off at its box in Safari, which only repaints the box. */
+.lyrics-lines__glow > span {
+  display: inline-block;
+  transform-origin: 50% 80%;
+  text-shadow:
+    0 0 calc(var(--glow, 0) * 28px) rgba(255,255,255,calc(var(--glow, 0) * .75)),
+    0 0 36px color-mix(in srgb, var(--now-glow) calc(34% + 66% * var(--p, 0)), transparent);
+}
 .lyrics-lines button.is-active .lyrics-word {
   color: transparent;
   padding: .3em .25em;
@@ -382,8 +389,6 @@ h1, h2, h3 { font-family: var(--font-display); letter-spacing: -.035em; }
   -webkit-background-clip: text;
   background-clip: text;
 }
-/* Safari clips filter output to the element's box; the padding above gives the glow room to bleed into. */
-.lyrics-lines button.is-active .lyrics-word--held { filter: drop-shadow(0 0 calc(var(--glow, 0) * 14px) rgba(255,255,255,calc(var(--glow, 0) * .75))); }
 .lyrics-lines button:hover { color: rgba(255,255,255,.65); filter: none; }
 .lyrics-panel[data-user-scrolling] .lyrics-lines button { filter: none; }
 /* The active line is never blurred; dropping the filter keeps Safari from clipping its glow to the button box. */
