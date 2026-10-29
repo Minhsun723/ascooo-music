@@ -893,7 +893,13 @@ async function prepare(): Promise<SyncManifest> {
         cached?.appleMatchVersion === 2 && cachedAppleLocale !== 'zxx';
       const appleFresh = !apple || !cachedNeedsArtistRecovery && !cachedAppleNameLocalized && cachedAppleMatchCurrent &&
         !!cached?.appleCheckedAt && Date.now() - cached.appleCheckedAt < refreshInterval();
-      const cachedLyricsReusable = !!cached?.lyrics && cached.lrcPath === currentLyricsPath;
+      // An edited TTML or LRC keeps its path but not its signature, so it is read again.
+      // A TTML saved from Apple Music is signed with its content hash (see cachedLyricsSigned).
+      const cachedLyricsReusable = !!cached?.lyrics && cached.lrcPath === currentLyricsPath && (
+        !hasStableSignature(currentLyricsFile) || !currentLyricsFile ||
+        cached.lrcSignature === currentLyricsSignature ||
+        cached.lrcSignature === sha256(Buffer.from(cached.lyrics.content))
+      );
       const lyricsReady = !apple?.hasMediaUserToken || !!cached?.lyrics || !!currentLyricsFile ||
         !cached?.appleMusic?.hasTimeSyncedLyrics || !!cached.appleLyricsCheckedAt;
       const unchanged = audioUnchanged && metadataCurrent && appleFresh && lyricsReady &&
