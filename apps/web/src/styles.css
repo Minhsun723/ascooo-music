@@ -268,14 +268,20 @@ h1, h2, h3 { font-family: var(--font-display); letter-spacing: -.035em; }
 /* overflow: hidden clips descenders (g, y) on tight line-heights; pad the clip box and cancel it with negative margin. */
 .marquee, .now-playing__meta h1, .now-playing__byline,.player-track__copy strong, .player-track__copy small { padding-block: .2em; margin-block: -.2em; }
 .player-track__copy small { margin-top: calc(3px - .2em); }
-.marquee__track { display: flex; width: max-content; min-width: 0; gap: 32px; white-space: nowrap; }
-/* The trailing padding repeats the gap, so the track is two identical halves and -50% lands the
-   copy exactly where the original started. The keyframes are static (explicit from, no var()), so no
-   JS measurement can drift from the layout and the browser has nothing to re-resolve mid-loop. */
-.marquee[data-overflow="true"][data-play="true"] .marquee__track { padding-inline-end: 32px; animation: marquee-scroll var(--marquee-duration) linear 1s infinite; will-change: transform; }
-.marquee__text { display: block; flex: none; width: max-content; }
+.marquee__track { display: grid; width: max-content; min-width: 0; white-space: nowrap; }
+/* Both copies share one cell and are placed by transforms alone; the trailing padding is the gap, so
+   100% is exactly one text + gap. Each copy sweeps from one width right to one width left, half a
+   cycle apart, so a copy only wraps around while it is out of view. Sliding a single two-copy track
+   instead snaps its start back on screen every loop, and Safari, which tiles wide layers and drops
+   the tiles it has scrolled past, showed that start blank for a frame on large titles. */
+.marquee__copy { grid-area: 1 / 1; }
+.marquee__text { display: block; width: max-content; }
+.marquee[data-play="true"] .marquee__copy { padding-inline-end: 32px; will-change: transform; }
+.marquee[data-play="true"] .marquee__copy--clone { transform: translate3d(100%, 0, 0); }
+.marquee[data-moving="true"] .marquee__copy { animation: marquee-sweep var(--marquee-duration) linear infinite; }
+.marquee[data-moving="true"] .marquee__copy:not(.marquee__copy--clone) { animation-delay: var(--marquee-lead); }
 .marquee[data-overflow="true"]:not([data-play="true"]) { mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%); }
-@keyframes marquee-scroll { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(-50%, 0, 0); } }
+@keyframes marquee-sweep { from { transform: translate3d(100%, 0, 0); } to { transform: translate3d(-100%, 0, 0); } }
 .player-bar__center { min-width: 0; display: grid; justify-items: center; gap: 4px; }
 .core-controls { display: flex; align-items: center; justify-content: center; gap: 7px; }
 .core-controls .icon-button { width: 35px; height: 35px; }
@@ -1014,8 +1020,8 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
   .marquee[data-overflow="true"] { mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%); }
-  .marquee[data-overflow="true"] .marquee__track { animation: none !important; transform: none; will-change: auto; }
-  .marquee[data-overflow="true"] .marquee__text--clone { display: none; }
+  .marquee[data-overflow="true"] .marquee__copy { animation: none !important; transform: none; will-change: auto; }
+  .marquee[data-overflow="true"] .marquee__copy--clone { display: none; }
   .now-playing { animation-name: now-fade-in; animation-duration: 160ms !important; }
   .now-playing[data-state="closed"] { animation-name: now-fade-out; }
   @keyframes now-fade-in { from { opacity: 0; } }

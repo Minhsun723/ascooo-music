@@ -35,6 +35,7 @@ import { LikeButton } from './TrackList';
 
 const MARQUEE_GAP = 32;
 const MARQUEE_SPEED = 28;
+const MARQUEE_HOLD = 1000;
 const PLAYER_DRAG_DISMISS_MAX = 96;
 const PLAYER_DRAG_DISMISS_RATIO = 0.12;
 const PLAYER_FLICK_VELOCITY = 0.2;
@@ -51,6 +52,8 @@ function OverflowMarquee({ text, play = true }: { text: string; play?: boolean }
   const viewportRef = useRef<HTMLSpanElement | null>(null);
   const textRef = useRef<HTMLSpanElement | null>(null);
   const [metrics, setMetrics] = useState({ overflowing: false, duration: 0 });
+  const [moving, setMoving] = useState(false);
+  const scrolling = metrics.overflowing && play;
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
@@ -63,9 +66,9 @@ function OverflowMarquee({ text, play = true }: { text: string; play?: boolean }
       animationFrame = requestAnimationFrame(() => {
         const textWidth = content.getBoundingClientRect().width;
         const overflowing = Math.ceil(textWidth) > viewport.clientWidth + 1;
-        // Only the speed is measured here. The distance is -50% of the track in CSS, so it always
-        // matches where the copy is laid out, even when fonts or sizes change mid-loop.
-        const duration = (textWidth + MARQUEE_GAP) / MARQUEE_SPEED;
+        // Only the speed is measured here: each copy sweeps two text + gap widths per cycle. The
+        // distance itself is a percentage in CSS, so it always matches the laid-out copies.
+        const duration = (textWidth + MARQUEE_GAP) * 2 / MARQUEE_SPEED;
 
         setMetrics((current) => (
           current.overflowing === overflowing && current.duration === duration
@@ -86,19 +89,33 @@ function OverflowMarquee({ text, play = true }: { text: string; play?: boolean }
     };
   }, [text]);
 
-  const style = { '--marquee-duration': `${metrics.duration}s` } as CSSProperties;
+  // Rest on the start of the text for a moment before it begins to scroll.
+  useEffect(() => {
+    if (!scrolling) return;
+    const timer = window.setTimeout(() => setMoving(true), MARQUEE_HOLD);
+    return () => {
+      window.clearTimeout(timer);
+      setMoving(false);
+    };
+  }, [scrolling]);
+
+  const style = {
+    '--marquee-duration': `${metrics.duration}s`,
+    '--marquee-lead': `${metrics.duration / -2}s`,
+  } as CSSProperties;
 
   return (
     <span
       ref={viewportRef}
       className="marquee"
       data-overflow={metrics.overflowing || undefined}
-      data-play={metrics.overflowing && play ? true : undefined}
+      data-play={scrolling || undefined}
+      data-moving={(scrolling && moving) || undefined}
       title={metrics.overflowing ? text : undefined}
     >
       <span className="marquee__track" style={style}>
-        <span ref={textRef} className="marquee__text">{text}</span>
-        {metrics.overflowing && play ? <span className="marquee__text marquee__text--clone" aria-hidden="true">{text}</span> : null}
+        <span className="marquee__copy"><span ref={textRef} className="marquee__text">{text}</span></span>
+        {scrolling ? <span className="marquee__copy marquee__copy--clone" aria-hidden="true"><span className="marquee__text">{text}</span></span> : null}
       </span>
     </span>
   );
