@@ -50,7 +50,7 @@ function transformTranslateY(transform: string) {
 function OverflowMarquee({ text, play = true }: { text: string; play?: boolean }) {
   const viewportRef = useRef<HTMLSpanElement | null>(null);
   const textRef = useRef<HTMLSpanElement | null>(null);
-  const [metrics, setMetrics] = useState({ overflowing: false, distance: 0, duration: 0 });
+  const [metrics, setMetrics] = useState({ overflowing: false, duration: 0 });
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
@@ -63,17 +63,14 @@ function OverflowMarquee({ text, play = true }: { text: string; play?: boolean }
       animationFrame = requestAnimationFrame(() => {
         const textWidth = content.getBoundingClientRect().width;
         const overflowing = Math.ceil(textWidth) > viewport.clientWidth + 1;
-        // Keep the fraction: each loop must travel exactly one text + gap, or the jump back to
-        // the start lands a sub-pixel off and the text visibly blinks at the seam.
-        const distance = textWidth + MARQUEE_GAP;
-        const duration = distance / MARQUEE_SPEED;
+        // Only the speed is measured here. The distance is -50% of the track in CSS, so it always
+        // matches where the copy is laid out, even when fonts or sizes change mid-loop.
+        const duration = (textWidth + MARQUEE_GAP) / MARQUEE_SPEED;
 
         setMetrics((current) => (
-          current.overflowing === overflowing
-          && current.distance === distance
-          && current.duration === duration
+          current.overflowing === overflowing && current.duration === duration
             ? current
-            : { overflowing, distance, duration }
+            : { overflowing, duration }
         ));
       });
     };
@@ -89,10 +86,7 @@ function OverflowMarquee({ text, play = true }: { text: string; play?: boolean }
     };
   }, [text]);
 
-  const style = {
-    '--marquee-offset': `-${metrics.distance}px`,
-    '--marquee-duration': `${metrics.duration}s`,
-  } as CSSProperties;
+  const style = { '--marquee-duration': `${metrics.duration}s` } as CSSProperties;
 
   return (
     <span

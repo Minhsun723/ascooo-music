@@ -269,10 +269,13 @@ h1, h2, h3 { font-family: var(--font-display); letter-spacing: -.035em; }
 .marquee, .now-playing__meta h1, .now-playing__byline,.player-track__copy strong, .player-track__copy small { padding-block: .2em; margin-block: -.2em; }
 .player-track__copy small { margin-top: calc(3px - .2em); }
 .marquee__track { display: flex; width: max-content; min-width: 0; gap: 32px; white-space: nowrap; }
-.marquee[data-overflow="true"][data-play="true"] .marquee__track { animation: marquee-scroll var(--marquee-duration) linear 1s infinite; will-change: transform; }
+/* The trailing padding repeats the gap, so the track is two identical halves and -50% lands the
+   copy exactly where the original started. The keyframes are static (explicit from, no var()), so no
+   JS measurement can drift from the layout and the browser has nothing to re-resolve mid-loop. */
+.marquee[data-overflow="true"][data-play="true"] .marquee__track { padding-inline-end: 32px; animation: marquee-scroll var(--marquee-duration) linear 1s infinite; will-change: transform; }
 .marquee__text { display: block; flex: none; width: max-content; }
 .marquee[data-overflow="true"]:not([data-play="true"]) { mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%); }
-@keyframes marquee-scroll { to { transform: translate3d(var(--marquee-offset), 0, 0); } }
+@keyframes marquee-scroll { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(-50%, 0, 0); } }
 .player-bar__center { min-width: 0; display: grid; justify-items: center; gap: 4px; }
 .core-controls { display: flex; align-items: center; justify-content: center; gap: 7px; }
 .core-controls .icon-button { width: 35px; height: 35px; }
