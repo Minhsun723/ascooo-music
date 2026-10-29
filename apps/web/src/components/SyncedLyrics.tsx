@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import gsap from 'gsap';
-import { activeIndex, withInterludes, type LyricLine } from '../lib/lrc';
+import { activeIndex, splitBackground, withInterludes, type LyricLine, type LyricWord } from '../lib/lrc';
 import { getAudio, getPlaybackTime } from '../store/player';
 
 const USER_SCROLL_IDLE = 2600;
@@ -20,28 +20,37 @@ interface WordTimeline {
   index: number;
 }
 
-/** One paused timeline per active line; the ticker scrubs it to the audio clock, so seeking just works. */
-function buildWordTimeline(line: LyricLine, index: number, words: HTMLElement[], reduce: boolean): WordTimeline {
+/** Held notes swell and glow; only they carry the glow filter, so the rest of the line paints without one. */
+const isHeld = (word: LyricWord) => word.end - word.time >= 1 && word.text.trim().length <= 10;
+
+/**
+ * One paused timeline per active line; the ticker scrubs it to the audio clock, so seeking just works.
+ * `sung` lists the line's words in the order they're rendered, which `words` and `glows` follow.
+ */
+function buildWordTimeline(line: LyricLine, sung: LyricWord[], index: number, words: HTMLElement[], glows: HTMLElement[], reduce: boolean): WordTimeline {
   // A line sung before (seeking back) keeps its words' last inline state, and the tweens below
   // don't render until the playhead reaches them, so unsung words would show already lit.
-  gsap.killTweensOf(words);
-  gsap.set(words, { '--p': 0, '--glow': 0, yPercent: 0, scale: 1 });
+  gsap.killTweensOf([...words, ...glows]);
+  gsap.set([...words, ...glows], { '--p': 0 });
+  gsap.set(words, { '--glow': 0, yPercent: 0, scale: 1 });
 
-  const tl = gsap.timeline({ paused: true });
+  // GSAP's default force3D lifts a word onto its own layer only while it moves, and every lift and
+  // drop re-rasterizes the rest of the line, which costs more with each row the line wraps to.
+  const tl = gsap.timeline({ paused: true, defaults: { force3D: false } });
   const base = Math.min(line.time, line.words?.[0]?.time ?? line.time);
 
-  line.words?.forEach((word, index) => {
+  sung.forEach((word, index) => {
     const el = words[index];
     if (!el) return;
     const start = Math.max(0, word.time - base);
     const duration = Math.max(0.05, word.end - word.time);
 
-    tl.fromTo(el, { '--p': 0 }, { '--p': 1, duration, ease: 'none', immediateRender: false }, start);
+    tl.fromTo(glows[index] ? [el, glows[index]] : el, { '--p': 0 }, { '--p': 1, duration, ease: 'none', immediateRender: false }, start);
     if (reduce) return;
     tl.fromTo(el, { yPercent: 0 }, { yPercent: -6, duration: Math.max(0.4, duration), ease: 'power2.out', immediateRender: false }, start);
 
     // Held notes swell and glow, then settle back.
-    if (duration >= 1 && word.text.trim().length <= 10) {
+    if (isHeld(word)) {
       const rise = duration * 0.55;
       tl.fromTo(el, { '--glow': 0, scale: 1 }, { '--glow': 1, scale: 1.06, duration: rise, ease: 'sine.out', immediateRender: false }, start);
       tl.fromTo(el, { '--glow': 1, scale: 1.06 }, { '--glow': 0, scale: 1, duration: duration - rise + 0.3, ease: 'sine.inOut', immediateRender: false }, start + rise);
@@ -56,12 +65,36 @@ function splitTrailingSpace(text: string) {
   return [body, text.slice(body.length)] as const;
 }
 
+/** The sung words, or with `glow` their copy underneath; both wrap the same, so the glow lines up. */
+function timedWords(words: LyricWord[], glow = false) {
+  return words.map((word, wordIndex) => {
+    const [body, trailing] = splitTrailingSpace(word.text);
+    const className = glow ? undefined : isHeld(word) ? 'lyrics-word lyrics-word--held' : 'lyrics-word';
+    return (
+      <Fragment key={`${word.time}-${wordIndex}`}>
+        <span className={className}>{body}</span>{trailing}
+      </Fragment>
+    );
+  });
+}
+
+/** A row of sung words; on the active line, the glow copy goes underneath. */
+function timedRow(words: LyricWord[], active: boolean, className = 'lyrics-lines__text lyrics-lines__text--timed') {
+  return (
+    <span className={className} aria-hidden="true">
+      {active ? <span className="lyrics-lines__glow">{timedWords(words, true)}</span> : null}
+      {timedWords(words)}
+    </span>
+  );
+}
+
 export function SyncedLyrics({ lines: sourceLines, panelRef, onSeek }: {
   lines: LyricLine[];
   panelRef: RefObject<HTMLDivElement | null>;
   onSeek: (time: number) => void;
 }) {
   const lines = useMemo(() => withInterludes(sourceLines), [sourceLines]);
+  const vocals = useMemo(() => lines.map((line) => splitBackground(line.words ?? [])), [lines]);
   const [active, setActive] = useState(() => activeIndex(lines, getPlaybackTime()));
   const activeRef = useRef(active);
   const lineRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -99,12 +132,12 @@ export function SyncedLyrics({ lines: sourceLines, panelRef, onSeek }: {
     });
   };
 
-  /** Only the interlude being played takes room in the list; the rest stay collapsed. */
-  const openInterlude = (index: number) => {
-    lines.forEach((line, i) => {
-      const el = lineRefs.current[i];
-      if (line.interlude && el) el.toggleAttribute('data-open', i === index);
-    });
+  /**
+   * Interludes and background vocals take room in the list only on the active row. Set here rather
+   * than rendered, so `follow` can measure the rows before the layout changes.
+   */
+  const openActive = (index: number) => {
+    lineRefs.current.forEach((el, i) => el?.toggleAttribute('data-open', i === index));
   };
 
   /**
@@ -215,7 +248,7 @@ export function SyncedLyrics({ lines: sourceLines, panelRef, onSeek }: {
       if (text) gsap.to(text, { scale, duration: i === active ? 0.7 : 0.5, ease: i === active ? 'back.out(1.6)' : 'power2.out', overwrite: 'auto' });
     });
 
-    follow(!hasFollowedRef.current || reduce, () => openInterlude(active));
+    follow(!hasFollowedRef.current || reduce, () => openActive(active));
     hasFollowedRef.current = true;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, lines]);
@@ -226,16 +259,18 @@ export function SyncedLyrics({ lines: sourceLines, panelRef, onSeek }: {
     const el = lineRefs.current[active];
     if (!line?.words?.length || !el) return;
     const words = Array.from(el.querySelectorAll<HTMLElement>('.lyrics-word'));
-    const built = buildWordTimeline(line, active, words, prefersReducedMotion());
+    const glows = Array.from(el.querySelectorAll<HTMLElement>('.lyrics-lines__glow > span'));
+    const { lead, background } = vocals[active];
+    const built = buildWordTimeline(line, [...lead, ...background], active, words, glows, prefersReducedMotion());
     built.tl.time(gsap.utils.clamp(0, built.tl.duration(), getPlaybackTime() - built.base));
     wordTimelineRef.current = built;
 
     return () => {
       built.tl.kill();
       if (wordTimelineRef.current === built) wordTimelineRef.current = null;
-      gsap.to(words, { yPercent: 0, scale: 1, '--glow': 0, duration: 0.5, ease: 'power2.out', overwrite: true });
+      gsap.to(words, { yPercent: 0, scale: 1, '--glow': 0, duration: 0.5, ease: 'power2.out', overwrite: true, force3D: false });
     };
-  }, [active, lines]);
+  }, [active, lines, vocals]);
 
   // Pause auto-follow while the listener scrolls by hand; drift back after a moment.
   useEffect(() => {
@@ -292,19 +327,15 @@ export function SyncedLyrics({ lines: sourceLines, panelRef, onSeek }: {
             <span className="lyrics-lines__text lyrics-interlude" aria-hidden="true">
               <span className="lyrics-interlude__dots"><i /><i /><i /></span>
             </span>
+          ) : line.words?.length ? (
+            <>
+              {timedRow(vocals[index].lead, index === active)}
+              {vocals[index].background.length
+                ? timedRow(vocals[index].background, index === active, 'lyrics-lines__text lyrics-lines__text--timed lyrics-lines__bg')
+                : null}
+            </>
           ) : (
-            <span className={`lyrics-lines__text${line.words?.length ? ' lyrics-lines__text--timed' : ''}`} aria-hidden="true">
-              {line.words?.length
-                ? line.words.map((word, wordIndex) => {
-                    const [body, trailing] = splitTrailingSpace(word.text);
-                    return (
-                      <Fragment key={`${word.time}-${wordIndex}`}>
-                        <span className="lyrics-word">{body}</span>{trailing}
-                      </Fragment>
-                    );
-                  })
-                : line.text || '♪'}
-            </span>
+            <span className="lyrics-lines__text" aria-hidden="true">{line.text || '♪'}</span>
           )}
         </button>
       ))}

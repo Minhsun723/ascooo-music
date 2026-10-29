@@ -2,6 +2,7 @@ export interface LyricWord {
   time: number;
   end: number;
   text: string;
+  background?: boolean; // TTML ttm:role="x-bg": backing vocals, sung around the lead
 }
 
 export interface LyricLine {
@@ -53,6 +54,16 @@ function ttmlTime(value: string | null): number | null {
 
 const normalizedText = (value: string | null | undefined) => (value ?? '').replace(/[\t\r\n ]+/g, ' ').trim();
 
+const TTML_METADATA = 'http://www.w3.org/ns/ttml#metadata';
+
+/** Apple puts ttm:role="x-bg" on a span wrapping the background words (or on a lone word itself). */
+function isBackground(span: Element, paragraph: Element) {
+  for (let element: Element | null = span; element && element !== paragraph; element = element.parentElement) {
+    if (element.getAttributeNS(TTML_METADATA, 'role') === 'x-bg') return true;
+  }
+  return false;
+}
+
 /**
  * Apple times its TTML against the stereo master. A Dolby Atmos mix can start later, so the file
  * carries `<audio role="spatial" lyricOffset="\u2026"/>`: the seconds to add when the spatial mix plays.
@@ -91,7 +102,7 @@ export function parseTtml(content: string, { spatial = false } = {}): LyricLine[
       for (let sibling = span.nextSibling; sibling?.nodeType === Node.TEXT_NODE; sibling = sibling.nextSibling) {
         text += sibling.textContent ?? '';
       }
-      if (text) words.push({ time: Math.max(0, time), end: Math.max(time, end), text });
+      if (text) words.push({ time: Math.max(0, time), end: Math.max(time, end), text, ...(isBackground(span, paragraph) ? { background: true } : {}) });
     }
 
     const text = normalizedText(paragraph.textContent);
@@ -107,6 +118,37 @@ export function parseTtml(content: string, { spatial = false } = {}): LyricLine[
     });
   }
   return lines.sort((a, b) => a.time - b.time);
+}
+
+const OPENING = '(（';
+const CLOSING = ')）';
+
+/** Whether `text` is one parenthesized group: "(I'm slipping away)", not "(oh) (yeah)". */
+function isParenthesized(text: string) {
+  const chars = Array.from(text.trim());
+  let depth = 0;
+  for (const [index, char] of chars.entries()) {
+    if (OPENING.includes(char)) depth += 1;
+    else if (CLOSING.includes(char)) depth -= 1;
+    if (depth <= 0 && index < chars.length - 1) return false;
+  }
+  return chars.length > 1 && depth === 0;
+}
+
+/**
+ * A TTML line's lead words and its background vocals. Apple wraps the background in parentheses
+ * inside its first and last words; given a row of its own, it no longer needs them.
+ */
+export function splitBackground(words: LyricWord[]) {
+  const lead = words.filter((word) => !word.background);
+  const background = words.filter((word) => word.background);
+  // A line sung only in the background has no lead to sit under, so it stays as written.
+  if (!lead.length) return { lead: words, background: [] };
+  if (!isParenthesized(background.map((word) => word.text).join(''))) return { lead, background };
+  const stripped = background.map((word) => ({ ...word }));
+  stripped[0].text = stripped[0].text.replace(/^(\s*)[(（]/, '$1');
+  stripped[stripped.length - 1].text = stripped[stripped.length - 1].text.replace(/[)）](\s*)$/, '$1');
+  return { lead, background: stripped };
 }
 
 /** Plain (unsynced) lyrics → lines, dropping any stray LRC metadata tags. */
