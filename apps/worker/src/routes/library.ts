@@ -45,6 +45,10 @@ const TRACK_SORTS: Record<string, string> = {
   duration: 't.duration DESC',
 };
 
+/** Cover of an album credited to `ar`, for an artist without a photo. */
+const ALBUM_ARTWORK_OF_ARTIST = `(SELECT al.artwork_id FROM album_artists ala JOIN albums al ON al.id = ala.album_id
+  WHERE ala.artist_id = ar.id AND al.artwork_id IS NOT NULL LIMIT 1)`;
+
 const ALBUM_SORTS: Record<string, string> = {
   added: 'added_at DESC',
   title: 'al.title COLLATE NOCASE ASC',
@@ -108,9 +112,9 @@ catalog.get('/home', anonymousEdgeCache, async (c) => {
          SELECT id, album_id, artist_id, size, duration, codec, has_lyrics
          FROM tracks WHERE status = 'ready' AND visible = 1
        ), library_artists AS (
-         SELECT artist_id FROM visible_tracks WHERE artist_id IS NOT NULL
+         SELECT ta.artist_id FROM visible_tracks vt JOIN track_artists ta ON ta.track_id = vt.id
          UNION
-         SELECT al.artist_id FROM visible_tracks vt JOIN albums al ON al.id = vt.album_id
+         SELECT ala.artist_id FROM visible_tracks vt JOIN album_artists ala ON ala.album_id = vt.album_id
        )
        SELECT COUNT(*) AS tracks, COALESCE(SUM(size),0) AS bytes, COALESCE(SUM(duration),0) AS seconds,
         COALESCE(SUM(CASE WHEN codec IN ('flac','alac','wav') THEN 1 ELSE 0 END), 0) AS lossless,
@@ -179,10 +183,11 @@ catalog.get('/albums/:id', anonymousEdgeCache, async (c) => {
       `SELECT ${TRACK_SELECT} FROM tracks t ${TRACK_JOINS} WHERE t.album_id = ? AND t.status = 'ready' AND t.visible = 1
        ORDER BY COALESCE(t.disc_no, 1), COALESCE(t.track_no, 9999), t.title`,
     ).bind(uid, id),
-    db.prepare(`SELECT ${ALBUM_SELECT} ${ALBUM_FROM} WHERE al.artist_id = ? AND al.id != ? GROUP BY al.id ORDER BY al.year DESC LIMIT 12`).bind(
-      album.artist_id,
-      id,
-    ),
+    db.prepare(
+      `SELECT ${ALBUM_SELECT} ${ALBUM_FROM}
+       WHERE al.id IN (SELECT album_id FROM album_artists WHERE artist_id = ?) AND al.id != ?
+       GROUP BY al.id ORDER BY al.year DESC LIMIT 12`,
+    ).bind(album.artist_id, id),
     db.prepare(
       `SELECT ${mostCommon('copyright')}, ${mostCommon('release_date')}, ${mostCommon('genre', genreOf('tracks'))}`,
     ).bind(id),
@@ -207,19 +212,18 @@ catalog.get('/artists', anonymousEdgeCache, async (c) => {
   const offset = int(c.req.query('offset'), 0, 1e9);
   const { results } = await c.env.DB.prepare(
     `WITH artist_tracks AS (
-       SELECT t.artist_id, t.id AS track_id
-       FROM tracks t
-       WHERE t.artist_id IS NOT NULL AND t.status = 'ready' AND t.visible = 1
+       SELECT ta.artist_id, t.id AS track_id
+       FROM track_artists ta JOIN tracks t ON t.id = ta.track_id
+       WHERE t.status = 'ready' AND t.visible = 1
        UNION
-       SELECT al.artist_id, t.id AS track_id
-       FROM tracks t JOIN albums al ON al.id = t.album_id
+       SELECT ala.artist_id, t.id AS track_id
+       FROM album_artists ala JOIN tracks t ON t.album_id = ala.album_id
        WHERE t.status = 'ready' AND t.visible = 1
      ), artist_counts AS (
        SELECT artist_id, COUNT(*) AS track_count FROM artist_tracks GROUP BY artist_id
      )
      SELECT ar.id, COALESCE(ar.display_name, ar.name) AS name, ac.track_count,
-       COALESCE(ar.artwork_id,
-         (SELECT al.artwork_id FROM albums al WHERE al.artist_id = ar.id AND al.artwork_id IS NOT NULL LIMIT 1)) AS artwork_id
+       COALESCE(ar.artwork_id, ${ALBUM_ARTWORK_OF_ARTIST}) AS artwork_id
      FROM artist_counts ac JOIN artists ar ON ar.id = ac.artist_id
      ORDER BY COALESCE(ar.display_name, ar.name) COLLATE NOCASE LIMIT ? OFFSET ?`,
   )
@@ -230,21 +234,22 @@ catalog.get('/artists', anonymousEdgeCache, async (c) => {
   });
 });
 
+/** Songs an artist is credited on, and every song on the albums they are credited on. */
 const ARTIST_TRACK_IDS = `artist_track_ids AS (
-  SELECT t.id FROM tracks t
-  WHERE t.artist_id = ? AND t.status = 'ready' AND t.visible = 1
+  SELECT t.id FROM track_artists ta CROSS JOIN tracks t ON t.id = ta.track_id
+  WHERE ta.artist_id = ? AND t.status = 'ready' AND t.visible = 1
   UNION
-  SELECT t.id FROM albums artist_albums CROSS JOIN tracks t ON t.album_id = artist_albums.id
-  WHERE artist_albums.artist_id = ? AND t.status = 'ready' AND t.visible = 1
+  SELECT t.id FROM album_artists ala CROSS JOIN tracks t ON t.album_id = ala.album_id
+  WHERE ala.artist_id = ? AND t.status = 'ready' AND t.visible = 1
 )`;
 
 async function findArtist(db: D1Database, id: number) {
   const artist = await db.prepare(
     `SELECT ar.id, COALESCE(ar.display_name, ar.name) AS name, ar.artwork_id FROM artists ar WHERE ar.id = ? AND (
-       EXISTS (SELECT 1 FROM tracks t
-               WHERE t.artist_id = ar.id AND t.status = 'ready' AND t.visible = 1)
-       OR EXISTS (SELECT 1 FROM albums al CROSS JOIN tracks t ON t.album_id = al.id
-                  WHERE al.artist_id = ar.id AND t.status = 'ready' AND t.visible = 1)
+       EXISTS (SELECT 1 FROM track_artists ta CROSS JOIN tracks t ON t.id = ta.track_id
+               WHERE ta.artist_id = ar.id AND t.status = 'ready' AND t.visible = 1)
+       OR EXISTS (SELECT 1 FROM album_artists ala CROSS JOIN tracks t ON t.album_id = ala.album_id
+                  WHERE ala.artist_id = ar.id AND t.status = 'ready' AND t.visible = 1)
      )`,
   ).bind(id).first<{ id: number; name: string; artwork_id: string | null }>();
   if (!artist) throw new HTTPException(404, { message: '找不到這位歌手' });
@@ -257,7 +262,11 @@ catalog.get('/artists/:id', anonymousEdgeCache, async (c) => {
   const db = c.env.DB;
   const artist = await findArtist(db, id);
   const [albums, top] = await db.batch([
-    db.prepare(`SELECT ${ALBUM_SELECT} ${ALBUM_FROM} WHERE al.artist_id = ? GROUP BY al.id ORDER BY al.year DESC, al.title`).bind(id),
+    db.prepare(
+      `SELECT ${ALBUM_SELECT} ${ALBUM_FROM}
+       WHERE al.id IN (SELECT album_id FROM album_artists WHERE artist_id = ?)
+       GROUP BY al.id ORDER BY al.year DESC, al.title`,
+    ).bind(id),
     db.prepare(
       `WITH ${ARTIST_TRACK_IDS}
        SELECT ${TRACK_SELECT}, COALESCE(SUM(ps.play_count), 0) AS plays
@@ -320,15 +329,16 @@ catalog.get('/search', anonymousEdgeCache, async (c) => {
     db.prepare(
       `SELECT ${ALBUM_SELECT} ${ALBUM_FROM}
        WHERE al.search_key LIKE ?1 ESCAPE '\\' OR al.search_key LIKE ?2 ESCAPE '\\'
-         OR ar.search_key LIKE ?1 ESCAPE '\\' OR ar.search_key LIKE ?2 ESCAPE '\\'
+         OR EXISTS (SELECT 1 FROM album_artists ala JOIN artists sar ON sar.id = ala.artist_id
+                    WHERE ala.album_id = al.id AND (sar.search_key LIKE ?1 ESCAPE '\\' OR sar.search_key LIKE ?2 ESCAPE '\\'))
        GROUP BY al.id LIMIT 20`,
     ).bind(...contains),
     db.prepare(
       `SELECT ar.id, COALESCE(ar.display_name, ar.name) AS name,
-         COALESCE(ar.artwork_id,
-           (SELECT al.artwork_id FROM albums al WHERE al.artist_id = ar.id AND al.artwork_id IS NOT NULL LIMIT 1)) AS artwork_id
+         COALESCE(ar.artwork_id, ${ALBUM_ARTWORK_OF_ARTIST}) AS artwork_id
        FROM artists ar WHERE (ar.search_key LIKE ?1 ESCAPE '\\' OR ar.search_key LIKE ?2 ESCAPE '\\')
-         AND EXISTS (SELECT 1 FROM tracks t WHERE t.artist_id = ar.id AND t.status = 'ready' AND t.visible = 1)
+         AND EXISTS (SELECT 1 FROM track_artists ta JOIN tracks t ON t.id = ta.track_id
+                     WHERE ta.artist_id = ar.id AND t.status = 'ready' AND t.visible = 1)
        LIMIT 12`,
     ).bind(...contains),
   ]);

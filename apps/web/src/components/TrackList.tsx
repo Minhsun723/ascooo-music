@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from 'r
 import { useMatch, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import type { Track } from '../api/types';
-import { formatTime, isDolbyAtmos, qualityLabel } from '../lib/format';
+import { formatTime, isDolbyAtmos, qualityLabel, trackArtists } from '../lib/format';
 import { useIsLiked, useLikes } from '../store/likes';
 import { useCurrentTrack, usePlayer } from '../store/player';
 import { useSession } from '../store/session';
@@ -75,7 +75,8 @@ function TrackMenu({ track, onRemove }: { track: Track; onRemove?: () => void })
   const albumMatch = useMatch('/album/:id');
   const showGoToAlbum = track.albumId !== null && albumMatch?.params.id !== String(track.albumId);
   const artistMatch = useMatch('/artist/:id/*');
-  const showGoToArtist = track.artistId !== null && artistMatch?.params.id !== String(track.artistId);
+  const credited = trackArtists(track);
+  const goToArtists = credited.filter((artist) => artistMatch?.params.id !== String(artist.id));
 
   useLayoutEffect(() => {
     const details = detailsRef.current;
@@ -133,11 +134,11 @@ function TrackMenu({ track, onRemove }: { track: Track; onRemove?: () => void })
             <IconDisc size={18} />前往專輯
           </button>
         ) : null}
-        {showGoToArtist ? (
-          <button type="button" onClick={(event) => { closeMenu(event); navigate(`/artist/${track.artistId}`, { state: { pageTitle: track.artist } }); }}>
-            <IconMic size={18} />前往藝人
+        {goToArtists.map((artist) => (
+          <button key={artist.id} type="button" onClick={(event) => { closeMenu(event); navigate(`/artist/${artist.id}`, { state: { pageTitle: artist.name } }); }}>
+            <IconMic size={18} />{credited.length > 1 ? `前往 ${artist.name}` : '前往藝人'}
           </button>
-        ) : null}
+        ))}
         {playlists.length ? <span className="menu-popover__label">加入播放清單</span> : null}
         {playlists.slice(0, 8).map((playlist) => {
           const added = playlist.trackIds?.includes(track.id) ?? false;

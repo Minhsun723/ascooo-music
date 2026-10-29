@@ -5,7 +5,7 @@ import { requireAdmin, requireSessionAdmin } from '../lib/auth';
 import { ARTWORK_ASSET_VERSION, ARTWORK_SIZES, artworkObjectKey, isArtworkSize, type ArtworkSize } from '../lib/artwork';
 import { type AlternateSource, aac51Root, pairAac51 } from '../lib/aac51';
 import { AUDIO_EXTENSIONS, type AudioMetadata, METADATA_VERSION, extOf, extractMetadata, guessFromFilename } from '../lib/metadata';
-import { artistSearchKey, searchKey, trackSearchKey } from '../lib/search';
+import { artistSearchKey, parseAliases, searchKey, trackSearchKey } from '../lib/search';
 import { type DavEntry, WebDAV, normalizePath, parentDir } from '../lib/webdav';
 
 /**
@@ -262,65 +262,65 @@ interface ImportedTrack {
   trackArtworkId: string | null;
   folderArtworkId: string | null;
   aac51?: AlternateSource | null;
-  /** Apple identity of the album artist, taken from the album's own tracks by that artist. */
-  albumArtistApple?: { artistId: string; artistName: string } | null;
+  /** Every artist Apple credits on the song, in credit order. Absent: the track is filed under its artist tag. */
+  artists?: ImportedArtist[] | null;
+  /** The album's own artists. Absent: the album artist tag. */
+  albumArtists?: ImportedArtist[] | null;
   /** Apple's genre, or the tag translated through Apple's names; metadata.genre keeps the tag. */
   displayGenre?: { zh: string | null; en: string } | null;
   /** Local-sync hash of this payload; stored so an unchanged track is not uploaded again. */
   syncHash?: string | null;
 }
 
-interface ArtistEnrichment {
-  appleMusicId: string;
-  appleMusicName: string;
-  displayName: string | null;
+interface ImportedArtist {
+  appleId: string;
+  /** The spelling the whole library agrees on; see attachCredits in scripts/local-sync.ts. */
+  name: string;
+  aliases: string[];
   artworkId: string | null;
 }
 
+/** An artist known only by a tag; equal names (ignoring case) share one row. */
+async function upsertArtist(db: D1Database, name: string): Promise<{ id: number }> {
+  const row = await db.prepare(
+    `INSERT INTO artists (name, search_key) VALUES (?1, ?2)
+     ON CONFLICT(name) DO UPDATE SET name = artists.name
+     RETURNING id, name, display_name, aliases, search_key`,
+  ).bind(name, artistSearchKey(name)).first<ArtistRow>();
+  if (!row) throw new Error(`無法建立藝人：${name}`);
+  return syncArtistSearchKey(db, row);
+}
+
 /**
- * Apple artist IDs identify the first/primary artist on a song, so the ID by
- * itself is not unique for collaborations. Pair it with Apple's full artist
- * credit: aliases such as "Riria." / "りりあ。" then converge, while
- * "9Lana" / "9Lana & AKUGETSU" remain separate artist pages.
+ * An artist Apple credits, known by their own Apple ID. The first sync that
+ * credits them adopts the row already holding their name, so links to the
+ * page keep working; a combined credit's row ("Shawn Mendes & Camila Cabello")
+ * is never adopted, and /finalize drops it once no track uses it.
  */
-async function upsertArtist(
-  db: D1Database,
-  name: string,
-  enrichment: ArtistEnrichment | null = null,
-): Promise<{ id: number }> {
-  if (enrichment) {
-    const existing = await db.prepare(
-      `UPDATE artists
-       SET display_name = COALESCE(?3, display_name),
-         artwork_id = COALESCE(?4, artwork_id)
-       WHERE apple_music_id = ?1 AND apple_music_name = ?2 COLLATE NOCASE
-       RETURNING id, name, display_name, search_key`,
-    ).bind(
-      enrichment.appleMusicId,
-      enrichment.appleMusicName,
-      enrichment.displayName,
-      enrichment.artworkId,
-    ).first<ArtistRow>();
-    if (existing) return syncArtistSearchKey(db, existing);
-  }
+async function upsertAppleArtist(db: D1Database, artist: ImportedArtist): Promise<{ id: number }> {
+  const name = nfc(artist.name.trim().slice(0, 500));
+  const aliases = [...new Set(artist.aliases.map((alias) => nfc(alias.trim().slice(0, 500))).filter(Boolean))].slice(0, 20);
+  const aliasesJson = aliases.length ? JSON.stringify(aliases) : null;
+  const existing = await db.prepare(
+    `UPDATE artists
+     SET apple_artist_id = ?1, display_name = NULLIF(?2, name COLLATE BINARY), aliases = ?3,
+       artwork_id = COALESCE(?4, artwork_id)
+     WHERE id = COALESCE(
+       (SELECT id FROM artists WHERE apple_artist_id = ?1),
+       (SELECT id FROM artists
+        WHERE apple_artist_id IS NULL AND (name = ?2 COLLATE NOCASE OR display_name = ?2 COLLATE NOCASE)
+        ORDER BY name = ?2 COLLATE NOCASE DESC, id LIMIT 1)
+     )
+     RETURNING id, name, display_name, aliases, search_key`,
+  ).bind(artist.appleId, name, aliasesJson, artist.artworkId).first<ArtistRow>();
+  if (existing) return syncArtistSearchKey(db, existing);
 
   const row = await db.prepare(
-    `INSERT INTO artists (name, display_name, apple_music_id, apple_music_name, artwork_id, search_key)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-     ON CONFLICT DO UPDATE SET
-       display_name = COALESCE(excluded.display_name, artists.display_name),
-       apple_music_id = COALESCE(artists.apple_music_id, excluded.apple_music_id),
-       apple_music_name = COALESCE(artists.apple_music_name, excluded.apple_music_name),
-       artwork_id = COALESCE(excluded.artwork_id, artists.artwork_id)
-     RETURNING id, name, display_name, search_key`,
-  ).bind(
-    name,
-    enrichment?.displayName ?? null,
-    enrichment?.appleMusicId ?? null,
-    enrichment?.appleMusicName ?? null,
-    enrichment?.artworkId ?? null,
-    artistSearchKey(name, enrichment?.displayName),
-  ).first<ArtistRow>();
+    `INSERT INTO artists (name, apple_artist_id, aliases, artwork_id, search_key) VALUES (?1, ?2, ?3, ?4, ?5)
+     -- Another Apple artist already holds this exact name; the two share its page.
+     ON CONFLICT(name) DO UPDATE SET artwork_id = COALESCE(artists.artwork_id, excluded.artwork_id)
+     RETURNING id, name, display_name, aliases, search_key`,
+  ).bind(name, artist.appleId, aliasesJson, artist.artworkId, artistSearchKey(name, null, aliases)).first<ArtistRow>();
   if (!row) throw new Error(`無法建立藝人：${name}`);
   return syncArtistSearchKey(db, row);
 }
@@ -329,20 +329,43 @@ interface ArtistRow {
   id: number;
   name: string;
   display_name: string | null;
+  aliases: string | null;
   search_key: string | null;
 }
 
 /**
  * An upsert may land on an existing row whose stored name differs from the
- * one passed in (Apple aliases, NOCASE matches), so derive the key from the
+ * one passed in (adopted rows, NOCASE matches), so derive the key from the
  * row as stored. Only writes when the key actually changed.
  */
 async function syncArtistSearchKey(db: D1Database, row: ArtistRow): Promise<{ id: number }> {
-  const key = artistSearchKey(row.name, row.display_name);
+  const key = artistSearchKey(row.name, row.display_name, parseAliases(row.aliases));
   if (key !== row.search_key) {
     await db.prepare('UPDATE artists SET search_key = ? WHERE id = ?').bind(key, row.id).run();
   }
   return { id: row.id };
+}
+
+/** Replace the artists a track or album credits, in credit order. */
+function creditStatements(db: D1Database, table: 'track_artists' | 'album_artists', id: number, artists: { id: number }[]) {
+  const column = table === 'track_artists' ? 'track_id' : 'album_id';
+  return [
+    db.prepare(`DELETE FROM ${table} WHERE ${column} = ?`).bind(id),
+    db.prepare(`INSERT INTO ${table} (${column}, artist_id, position) SELECT ?, value, key FROM json_each(?)`)
+      .bind(id, JSON.stringify([...new Set(artists.map((artist) => artist.id))])),
+  ];
+}
+
+function validArtists(value: unknown): ImportedArtist[] | null {
+  if (value == null) return null;
+  if (!Array.isArray(value) || value.length > 50 || value.some((artist: ImportedArtist) =>
+    !artist || typeof artist.appleId !== 'string' || !/^\d+$/.test(artist.appleId) ||
+    typeof artist.name !== 'string' || !artist.name.trim() ||
+    !Array.isArray(artist.aliases) || artist.aliases.some((alias) => typeof alias !== 'string') ||
+    artist.artworkId !== null && !/^[a-f0-9]{40}$/.test(artist.artworkId))) {
+    throw new HTTPException(400, { message: '歌手資料格式錯誤' });
+  }
+  return value.length ? value as ImportedArtist[] : null;
 }
 
 function decodeBase64(value: string): Uint8Array {
@@ -506,10 +529,8 @@ sync.post('/import/track', async (c) => {
       throw new HTTPException(400, { message: 'Apple Music 配對資料格式錯誤' });
     }
   }
-  if (item.albumArtistApple && (!/^\d+$/.test(item.albumArtistApple.artistId) ||
-      typeof item.albumArtistApple.artistName !== 'string' || !item.albumArtistApple.artistName.trim())) {
-    throw new HTTPException(400, { message: '專輯歌手 Apple Music 資料格式錯誤' });
-  }
+  const credited = validArtists(item.artists);
+  const albumCredited = validArtists(item.albumArtists);
   if (item.displayGenre && (typeof item.displayGenre.en !== 'string' || !item.displayGenre.en.trim() ||
       item.displayGenre.zh !== null && typeof item.displayGenre.zh !== 'string')) {
     throw new HTTPException(400, { message: '曲風資料格式錯誤' });
@@ -529,30 +550,16 @@ sync.post('/import/track', async (c) => {
   const displayArtist = nfc(apple?.displayArtist?.trim().slice(0, 500)) || null;
   const genreZh = nfc(item.displayGenre?.zh?.trim().slice(0, 200)) || null;
   const genreEn = nfc(item.displayGenre?.en.trim().slice(0, 200)) || null;
-  const artistEnrichment = apple?.artistId && apple.artistName.trim()
-    ? {
-        appleMusicId: apple.artistId,
-        appleMusicName: apple.artistName.trim().slice(0, 500),
-        displayName: displayArtist,
-        artworkId: apple.artistArtworkId,
-      }
-    : null;
-  // Without it an alias album artist ("Riria.") misses the row its own tracks
-  // merged into through Apple ("りりあ。") and the album splits in two.
-  const albumArtistEnrichment = item.albumArtistApple
-    ? {
-        appleMusicId: item.albumArtistApple.artistId,
-        appleMusicName: item.albumArtistApple.artistName.trim().slice(0, 500),
-        displayName: null,
-        artworkId: null,
-      }
-    : null;
 
-  const artistRow = await upsertArtist(db, artist, artistEnrichment);
-  const albumArtistRow = albumArtist.toLowerCase() === artist.toLowerCase()
-    ? artistRow
-    : await upsertArtist(db, albumArtist, albumArtistEnrichment);
-  const album = await upsertAlbum(db, albumTitle, albumArtistRow!.id, meta.year);
+  const artistRows: { id: number }[] = [];
+  for (const credit of credited ?? []) artistRows.push(await upsertAppleArtist(db, credit));
+  if (!artistRows.length) artistRows.push(await upsertArtist(db, artist));
+  const albumArtistRows: { id: number }[] = [];
+  for (const credit of albumCredited ?? []) albumArtistRows.push(await upsertAppleArtist(db, credit));
+  if (!albumArtistRows.length) {
+    albumArtistRows.push(...albumArtist.toLowerCase() === artist.toLowerCase() ? artistRows : [await upsertArtist(db, albumArtist)]);
+  }
+  const album = await upsertAlbum(db, albumTitle, albumArtistRows[0].id, meta.year);
 
   // Display names survive a sync without an Apple match (COALESCE below), so
   // the search key has to be built from the values the row will end up with.
@@ -611,7 +618,7 @@ sync.post('/import/track', async (c) => {
     item.metadataError,
     title,
     artist,
-    artistRow!.id,
+    artistRows[0].id,
     album!.id,
     meta.trackNo ?? guess.trackNo ?? null,
     meta.discNo ?? null,
@@ -658,6 +665,10 @@ sync.post('/import/track', async (c) => {
         item.lyrics.format,
       )]
     : [db.prepare('DELETE FROM lyrics WHERE track_id = ?').bind(row!.id)];
+  statements.push(
+    ...creditStatements(db, 'track_artists', row!.id, artistRows),
+    ...creditStatements(db, 'album_artists', album!.id, albumArtistRows),
+  );
   const albumArtworkId = item.folderArtworkId ?? album!.artwork_id ?? item.trackArtworkId;
   if (albumArtworkId && albumArtworkId !== album!.artwork_id) {
     statements.push(db.prepare('UPDATE albums SET artwork_id = ? WHERE id = ?').bind(albumArtworkId, album!.id));
@@ -841,6 +852,8 @@ async function saveTrack(
           LRC_SYNCED.test(lyrics.content) ? 'lrc' : 'plain',
         )
       : db.prepare('DELETE FROM lyrics WHERE track_id = ?').bind(t.id),
+    ...creditStatements(db, 'track_artists', t.id, [artistRow]),
+    ...creditStatements(db, 'album_artists', album!.id, [albumArtistRow]),
   ];
   if (albumArt && albumArt !== album!.artwork_id) {
     stmts.push(db.prepare('UPDATE albums SET artwork_id = ? WHERE id = ?').bind(albumArt, album!.id));
@@ -883,7 +896,9 @@ sync.post('/finalize', async (c) => {
     db.prepare(
       `DELETE FROM artists
        WHERE NOT EXISTS (SELECT 1 FROM tracks WHERE tracks.artist_id = artists.id)
-         AND NOT EXISTS (SELECT 1 FROM albums WHERE albums.artist_id = artists.id)`,
+         AND NOT EXISTS (SELECT 1 FROM albums WHERE albums.artist_id = artists.id)
+         AND NOT EXISTS (SELECT 1 FROM track_artists WHERE track_artists.artist_id = artists.id)
+         AND NOT EXISTS (SELECT 1 FROM album_artists WHERE album_artists.artist_id = artists.id)`,
     ),
     db.prepare(
       `DELETE FROM artworks

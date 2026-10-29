@@ -3,9 +3,36 @@
 /** Apple's Traditional Chinese genre, else its English one, else the file's own tag. */
 export const genreOf = (table: string) => `COALESCE(${table}.genre_zh, ${table}.genre_en, NULLIF(${table}.genre, ''))`;
 
+/** Every artist a track or album credits, in credit order, as a JSON array of {id, name}. */
+const creditsOf = (table: 'track_artists' | 'album_artists', column: string, id: string) => `(
+  SELECT json_group_array(json_object('id', credit.id, 'name', credit.name)) FROM (
+    SELECT car.id, COALESCE(car.display_name, car.name) AS name
+    FROM ${table} cr JOIN artists car ON car.id = cr.artist_id
+    WHERE cr.${column} = ${id} ORDER BY cr.position
+  ) credit
+)`;
+
+interface ArtistCredit {
+  id: number;
+  name: string;
+}
+
+/** A row nobody credited yet (written by an older Worker) falls back to its one artist. */
+function parseCredits(json: string | null, fallbackId: number | null, fallbackName: string): ArtistCredit[] {
+  const credits = json ? JSON.parse(json) as ArtistCredit[] : [];
+  return credits.length || fallbackId === null ? credits : [{ id: fallbackId, name: fallbackName }];
+}
+
+/** "A", "A & B", "A, B & C", the way Apple Music writes a credit. */
+function creditLine(credits: ArtistCredit[]): string {
+  const names = credits.map((credit) => credit.name);
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} & ${names[names.length - 1]}` : names[0] ?? '';
+}
+
 export const TRACK_SELECT = `
   t.id, COALESCE(t.display_title, t.title) AS title,
   COALESCE(t.display_artist, t.artist) AS artist,
+  ${creditsOf('track_artists', 'track_id', 't.id')} AS artists,
   t.artist_id, t.album_id, al.title AS album,
   COALESCE(aa.display_name, aa.name) AS album_artist,
   t.track_no, t.disc_no, t.year, ${genreOf('t')} AS genre, t.duration, t.codec, t.bitrate, t.sample_rate,
@@ -25,6 +52,7 @@ export interface TrackRow {
   id: number;
   title: string;
   artist: string | null;
+  artists: string | null;
   artist_id: number | null;
   album_id: number | null;
   album: string | null;
@@ -47,10 +75,13 @@ export interface TrackRow {
 }
 
 export function toTrack(r: TrackRow) {
+  const artist = r.artist ?? r.album_artist ?? '未知歌手';
   return {
     id: r.id,
     title: r.title,
-    artist: r.artist ?? r.album_artist ?? '未知歌手',
+    // The whole credit line ("Coldplay X BTS"); `artists` links each name in it.
+    artist,
+    artists: parseCredits(r.artists, r.artist_id, artist),
     artistId: r.artist_id,
     album: r.album ?? '',
     albumId: r.album_id,
@@ -75,6 +106,7 @@ export function toTrack(r: TrackRow) {
 export const ALBUM_SELECT = `
   al.id, al.title, al.year, al.artwork_id, al.artist_id,
   COALESCE(ar.display_name, ar.name) AS artist,
+  ${creditsOf('album_artists', 'album_id', 'al.id')} AS artists,
   COUNT(t.id) AS track_count, COALESCE(SUM(t.duration), 0) AS duration,
   MAX(t.added_at) AS added_at,
   MAX(${genreOf('t')}) AS genre,
@@ -98,6 +130,7 @@ export interface AlbumRow {
   artwork_id: string | null;
   artist_id: number;
   artist: string;
+  artists: string | null;
   track_count: number;
   duration: number;
   added_at: number;
@@ -109,13 +142,16 @@ export interface AlbumRow {
 }
 
 export function toAlbum(r: AlbumRow) {
+  const artists = parseCredits(r.artists, r.artist_id, r.artist);
   return {
     id: r.id,
     title: r.title,
     year: r.year,
     artworkId: r.artwork_id,
+    // The first credited artist, whose other albums the album page lists.
     artistId: r.artist_id,
-    artist: r.artist,
+    artist: creditLine(artists) || r.artist,
+    artists,
     trackCount: r.track_count,
     duration: r.duration,
     addedAt: r.added_at,

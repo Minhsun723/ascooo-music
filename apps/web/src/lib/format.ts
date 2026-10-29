@@ -1,4 +1,10 @@
-import type { Track } from '../api/types';
+import type { ArtistCredit, Track } from '../api/types';
+
+/** Every credited artist of a track; one saved in a queue before artists were credited has only artistId. */
+export function trackArtists(track: Pick<Track, 'artists' | 'artistId' | 'artist'>): ArtistCredit[] {
+  if (track.artists?.length) return track.artists;
+  return track.artistId === null ? [] : [{ id: track.artistId, name: track.artist }];
+}
 
 export function formatTime(sec: number | null | undefined): string {
   if (!sec || !Number.isFinite(sec) || sec < 0) return '0:00';

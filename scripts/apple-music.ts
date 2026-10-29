@@ -37,6 +37,23 @@ export interface AppleMusicMatch {
   hasTimeSyncedLyrics: boolean;
 }
 
+/** One artist a song or album credits, in Apple's credit order. */
+export interface AppleCredit {
+  id: string;
+  /** In the language matchTrack uses for the song: Japanese for Japanese songs, else English. */
+  name: string;
+  /** Every name Apple gives the artist in the languages read ("Wu Bai", "ウーバイ"). */
+  names: string[];
+  artwork: AppleArtwork | null;
+}
+
+export interface AppleSongCredits {
+  /** The song is sung in Japanese; an instrumental follows its album. */
+  japanese: boolean;
+  albumId: string | null;
+  artists: AppleCredit[];
+}
+
 interface SearchInput {
   title: string;
   artist: string;
@@ -71,6 +88,18 @@ interface AppleSong {
     };
     albums?: { data?: Array<{ id?: string }> };
   };
+}
+
+interface CatalogArtist {
+  id: string;
+  name: string;
+  artwork: AppleArtwork | null;
+}
+
+interface CatalogItem {
+  audioLocale: string;
+  albumId: string | null;
+  artists: CatalogArtist[];
 }
 
 interface AppleResponse {
@@ -183,7 +212,7 @@ function scoreSong(input: SearchInput, song: AppleSong, rank: number): number {
   return score;
 }
 
-function localizedValue(original: string, localized: string, japanese: boolean): string | null {
+export function localizedValue(original: string, localized: string, japanese: boolean): string | null {
   if (!japanese || !latinOnly(original) || !containsCjk(localized)) return null;
   return localized === original ? null : localized;
 }
@@ -385,6 +414,95 @@ export class AppleMusicClient {
         ? 'zh-TW'
         : 'en-US';
     return this.matchTrackAt(input, this.lyricsStorefront, language);
+  }
+
+  /**
+   * The artists each song credits, in credit order. Unlike artistName ("Shawn
+   * Mendes & Camila Cabello"), relationships.artists gives each of them an ID of
+   * their own, yet keeps an act Apple lists as one ("Wu Bai & China Blue")
+   * whole. feat. guests are in neither and appear only in the title. Names are
+   * read in both catalog languages so a tag spelled either way can be matched.
+   * A song Apple re-issued under a new ID is found by its ISRC; songs the
+   * storefront does not carry at all are left out.
+   */
+  async songCredits(songs: Array<{ songId: string; isrc: string | null }>): Promise<Map<string, AppleSongCredits>> {
+    const native = await this.catalogCredits('songs', songs.map((song) => song.songId), this.language);
+    const missing = songs.filter((song) => !native.has(song.songId) && song.isrc);
+    const byIsrc = await this.songIdsByIsrc(this.storefront, missing.map((song) => song.isrc!));
+    const reissued = new Map(missing.flatMap((song) => {
+      const id = byIsrc.get(song.isrc!.toUpperCase());
+      return id ? [[song.songId, id] as const] : [];
+    }));
+    for (const [id, song] of await this.catalogCredits('songs', [...reissued.values()], this.language)) native.set(id, song);
+    const current = (songId: string) => reissued.get(songId) ?? songId;
+    const english = this.language === 'en-US'
+      ? native
+      : await this.catalogCredits('songs', songs.map((song) => current(song.songId)), 'en-US');
+
+    const credits = new Map<string, AppleSongCredits>();
+    for (const { songId } of songs) {
+      const id = current(songId);
+      const song = native.get(id);
+      if (!song) continue;
+      let locale = song.audioLocale;
+      if (locale === 'zxx' && song.albumId) locale = await this.albumAudioLocale(this.storefront, song.albumId) ?? locale;
+      const japanese = locale.startsWith('ja');
+      credits.set(songId, { japanese, albumId: song.albumId, artists: this.mergeCredits(song.artists, english.get(id)?.artists, japanese) });
+    }
+    return credits;
+  }
+
+  /**
+   * The artists each album credits. An album can credit fewer than its songs:
+   * Handwritten credits only Shawn Mendes, though one of its songs is a duet.
+   */
+  async albumCredits(albumIds: string[], japaneseAlbums: Set<string>): Promise<Map<string, AppleCredit[]>> {
+    const native = await this.catalogCredits('albums', albumIds, this.language);
+    const english = this.language === 'en-US' ? native : await this.catalogCredits('albums', albumIds, 'en-US');
+    return new Map([...native].map(([id, album]) => [
+      id,
+      this.mergeCredits(album.artists, english.get(id)?.artists, japaneseAlbums.has(id)),
+    ]));
+  }
+
+  /** Pair each artist's catalog-language name with the English one, choosing between them as matchTrackAt does. */
+  private mergeCredits(native: CatalogArtist[], english: CatalogArtist[] | undefined, japanese: boolean): AppleCredit[] {
+    const englishById = new Map(english?.map((artist) => [artist.id, artist]) ?? []);
+    const preferEnglish = !japanese && this.language.toLowerCase().startsWith('ja');
+    return native.map((artist) => {
+      const other = englishById.get(artist.id);
+      return {
+        id: artist.id,
+        name: (preferEnglish ? other?.name : undefined) || artist.name,
+        names: [...new Set([artist.name, other?.name].filter((name): name is string => !!name))],
+        artwork: artist.artwork ?? other?.artwork ?? null,
+      };
+    });
+  }
+
+  private async catalogCredits(type: 'songs' | 'albums', ids: string[], language: string): Promise<Map<string, CatalogItem>> {
+    const items = new Map<string, CatalogItem>();
+    const unique = [...new Set(ids)];
+    for (let i = 0; i < unique.length; i += 100) {
+      const payload = await this.get(`catalog/${this.storefront}/${type}`, {
+        ids: unique.slice(i, i + 100).join(','),
+        include: type === 'songs' ? 'artists,albums' : 'artists',
+        l: language,
+      });
+      // Albums carry the same attributes and artist relationship as songs.
+      for (const item of (payload.data as unknown as AppleSong[] | undefined) ?? []) {
+        items.set(item.id, {
+          audioLocale: (item.attributes?.audioLocale ?? '').toLowerCase(),
+          albumId: item.relationships?.albums?.data?.[0]?.id ?? null,
+          artists: (item.relationships?.artists?.data ?? []).flatMap((artist) => {
+            const id = artist.id?.trim();
+            const name = artist.attributes?.name?.trim();
+            return id && name ? [{ id, name, artwork: artist.attributes?.artwork?.url ? artist.attributes.artwork : null }] : [];
+          }),
+        });
+      }
+    }
+    return items;
   }
 
   /**

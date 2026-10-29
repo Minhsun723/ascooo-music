@@ -8,10 +8,19 @@ export interface ManagedUser extends User {
   createdAt: number;
 }
 
+export interface ArtistCredit {
+  id: number;
+  name: string;
+}
+
 export interface Track {
   id: number;
   title: string;
+  /** The whole credit line, e.g. "Shawn Mendes & Camila Cabello". */
   artist: string;
+  /** Every credited artist, in credit order. Missing on queues saved before it existed; read it through trackArtists(). */
+  artists?: ArtistCredit[];
+  /** The first credited artist. */
   artistId: number | null;
   album: string;
   albumId: number | null;
@@ -49,8 +58,11 @@ export interface Album {
   title: string;
   year: number | null;
   artworkId: string | null;
+  /** The first credited artist. */
   artistId: number;
   artist: string;
+  /** Every credited artist, in credit order. Missing on responses cached before it existed. */
+  artists?: ArtistCredit[];
   trackCount: number;
   duration: number;
   addedAt: number;

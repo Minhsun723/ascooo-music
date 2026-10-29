@@ -31,4 +31,16 @@ export const trackSearchKey = (t: {
   displayArtist?: string | null;
 }) => joinSearchKeys(t.displayTitle || t.title, t.title, t.displayArtist, t.artist);
 
-export const artistSearchKey = (name: string, displayName?: string | null) => joinSearchKeys(displayName || name, name);
+export const artistSearchKey = (name: string, displayName?: string | null, aliases: string[] = []) =>
+  joinSearchKeys(displayName || name, name, ...aliases);
+
+/** artists.aliases holds a JSON array of strings, or NULL. */
+export function parseAliases(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((alias): alias is string => typeof alias === 'string') : [];
+  } catch {
+    return [];
+  }
+}

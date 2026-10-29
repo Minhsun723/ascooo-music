@@ -6,7 +6,15 @@ import { type Aac51Pairing, type AlternateSource, aac51Root, pairAac51 } from '.
 import { ARTWORK_SIZES, type ArtworkSize } from '../apps/worker/src/lib/artwork';
 import { AUDIO_EXTENSIONS, type AudioMetadata, METADATA_VERSION, extOf, extractMetadata, guessFromFilename } from '../apps/worker/src/lib/metadata';
 import { type DavEntry, WebDAV, normalizePath, parentDir } from '../apps/worker/src/lib/webdav';
-import { AppleMusicClient, appleArtworkUrl, type AppleArtwork, type AppleGenre, type AppleMusicMatch } from './apple-music';
+import {
+  AppleMusicClient,
+  appleArtworkUrl,
+  localizedValue,
+  type AppleArtwork,
+  type AppleCredit,
+  type AppleGenre,
+  type AppleMusicMatch,
+} from './apple-music';
 
 const COVER_NAMES = ['cover', 'folder', 'front', 'album', 'albumart', 'albumcover', 'artwork', 'jacket', '封面', '專輯封面', '专辑封面'];
 const IMAGE_EXT = ['jpg', 'jpeg', 'png', 'webp', 'avif', 'gif'];
@@ -23,7 +31,8 @@ const transientHttpError = /HTTP (?:404|408|425|429|500|502|503|504)\b/;
 const dailyD1LimitError = /exceeded D1's free tier daily/i;
 // Part of every track's sync hash. Bump it when /sync/import/track starts
 // writing a payload differently, so every track is uploaded once more.
-const TRACK_IMPORT_VERSION = 1;
+// Version 2 credits every artist of a song instead of one combined artist.
+const TRACK_IMPORT_VERSION = 2;
 
 interface PreparedArtworkVariant {
   size: ArtworkSize;
@@ -66,6 +75,14 @@ interface PreparedTrack {
     genre?: AppleGenre | null;
     /** APPLE_GENRE_VERSION that produced `genre`; any other value is looked up again. */
     genreVersion?: number;
+    /** Who Apple credits on the song and its album; null when the storefront does not carry the song. */
+    credits?: {
+      japanese: boolean;
+      artists: CachedCredit[];
+      albumArtists: CachedCredit[];
+    } | null;
+    /** APPLE_CREDITS_VERSION that produced `credits`; any other value is looked up again. */
+    creditsVersion?: number;
   }) | null;
   appleCheckedAt: number | null;
   appleMatchVersion?: number;
@@ -73,10 +90,30 @@ interface PreparedTrack {
   trackArtworkId: string | null;
   folderArtworkId: string | null;
   aac51?: AlternateSource | null;
-  /** Apple identity of the album artist, taken from the album's own tracks by that artist. */
-  albumArtistApple?: { artistId: string; artistName: string };
+  /** Every artist the song credits, in credit order. Unset without Apple credits: the Worker files it under the tag. */
+  artists?: ImportedArtist[];
+  /** The album's own artists, shared by every track of the local album. Unset: the album artist tag. */
+  albumArtists?: ImportedArtist[];
   /** Apple's genre, or the tag translated through Apple's names; metadata.genre keeps the tag. */
   displayGenre?: { zh: string | null; en: string };
+}
+
+/** An artist Apple credits, as cached with the match. */
+interface CachedCredit {
+  appleId: string;
+  /** Apple's name in the song's language. */
+  name: string;
+  names: string[];
+  artworkId: string | null;
+}
+
+/** One artist as /sync/import/track receives it; the name is the one the whole library agrees on. */
+interface ImportedArtist {
+  appleId: string;
+  name: string;
+  /** Other spellings seen in tags and at Apple, for search. */
+  aliases: string[];
+  artworkId: string | null;
 }
 
 interface SyncManifest {
@@ -259,6 +296,9 @@ const APPLE_MATCH_VERSION = 3;
 // Version 2 reads subgenres ("Mandopop"), which version 1 folded into "Pop";
 // version 3 finds songs Taiwan lists under another ID by ISRC.
 const APPLE_GENRE_VERSION = 3;
+// Bump when the credit lookup changes so cached credits are looked up again.
+// Version 2 finds songs Apple re-issued under a new ID by their ISRC.
+const APPLE_CREDITS_VERSION = 2;
 
 function lyricsFormat(path: string, content: string): 'lrc' | 'ttml' | 'plain' {
   if (extOf(path) === 'ttml' || /<tt(?:\s|>)/i.test(content)) return 'ttml';
@@ -396,43 +436,182 @@ function attachAac51(
 
 const nfc = (value: string | null | undefined) => (value ?? '').normalize('NFC');
 
+/** Credit separators in tags: "A & B", "A, B, & C", "A、B", "Coldplay X BTS". A slash belongs to names ("HUNTR/X"). */
+const CREDIT_SEPARATOR = /\s*(?:,\s*&|,|&|、|\s[xX×]\s)\s*/;
+const creditKey = (value: string) => value.normalize('NFKC').toLocaleLowerCase('en').replace(/[\p{P}\p{S}\s]+/gu, '');
+
 /**
- * The Worker files an album under its album artist. When that differs from the
- * track artist (a character-voice version on a singer's EP), the album artist is
- * looked up by name alone and misses the Apple-merged alias ("Riria." resolves
- * to "りりあ。" only through Apple), splitting the album in two. Lend it the Apple
- * identity of the album's tracks by that artist. Credits mirror /sync/import/track.
+ * The tag's own spelling of each credited artist, so a page reads "王謙Goatak"
+ * or "伍佰 & China Blue" rather than Apple's romanized "Goatak" / "Wu Bai &
+ * China Blue". Null where the tag does not name the artist, such as the
+ * remixer Apple credits on a remix tagged with the original artist only.
  */
-function attachAlbumArtistApple(tracks: PreparedTrack[], root: string): void {
-  const credited = tracks.map((track) => {
+function tagCreditNames(tag: string, credits: CachedCredit[]): (string | null)[] {
+  const parts = tag.split(CREDIT_SEPARATOR).map((part) => part.trim()).filter(Boolean);
+  const keys = parts.map(creditKey);
+  const known = credits.map((credit) => credit.names.map(creditKey).filter(Boolean));
+  if (credits.length === 1) {
+    // One act: the whole tag names it, unless the tag also lists a feat. guest
+    // that Apple leaves out ("Jung Kook & Latto" on "Seven (feat. Latto)").
+    const exact = parts.length > 1 ? parts.find((_, index) => known[0].includes(keys[index])) : undefined;
+    return [exact ?? (tag.trim() || null)];
+  }
+  const names: (string | null)[] = credits.map(() => null);
+  const used = new Set<number>();
+  const claim = (matches: (key: string, own: string[]) => boolean) => {
+    credits.forEach((_, credit) => {
+      if (names[credit] !== null) return;
+      const part = keys.findIndex((key, index) => !used.has(index) && !!key && matches(key, known[credit]));
+      if (part < 0) return;
+      used.add(part);
+      names[credit] = parts[part];
+    });
+  };
+  claim((key, own) => own.includes(key));
+  // "Lilas Ikuta" for Apple's "Lilas", "Sabrina 胡恂舞" for "Sabrina".
+  claim((key, own) => own.some((name) => name.length > 1 && key.length > 1 && (key.includes(name) || name.includes(key))));
+  // What is left pairs up in order when the counts agree ("菲道爾" for "Firdhaus").
+  const leftParts = parts.filter((_, index) => !used.has(index));
+  const leftCredits = names.flatMap((name, credit) => name === null ? [credit] : []);
+  if (leftParts.length === leftCredits.length) leftCredits.forEach((credit, index) => { names[credit] = leftParts[index]; });
+  return names;
+}
+
+/**
+ * Credit every artist Apple lists on a song or album. Apple decides who is
+ * credited; the tags decide how each name is spelled. An artist tagged several
+ * ways ("Riria." / "りりあ。") takes the spelling most of the library uses,
+ * counting their own songs first so a guest spot ("Hikaru Utada" on a Charlie
+ * Puth song) cannot outvote them; the other spellings stay searchable. A local
+ * album takes the artists most of its tracks' Apple albums credit, so a single
+ * and the album release of one song cannot split it.
+ */
+async function attachCredits(
+  tracks: PreparedTrack[],
+  apple: AppleMusicClient | null,
+  root: string,
+  addArtistArtwork: (artwork: AppleArtwork) => Promise<string | null>,
+): Promise<void> {
+  const pending = tracks.filter((track) => track.appleMusic && track.appleMusic.creditsVersion !== APPLE_CREDITS_VERSION);
+  if (apple && pending.length) {
+    try {
+      const songs = await apple.songCredits(pending.map((track) => ({
+        songId: track.appleMusic!.songId,
+        isrc: track.appleMusic!.isrc ?? track.metadata.isrc ?? null,
+      })));
+      const albumIds = new Set([...songs.values()].flatMap((song) => song.albumId ? [song.albumId] : []));
+      const japaneseAlbums = new Set([...songs.values()].flatMap((song) => song.japanese && song.albumId ? [song.albumId] : []));
+      const albums = await apple.albumCredits([...albumIds], japaneseAlbums);
+      const artworks = new Map<string, AppleArtwork>();
+      for (const credit of [...[...songs.values()].flatMap((song) => song.artists), ...[...albums.values()].flat()]) {
+        if (credit.artwork && !artworks.has(credit.id)) artworks.set(credit.id, credit.artwork);
+      }
+      const artworkIds = new Map(await mapConcurrent([...artworks], 4, async ([id, artwork]) => [id, await addArtistArtwork(artwork)] as const));
+      const cache = (credit: AppleCredit): CachedCredit => ({
+        appleId: credit.id,
+        name: nfc(credit.name),
+        names: credit.names.map(nfc),
+        artworkId: artworkIds.get(credit.id) ?? null,
+      });
+      for (const track of pending) {
+        const song = songs.get(track.appleMusic!.songId);
+        track.appleMusic!.credits = song ? {
+          japanese: song.japanese,
+          artists: song.artists.map(cache),
+          albumArtists: (song.albumId ? albums.get(song.albumId) : undefined)?.map(cache) ?? [],
+        } : null;
+        track.appleMusic!.creditsVersion = APPLE_CREDITS_VERSION;
+      }
+      console.log(`  Apple Music 歌手：查詢 ${pending.length} 首`);
+    } catch (error) {
+      warnOnce('apple-credits', `  Apple Music 歌手暫停，下次同步再補：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  const tagArtist = (track: PreparedTrack) =>
+    nfc(track.metadata.artist || guessFromFilename(track.path).artist || track.metadata.albumArtist);
+  interface Tally {
+    own: Map<string, number>;
+    all: Map<string, number>;
+    /** Apple's own names, which settle a tie. */
+    apple: Set<string>;
+    aliases: Set<string>;
+    artworkId: string | null;
+  }
+  const tallies = new Map<string, Tally>();
+  const count = (credits: CachedCredit[], tag: string, japanese: boolean) => {
+    const spelled = tagCreditNames(tag, credits);
+    credits.forEach((credit, index) => {
+      const name = spelled[index] ?? credit.name;
+      const shown = localizedValue(name, credit.name, japanese) ?? name;
+      let tally = tallies.get(credit.appleId);
+      if (!tally) {
+        tally = { own: new Map(), all: new Map(), apple: new Set(), aliases: new Set(), artworkId: null };
+        tallies.set(credit.appleId, tally);
+      }
+      for (const votes of credits.length === 1 ? [tally.own, tally.all] : [tally.all]) votes.set(shown, (votes.get(shown) ?? 0) + 1);
+      for (const alias of credit.names) tally.apple.add(alias);
+      for (const alias of [name, ...credit.names]) tally.aliases.add(alias);
+      tally.artworkId ??= credit.artworkId;
+    });
+  };
+
+  // Grouped as the Worker groups albums by their tags.
+  const albums = new Map<string, PreparedTrack[]>();
+  for (const track of tracks) {
     const meta = track.metadata;
     const folder = parentDir(track.path);
     const folderName = folder === root ? '' : folder.slice(folder.lastIndexOf('/') + 1);
     const artist = nfc(meta.artist || guessFromFilename(track.path).artist || meta.albumArtist ||
       track.appleMusic?.artistName.trim() || '未知歌手');
-    const albumArtist = nfc(meta.albumArtist) || artist;
-    return {
-      track,
-      album: `${nfc(meta.album || folderName || '未知專輯').toLowerCase()}\u0000${albumArtist.toLowerCase()}`,
-      byAlbumArtist: artist.toLowerCase() === albumArtist.toLowerCase(),
-    };
-  });
-  const identities = new Map<string, Map<string, { artistId: string; artistName: string; count: number }>>();
-  for (const { track, album, byAlbumArtist } of credited) {
-    const apple = track.appleMusic;
-    if (!byAlbumArtist || !apple?.artistId) continue;
-    const votes = identities.get(album) ?? new Map();
-    identities.set(album, votes);
-    const key = `${apple.artistId}\u0000${apple.artistName}`;
-    const vote = votes.get(key) ?? { artistId: apple.artistId, artistName: apple.artistName, count: 0 };
-    vote.count++;
-    votes.set(key, vote);
+    const key = `${nfc(meta.album || folderName || '未知專輯').toLowerCase()}\u0000${(nfc(meta.albumArtist) || artist).toLowerCase()}`;
+    albums.set(key, [...albums.get(key) ?? [], track]);
   }
-  for (const { track, album, byAlbumArtist } of credited) {
-    const best = byAlbumArtist ? undefined : [...identities.get(album)?.values() ?? []].sort((a, b) => b.count - a.count)[0];
+  const albumCredits = new Map<PreparedTrack, CachedCredit[]>();
+  for (const group of albums.values()) {
+    const lists = new Map<string, { credits: CachedCredit[]; count: number }>();
+    for (const track of group) {
+      const credits = track.appleMusic?.credits?.albumArtists;
+      if (!credits?.length) continue;
+      const key = credits.map((credit) => credit.appleId).join(',');
+      const list = lists.get(key) ?? { credits, count: 0 };
+      list.count++;
+      lists.set(key, list);
+    }
+    const best = [...lists.values()].sort((a, b) => b.count - a.count)[0];
+    if (!best) continue;
+    count(best.credits, nfc(group[0].metadata.albumArtist) || tagArtist(group[0]),
+      group.some((track) => track.appleMusic?.credits?.japanese));
+    for (const track of group) albumCredits.set(track, best.credits);
+  }
+  for (const track of tracks) {
+    const credits = track.appleMusic?.credits;
+    if (credits?.artists.length) count(credits.artists, tagArtist(track), credits.japanese);
+  }
+
+  const winner = (votes: Map<string, number>, apple: Set<string>) => [...votes]
+    .sort((a, b) => b[1] - a[1] || Number(apple.has(b[0])) - Number(apple.has(a[0])) || a[0].localeCompare(b[0]))[0]?.[0];
+  const identities = new Map<string, ImportedArtist>();
+  const identity = (credit: CachedCredit): ImportedArtist => {
+    let artist = identities.get(credit.appleId);
+    if (!artist) {
+      const tally = tallies.get(credit.appleId)!;
+      const name = winner(tally.own, tally.apple) ?? winner(tally.all, tally.apple)!;
+      artist = { appleId: credit.appleId, name, aliases: [...tally.aliases].filter((alias) => alias !== name).sort(), artworkId: tally.artworkId };
+      identities.set(credit.appleId, artist);
+    }
+    return artist;
+  };
+  for (const track of tracks) {
+    // Written by syncs from before each artist was credited separately.
+    delete (track as { albumArtistApple?: unknown }).albumArtistApple;
+    const credits = track.appleMusic?.credits?.artists;
     // Left unset otherwise, so tracks it does not concern keep their sync hash.
-    if (best) track.albumArtistApple = { artistId: best.artistId, artistName: best.artistName };
-    else delete track.albumArtistApple;
+    if (credits?.length) track.artists = credits.map(identity);
+    else delete track.artists;
+    const album = albumCredits.get(track);
+    if (album) track.albumArtists = album.map(identity);
+    else delete track.albumArtists;
   }
 }
 
@@ -815,7 +994,12 @@ async function prepare(): Promise<SyncManifest> {
               lyricsAudioLocale: keepLyricsSong ? previous!.lyricsAudioLocale : null,
               lyricsHasTimeSyncedLyrics: keepLyricsSong ? previous!.lyricsHasTimeSyncedLyrics : null,
               ...(previous?.songId === match.songId
-                ? { genre: previous.genre, genreVersion: previous.genreVersion }
+                ? {
+                    genre: previous.genre,
+                    genreVersion: previous.genreVersion,
+                    credits: previous.credits,
+                    creditsVersion: previous.creditsVersion,
+                  }
                 : {}),
             };
           } else {
@@ -957,7 +1141,7 @@ async function prepare(): Promise<SyncManifest> {
       return track;
   });
   tracks.push(...preparedTracks);
-  attachAlbumArtistApple(tracks, root);
+  await attachCredits(tracks, apple, root, (artwork) => addAppleArtwork(artworks, appleArtworkJobs, artwork));
   await attachGenres(tracks, apple);
   const pairing = attachAac51(tracks, altFiles, previousByPath);
   if (pairing) reportAac51(pairing.pairs.size, pairing.ambiguous, pairing.orphans);
@@ -966,6 +1150,8 @@ async function prepare(): Promise<SyncManifest> {
     track.trackArtworkId,
     track.folderArtworkId,
     track.appleMusic?.artistArtworkId,
+    ...[...track.appleMusic?.credits?.artists ?? [], ...track.appleMusic?.credits?.albumArtists ?? []]
+      .map((credit) => credit.artworkId),
   ]).filter((id): id is string => !!id));
   console.log(`本機解析完成：${audioCount} 首；沿用 ${reused} 首，重新解析 ${audioCount - reused} 首`);
 

@@ -4,7 +4,7 @@ import { api, artUrl } from '../api/client';
 import type { Lyrics, Track } from '../api/types';
 import { DEFAULT_PALETTE, extractPalette, type Palette } from '../lib/color';
 import { parseLrc, parseTtml, plainLines } from '../lib/lrc';
-import { formatTime, isDolbyAtmos, qualityLabel } from '../lib/format';
+import { formatTime, isDolbyAtmos, qualityLabel, trackArtists } from '../lib/format';
 import { useCurrentTrack, usePlayer } from '../store/player';
 import { usePreferences } from '../store/preferences';
 import { Artwork } from './Artwork';
@@ -139,7 +139,8 @@ function BylineMenu({ track }: { track: Track }) {
     };
   }, [open]);
 
-  if (track.artistId === null && track.albumId === null) return <p className="now-playing__byline">{byline}</p>;
+  const artists = trackArtists(track);
+  if (!artists.length && track.albumId === null) return <p className="now-playing__byline">{byline}</p>;
 
   const go = (path: string, pageTitle: string) => {
     detailsRef.current?.removeAttribute('open');
@@ -151,11 +152,11 @@ function BylineMenu({ track }: { track: Track }) {
     <details ref={detailsRef} className="now-playing__byline-menu" onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary className="now-playing__byline" aria-label={`${text}，更多選項`}>{byline}</summary>
       <div className="menu-popover">
-        {track.artistId !== null ? (
-          <button type="button" onClick={() => go(`/artist/${track.artistId}`, track.artist)}>
-            <IconUser size={18} />前往歌手
+        {artists.map((artist) => (
+          <button key={artist.id} type="button" onClick={() => go(`/artist/${artist.id}`, artist.name)}>
+            <IconUser size={18} />{artists.length > 1 ? `前往 ${artist.name}` : '前往歌手'}
           </button>
-        ) : null}
+        ))}
         {track.albumId !== null ? (
           <button type="button" onClick={() => go(`/album/${track.albumId}`, track.album)}>
             <IconDisc size={18} />前往專輯

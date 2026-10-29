@@ -11,7 +11,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { artistSearchKey, searchKey, trackSearchKey } from '../apps/worker/src/lib/search.ts';
+import { artistSearchKey, parseAliases, searchKey, trackSearchKey } from '../apps/worker/src/lib/search.ts';
 
 const target = process.argv.includes('--remote') ? '--remote' : process.argv.includes('--local') ? '--local' : null;
 if (!target) {
@@ -50,9 +50,9 @@ for (const a of query<AlbumRow>('SELECT id, title, search_key FROM albums')) {
   if (key !== a.search_key) updates.push(`UPDATE albums SET search_key = ${quote(key)} WHERE id = ${a.id};`);
 }
 
-type ArtistRow = { id: number; name: string; display_name: string | null; search_key: string | null };
-for (const a of query<ArtistRow>('SELECT id, name, display_name, search_key FROM artists')) {
-  const key = artistSearchKey(a.name, a.display_name);
+type ArtistRow = { id: number; name: string; display_name: string | null; aliases: string | null; search_key: string | null };
+for (const a of query<ArtistRow>('SELECT id, name, display_name, aliases, search_key FROM artists')) {
+  const key = artistSearchKey(a.name, a.display_name, parseAliases(a.aliases));
   if (key !== a.search_key) updates.push(`UPDATE artists SET search_key = ${quote(key)} WHERE id = ${a.id};`);
 }
 
