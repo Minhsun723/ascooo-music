@@ -278,6 +278,8 @@ interface ImportedArtist {
   name: string;
   aliases: string[];
   artworkId: string | null;
+  /** Apple's logo for the artist. Absent: they have none, and any stored one is cleared. */
+  logoId?: string | null;
 }
 
 /** An artist known only by a tag; equal names (ignoring case) share one row. */
@@ -304,7 +306,7 @@ async function upsertAppleArtist(db: D1Database, artist: ImportedArtist): Promis
   const existing = await db.prepare(
     `UPDATE artists
      SET apple_artist_id = ?1, display_name = NULLIF(?2, name COLLATE BINARY), aliases = ?3,
-       artwork_id = COALESCE(?4, artwork_id)
+       artwork_id = COALESCE(?4, artwork_id), logo_artwork_id = ?5
      WHERE id = COALESCE(
        (SELECT id FROM artists WHERE apple_artist_id = ?1),
        (SELECT id FROM artists
@@ -312,15 +314,16 @@ async function upsertAppleArtist(db: D1Database, artist: ImportedArtist): Promis
         ORDER BY name = ?2 COLLATE NOCASE DESC, id LIMIT 1)
      )
      RETURNING id, name, display_name, aliases, search_key`,
-  ).bind(artist.appleId, name, aliasesJson, artist.artworkId).first<ArtistRow>();
+  ).bind(artist.appleId, name, aliasesJson, artist.artworkId, artist.logoId ?? null).first<ArtistRow>();
   if (existing) return syncArtistSearchKey(db, existing);
 
   const row = await db.prepare(
-    `INSERT INTO artists (name, apple_artist_id, aliases, artwork_id, search_key) VALUES (?1, ?2, ?3, ?4, ?5)
+    `INSERT INTO artists (name, apple_artist_id, aliases, artwork_id, logo_artwork_id, search_key) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
      -- Another Apple artist already holds this exact name; the two share its page.
-     ON CONFLICT(name) DO UPDATE SET artwork_id = COALESCE(artists.artwork_id, excluded.artwork_id)
+     ON CONFLICT(name) DO UPDATE SET artwork_id = COALESCE(artists.artwork_id, excluded.artwork_id),
+       logo_artwork_id = COALESCE(artists.logo_artwork_id, excluded.logo_artwork_id)
      RETURNING id, name, display_name, aliases, search_key`,
-  ).bind(name, artist.appleId, aliasesJson, artist.artworkId, artistSearchKey(name, null, aliases)).first<ArtistRow>();
+  ).bind(name, artist.appleId, aliasesJson, artist.artworkId, artist.logoId ?? null, artistSearchKey(name, null, aliases)).first<ArtistRow>();
   if (!row) throw new Error(`無法建立藝人：${name}`);
   return syncArtistSearchKey(db, row);
 }
@@ -362,7 +365,8 @@ function validArtists(value: unknown): ImportedArtist[] | null {
     !artist || typeof artist.appleId !== 'string' || !/^\d+$/.test(artist.appleId) ||
     typeof artist.name !== 'string' || !artist.name.trim() ||
     !Array.isArray(artist.aliases) || artist.aliases.some((alias) => typeof alias !== 'string') ||
-    artist.artworkId !== null && !/^[a-f0-9]{40}$/.test(artist.artworkId))) {
+    artist.artworkId !== null && !/^[a-f0-9]{40}$/.test(artist.artworkId) ||
+    artist.logoId != null && !/^[a-f0-9]{40}$/.test(artist.logoId))) {
     throw new HTTPException(400, { message: '歌手資料格式錯誤' });
   }
   return value.length ? value as ImportedArtist[] : null;

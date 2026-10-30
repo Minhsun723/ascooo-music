@@ -245,13 +245,13 @@ const ARTIST_TRACK_IDS = `artist_track_ids AS (
 
 async function findArtist(db: D1Database, id: number) {
   const artist = await db.prepare(
-    `SELECT ar.id, COALESCE(ar.display_name, ar.name) AS name, ar.artwork_id FROM artists ar WHERE ar.id = ? AND (
+    `SELECT ar.id, COALESCE(ar.display_name, ar.name) AS name, ar.artwork_id, ar.logo_artwork_id FROM artists ar WHERE ar.id = ? AND (
        EXISTS (SELECT 1 FROM track_artists ta CROSS JOIN tracks t ON t.id = ta.track_id
                WHERE ta.artist_id = ar.id AND t.status = 'ready' AND t.visible = 1)
        OR EXISTS (SELECT 1 FROM album_artists ala CROSS JOIN tracks t ON t.album_id = ala.album_id
                   WHERE ala.artist_id = ar.id AND t.status = 'ready' AND t.visible = 1)
      )`,
-  ).bind(id).first<{ id: number; name: string; artwork_id: string | null }>();
+  ).bind(id).first<{ id: number; name: string; artwork_id: string | null; logo_artwork_id: string | null }>();
   if (!artist) throw new HTTPException(404, { message: '找不到這位歌手' });
   return artist;
 }
@@ -282,6 +282,7 @@ catalog.get('/artists/:id', anonymousEdgeCache, async (c) => {
       id: artist.id,
       name: artist.name,
       artworkId: artist.artwork_id ?? albumList.find((a) => a.artworkId)?.artworkId ?? null,
+      logoId: artist.logo_artwork_id,
     },
     albums: albumList,
     tracks: (top.results as TrackRow[]).map(toTrack),

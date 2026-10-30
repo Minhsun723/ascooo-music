@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type DependencyList, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
-import { api } from './api/client';
+import { api, artUrl } from './api/client';
 import type { Album, Artist, ArtistCredit, HomeData, ManagedTrack, ManagedTrackStats, ManagedUser, Track } from './api/types';
 import { formatLongDuration, formatReleaseDate } from './lib/format';
 import { canPlayAtmos, usePlayer } from './store/player';
@@ -158,10 +158,10 @@ function CreditLinks({ artists }: { artists: ArtistCredit[] }) {
   return <>{artists.map((artist, index) => <Fragment key={artist.id}>{index === 0 ? null : index === artists.length - 1 ? ' & ' : ', '}<Link to={`/artist/${artist.id}`} state={{ pageTitle: artist.name }} className="collection-hero__subtitle-link">{artist.name}</Link></Fragment>)}</>;
 }
 
-function CollectionHero({ artworkId, title, subtitle, subtitleArtists, meta = '', badge, tracks, compactTitle = false, detailLayout = false, mobileBackAction, menu }: { artworkId?: string | null; title: string; subtitle?: string; subtitleArtists?: ArtistCredit[]; meta?: string; badge?: React.ReactNode; tracks: Track[]; compactTitle?: boolean; detailLayout?: boolean; mobileBackAction?: React.ReactNode; menu?: React.ReactNode }) {
+function CollectionHero({ artworkId, logoId, title, subtitle, subtitleArtists, meta = '', badge, tracks, compactTitle = false, detailLayout = false, mobileBackAction, menu }: { artworkId?: string | null; logoId?: string | null; title: string; subtitle?: string; subtitleArtists?: ArtistCredit[]; meta?: string; badge?: React.ReactNode; tracks: Track[]; compactTitle?: boolean; detailLayout?: boolean; mobileBackAction?: React.ReactNode; menu?: React.ReactNode }) {
   const playList = usePlayer((s) => s.playList);
   const hasMeta = !!(meta || badge);
-  return <header className={`collection-hero${compactTitle ? ' collection-hero--compact-title' : ''}${detailLayout ? ' collection-hero--detail' : ''}`}>{mobileBackAction ? <div className="collection-hero__mobile-back">{mobileBackAction}</div> : null}{menu ? <div className="collection-hero__menu">{menu}</div> : null}<Artwork artworkId={artworkId} title={title} artist={subtitle} className="collection-hero__art" loading="eager" size={2000} /><div className="collection-hero__copy"><div className="collection-hero__details"><h1>{title}</h1>{subtitle ? <p>{subtitleArtists?.length ? <CreditLinks artists={subtitleArtists} /> : subtitle}</p> : null}{hasMeta ? <small className="collection-hero__meta">{meta ? <span>{meta}</span> : null}{badge ? <>{meta ? <i aria-hidden="true">·</i> : null}{badge}</> : null}</small> : null}</div><div className="collection-hero__actions"><button type="button" className="primary-button" disabled={!tracks.length} onClick={() => playList(tracks)}><IconPlay size={18} />播放</button><button type="button" className="round-button round-button--outline" disabled={!tracks.length} aria-label="隨機播放" onClick={() => playList(tracks, 0, { shuffle: true })}><IconShuffle size={19} /></button></div></div></header>;
+  return <header className={`collection-hero${compactTitle ? ' collection-hero--compact-title' : ''}${detailLayout ? ' collection-hero--detail' : ''}`}>{mobileBackAction ? <div className="collection-hero__mobile-back">{mobileBackAction}</div> : null}{menu ? <div className="collection-hero__menu">{menu}</div> : null}<Artwork artworkId={artworkId} title={title} artist={subtitle} className="collection-hero__art" loading="eager" size={2000} /><div className="collection-hero__copy"><div className="collection-hero__details"><h1>{title}</h1>{subtitle ? <p>{subtitleArtists?.length ? <CreditLinks artists={subtitleArtists} /> : subtitle}</p> : null}{hasMeta ? <small className="collection-hero__meta">{meta ? <span>{meta}</span> : null}{badge ? <>{meta ? <i aria-hidden="true">·</i> : null}{badge}</> : null}</small> : null}</div><div className="collection-hero__actions"><button type="button" className="primary-button" disabled={!tracks.length} onClick={() => playList(tracks)}><IconPlay size={18} />播放</button><button type="button" className="round-button round-button--outline" disabled={!tracks.length} aria-label="隨機播放" onClick={() => playList(tracks, 0, { shuffle: true })}><IconShuffle size={19} /></button></div></div>{logoId ? <img key={logoId} className="collection-hero__logo" src={artUrl(logoId, 2000)!} alt="" loading="lazy" decoding="async" draggable={false} onError={(event) => { event.currentTarget.hidden = true; }} /> : null}</header>;
 }
 
 export function AlbumPage() {
@@ -204,7 +204,7 @@ export function ArtistPage() {
     else navigate('/library?tab=artists', { replace: true });
   };
   const mobileBackAction = <button type="button" className="collection-back-button" aria-label="返回" onClick={goBack}><IconChevronLeft size={20} /></button>;
-  return <><CollectionHero artworkId={artist.artworkId} title={artist.name} meta={`${albums.length} 張專輯 · ${tracks.length} 首熱門歌曲`} tracks={tracks} compactTitle detailLayout mobileBackAction={mobileBackAction} /><section className="page-section page-section--tight"><SectionHeading title="熱門歌曲" link={`/artist/${artist.id}/tracks`} linkLabel="所有歌曲" /><TrackList tracks={tracks.slice(0, 10)} /></section>{albums.length ? <section className="page-section"><SectionHeading title="專輯" /><AlbumGrid albums={albums} /></section> : null}</>;
+  return <><CollectionHero artworkId={artist.artworkId} logoId={artist.logoId} title={artist.name} meta={`${albums.length} 張專輯 · ${tracks.length} 首熱門歌曲`} tracks={tracks} compactTitle detailLayout mobileBackAction={mobileBackAction} /><section className="page-section page-section--tight"><SectionHeading title="熱門歌曲" link={`/artist/${artist.id}/tracks`} linkLabel="所有歌曲" /><TrackList tracks={tracks.slice(0, 10)} /></section>{albums.length ? <section className="page-section"><SectionHeading title="專輯" /><AlbumGrid albums={albums} /></section> : null}</>;
 }
 
 export function ArtistTracksPage() {

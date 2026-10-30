@@ -114,6 +114,15 @@ interface ImportedArtist {
   /** Other spellings seen in tags and at Apple, for search. */
   aliases: string[];
   artworkId: string | null;
+  /** Apple's logo for the artist. Unset without one, so the tracks of most artists keep their sync hash. */
+  logoId?: string;
+}
+
+/** An artist's Apple logo as last looked up, keyed by Apple artist ID in the manifest. */
+interface CachedLogo {
+  /** Null when Apple has no logo for the artist. */
+  artworkId: string | null;
+  checkedAt: number;
 }
 
 interface SyncManifest {
@@ -123,6 +132,8 @@ interface SyncManifest {
   scanId: string;
   artworks: PreparedArtwork[];
   tracks: PreparedTrack[];
+  /** Absent in manifests written before logos were looked up. */
+  artistLogos?: Record<string, CachedLogo>;
 }
 
 interface UploadState {
@@ -613,6 +624,49 @@ async function attachCredits(
     if (album) track.albumArtists = album.map(identity);
     else delete track.albumArtists;
   }
+}
+
+/**
+ * Give every credited artist the logo Apple shows on their page. Apple adds
+ * logos over time, so each artist is looked up again after the refresh
+ * interval, in a few batched requests. A logo that fails to download is not
+ * recorded, so the next sync tries it again.
+ */
+async function attachArtistLogos(
+  tracks: PreparedTrack[],
+  apple: AppleMusicClient | null,
+  previous: Record<string, CachedLogo> | undefined,
+  artworks: Map<string, PreparedArtwork>,
+  addLogo: (artwork: AppleArtwork) => Promise<string | null>,
+): Promise<Record<string, CachedLogo>> {
+  const credited = (track: PreparedTrack) => [...track.artists ?? [], ...track.albumArtists ?? []];
+  const ids = new Set(tracks.flatMap((track) => credited(track).map((artist) => artist.appleId)));
+  const logos: Record<string, CachedLogo> = {};
+  for (const id of ids) {
+    const logo = previous?.[id];
+    if (logo && (!logo.artworkId || artworks.has(logo.artworkId))) logos[id] = logo;
+  }
+  const stale = [...ids].filter((id) => !logos[id] || Date.now() - logos[id].checkedAt >= refreshInterval());
+  if (apple && stale.length) {
+    try {
+      const found = await apple.artistLogos(stale);
+      const checkedAt = Date.now();
+      await mapConcurrent(stale, 4, async (id) => {
+        const logo = found.get(id);
+        const artworkId = logo ? await addLogo(logo) : null;
+        if (!logo || artworkId) logos[id] = { artworkId, checkedAt };
+      });
+      console.log(`  Apple Music 歌手 logo：查詢 ${stale.length} 位`);
+    } catch (error) {
+      warnOnce('apple-logos', `  Apple Music 歌手 logo 暫停，下次同步再補：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  for (const artist of tracks.flatMap(credited)) {
+    const logoId = logos[artist.appleId]?.artworkId;
+    if (logoId) artist.logoId = logoId;
+    else delete artist.logoId;
+  }
+  return logos;
 }
 
 const genreKey = (name: string) => name.normalize('NFKC').toLocaleLowerCase('en').replace(/[\s_-]+/g, '');
@@ -1148,6 +1202,8 @@ async function prepare(): Promise<SyncManifest> {
   });
   tracks.push(...preparedTracks);
   await attachCredits(tracks, apple, root, (artwork) => addAppleArtwork(artworks, appleArtworkJobs, artwork));
+  const artistLogos = await attachArtistLogos(tracks, apple, previous?.artistLogos, artworks,
+    (artwork) => addAppleArtwork(artworks, appleArtworkJobs, artwork));
   await attachGenres(tracks, apple);
   const pairing = attachAac51(tracks, altFiles, previousByPath);
   if (pairing) reportAac51(pairing.pairs.size, pairing.ambiguous, pairing.orphans);
@@ -1158,6 +1214,7 @@ async function prepare(): Promise<SyncManifest> {
     track.appleMusic?.artistArtworkId,
     ...[...track.appleMusic?.credits?.artists ?? [], ...track.appleMusic?.credits?.albumArtists ?? []]
       .map((credit) => credit.artworkId),
+    ...[...track.artists ?? [], ...track.albumArtists ?? []].map((artist) => artist.logoId),
   ]).filter((id): id is string => !!id));
   console.log(`本機解析完成：${audioCount} 首；沿用 ${reused} 首，重新解析 ${audioCount - reused} 首`);
 
@@ -1168,6 +1225,7 @@ async function prepare(): Promise<SyncManifest> {
     scanId,
     artworks: [...artworks.values()].filter((artwork) => referencedArtwork.has(artwork.id)),
     tracks,
+    artistLogos,
   };
 }
 

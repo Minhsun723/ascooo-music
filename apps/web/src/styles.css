@@ -565,6 +565,8 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
 /* Collection pages */
 .collection-hero { position: relative; display: grid; grid-template-columns: clamp(180px, 24vw, 330px) minmax(0, 1fr); align-items: end; gap: clamp(28px, 5vw, 68px); min-height: 390px; margin: -24px calc(clamp(24px, 3.5vw, 56px) * -1) 0; padding: 60px clamp(24px, 3.5vw, 56px) 40px; overflow: hidden; border-bottom: 1px solid var(--border); background: radial-gradient(circle at 20% 0%, rgba(0,114,255,.16), transparent 34%), radial-gradient(circle at 80% 100%, rgba(255,0,127,.11), transparent 36%), #101012; }
 .collection-hero::after { content: ""; position: absolute; right: 5%; bottom: 0; width: 32%; height: 3px; background: var(--gradient); }
+/* An artist's logo stands on the gradient rule, centered over the same span. */
+.collection-hero__logo { position: absolute; z-index: 1; right: 5%; bottom: 26px; width: 32%; height: clamp(52px, 6.5vw, 96px); object-fit: contain; object-position: center bottom; pointer-events: none; user-select: none; }
 .collection-hero__art { z-index: 1; width: 100%; align-self: center; box-shadow: 0 28px 70px rgba(0,0,0,.42); }
 .collection-hero__copy { --collection-meta-gap: 10px; z-index: 1; min-width: 0; padding-bottom: 8px; }
 .collection-hero h1 { margin: 12px 0 10px; font-size: clamp(3rem, 7vw, 7.6rem); line-height: .9; letter-spacing: normal; overflow-wrap: anywhere; }
@@ -856,6 +858,7 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
   .toast-viewport { right: 12px; bottom: calc(var(--mobile-nav) + var(--player) + 20px); }
   .collection-hero { grid-template-columns: minmax(150px, 230px) minmax(0,1fr); min-height: 330px; margin: -18px -18px 0; padding-inline: 18px; }
   .collection-hero__mobile-back { position: absolute; z-index: 2; top: 14px; left: 18px; display: flex; }
+  .collection-hero__logo { display: none; }
   /* Detail heroes carry the back button: 14px offset + 44px button + 18px gap before the art. */
   .collection-hero--detail { padding-top: 76px; }
   /* Pin the art to the top so a multi-line title can't push it away from the back button. */

@@ -96,6 +96,11 @@ interface CatalogArtist {
   artwork: AppleArtwork | null;
 }
 
+interface AppleArtist {
+  id: string;
+  attributes?: { editorialArtwork?: Record<string, AppleArtwork | undefined> };
+}
+
 interface CatalogItem {
   audioLocale: string;
   albumId: string | null;
@@ -463,6 +468,30 @@ export class AppleMusicClient {
       id,
       this.mergeCredits(album.artists, english.get(id)?.artists, japaneseAlbums.has(id)),
     ]));
+  }
+
+  /**
+   * The logo Apple shows on each artist's page: their name in their own
+   * lettering, trimmed to its edges on a transparent background. About a
+   * quarter of artists have one; the rest map to null. The color version is
+   * preferred over the white one. brandLogo is not a logo for every artist
+   * (for some it is a square portrait), so it is never used.
+   */
+  async artistLogos(ids: string[]): Promise<Map<string, AppleArtwork | null>> {
+    const logos = new Map<string, AppleArtwork | null>();
+    const unique = [...new Set(ids)];
+    // The artists resource takes at most 50 IDs per request.
+    for (let i = 0; i < unique.length; i += 50) {
+      const batch = unique.slice(i, i + 50);
+      const payload = await this.get(`catalog/${this.storefront}/artists`, { ids: batch.join(','), extend: 'editorialArtwork' });
+      const found = new Map(((payload.data as unknown as AppleArtist[] | undefined) ?? []).map((artist) => [artist.id, artist]));
+      for (const id of batch) {
+        const artwork = found.get(id)?.attributes?.editorialArtwork;
+        const logo = artwork?.musicContentColorLogoTrimmed ?? artwork?.musicContentWhiteLogoTrimmed;
+        logos.set(id, logo?.url ? logo : null);
+      }
+    }
+    return logos;
   }
 
   /** Pair each artist's catalog-language name with the English one, choosing between them as matchTrackAt does. */

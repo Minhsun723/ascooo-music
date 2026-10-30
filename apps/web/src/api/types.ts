@@ -82,6 +82,8 @@ export interface Artist {
   id: number;
   name: string;
   artworkId: string | null;
+  /** Apple Music's logo for the artist, on a transparent background. Only on the artist detail response. */
+  logoId?: string | null;
   trackCount?: number;
 }
 
