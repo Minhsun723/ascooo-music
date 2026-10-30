@@ -2,6 +2,7 @@
   "id": "/",
   "name": "Ascooo Music",
   "short_name": "Ascooo Music",
+  "description": "在 Ascooo Music 上收聽高音質音樂",
   "start_url": "/discover",
   "scope": "/",
   "icons": [
@@ -28,6 +29,22 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshots/discover-wide.jpg",
+      "sizes": "1920x1350",
+      "type": "image/jpeg",
+      "form_factor": "wide",
+      "label": "Ascooo Music 首頁"
+    },
+    {
+      "src": "/screenshots/discover-narrow.jpg",
+      "sizes": "1170x2532",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "Ascooo Music 首頁"
     }
   ],
   "theme_color": "#080808",
