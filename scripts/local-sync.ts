@@ -116,12 +116,25 @@ interface ImportedArtist {
   artworkId: string | null;
   /** Apple's logo for the artist. Unset without one, so the tracks of most artists keep their sync hash. */
   logoId?: string;
+  /** Apple's motion artwork for the artist. Unset without one, as logoId. */
+  video?: ArtistVideo;
+  /** Apple's 4:1 header image for the artist. Unset without one, as logoId. */
+  bannerId?: string;
 }
 
-/** An artist's Apple logo as last looked up, keyed by Apple artist ID in the manifest. */
-interface CachedLogo {
+/** A motion artwork as the Worker stores it: Apple's HLS playlist, and a still of it in R2. */
+interface ArtistVideo {
+  url: string;
+  previewId: string;
+}
+
+/** The top of an artist's Apple page as last looked up, keyed by Apple artist ID in the manifest. */
+interface CachedArtistPage {
   /** Null when Apple has no logo for the artist. */
-  artworkId: string | null;
+  logoId: string | null;
+  video: ArtistVideo | null;
+  /** Absent in entries looked up before banners were, which are looked up again. */
+  bannerId?: string | null;
   checkedAt: number;
 }
 
@@ -132,8 +145,8 @@ interface SyncManifest {
   scanId: string;
   artworks: PreparedArtwork[];
   tracks: PreparedTrack[];
-  /** Absent in manifests written before logos were looked up. */
-  artistLogos?: Record<string, CachedLogo>;
+  /** Absent in manifests written before artist pages were looked up. */
+  artistPages?: Record<string, CachedArtistPage>;
 }
 
 interface UploadState {
@@ -377,7 +390,7 @@ async function addAppleArtwork(
 
   const job = (async () => {
     const variants = await Promise.all(ARTWORK_SIZES.map(async (size): Promise<PreparedArtworkVariant> => {
-      const response = await fetch(appleArtworkUrl(artwork.url, size));
+      const response = await fetch(appleArtworkUrl(artwork, size));
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       let data = Buffer.from(await response.arrayBuffer());
       let metadata = await sharp(data, { failOn: 'none' }).metadata();
@@ -627,46 +640,56 @@ async function attachCredits(
 }
 
 /**
- * Give every credited artist the logo Apple shows on their page. Apple adds
- * logos over time, so each artist is looked up again after the refresh
- * interval, in a few batched requests. A logo that fails to download is not
- * recorded, so the next sync tries it again.
+ * Give every credited artist the logo, motion artwork and banner Apple shows
+ * at the top of their page. Apple adds them over time, so each artist is
+ * looked up again after the refresh interval, in a few batched requests. The
+ * video stays on Apple's CDN; only its still is saved. An artist whose images
+ * fail to download keeps what was recorded before, so the next sync tries
+ * again.
  */
-async function attachArtistLogos(
+async function attachArtistPages(
   tracks: PreparedTrack[],
   apple: AppleMusicClient | null,
-  previous: Record<string, CachedLogo> | undefined,
+  previous: Record<string, CachedArtistPage> | undefined,
   artworks: Map<string, PreparedArtwork>,
-  addLogo: (artwork: AppleArtwork) => Promise<string | null>,
-): Promise<Record<string, CachedLogo>> {
+  addArtwork: (artwork: AppleArtwork) => Promise<string | null>,
+): Promise<Record<string, CachedArtistPage>> {
   const credited = (track: PreparedTrack) => [...track.artists ?? [], ...track.albumArtists ?? []];
   const ids = new Set(tracks.flatMap((track) => credited(track).map((artist) => artist.appleId)));
-  const logos: Record<string, CachedLogo> = {};
+  const pages: Record<string, CachedArtistPage> = {};
   for (const id of ids) {
-    const logo = previous?.[id];
-    if (logo && (!logo.artworkId || artworks.has(logo.artworkId))) logos[id] = logo;
+    const page = previous?.[id];
+    if (page && [page.logoId, page.video?.previewId, page.bannerId].every((artworkId) => !artworkId || artworks.has(artworkId))) pages[id] = page;
   }
-  const stale = [...ids].filter((id) => !logos[id] || Date.now() - logos[id].checkedAt >= refreshInterval());
+  const stale = [...ids].filter((id) =>
+    !pages[id] || pages[id].bannerId === undefined || Date.now() - pages[id].checkedAt >= refreshInterval());
   if (apple && stale.length) {
     try {
-      const found = await apple.artistLogos(stale);
+      const found = await apple.artistPages(stale);
       const checkedAt = Date.now();
       await mapConcurrent(stale, 4, async (id) => {
-        const logo = found.get(id);
-        const artworkId = logo ? await addLogo(logo) : null;
-        if (!logo || artworkId) logos[id] = { artworkId, checkedAt };
+        const { logo, video, banner } = found.get(id) ?? { logo: null, video: null, banner: null };
+        const logoId = logo ? await addArtwork(logo) : null;
+        const previewId = video ? await addArtwork(video.preview) : null;
+        const bannerId = banner ? await addArtwork(banner) : null;
+        if (!!logo !== !!logoId || !!video !== !!previewId || !!banner !== !!bannerId) return;
+        pages[id] = { logoId, video: video && previewId ? { url: video.url, previewId } : null, bannerId, checkedAt };
       });
-      console.log(`  Apple Music 歌手 logo：查詢 ${stale.length} 位`);
+      console.log(`  Apple Music 歌手 logo、動態背景與橫幅：查詢 ${stale.length} 位`);
     } catch (error) {
-      warnOnce('apple-logos', `  Apple Music 歌手 logo 暫停，下次同步再補：${error instanceof Error ? error.message : String(error)}`);
+      warnOnce('apple-artist-pages', `  Apple Music 歌手 logo、動態背景與橫幅暫停，下次同步再補：${error instanceof Error ? error.message : String(error)}`);
     }
   }
   for (const artist of tracks.flatMap(credited)) {
-    const logoId = logos[artist.appleId]?.artworkId;
-    if (logoId) artist.logoId = logoId;
+    const page = pages[artist.appleId];
+    if (page?.logoId) artist.logoId = page.logoId;
     else delete artist.logoId;
+    if (page?.video) artist.video = page.video;
+    else delete artist.video;
+    if (page?.bannerId) artist.bannerId = page.bannerId;
+    else delete artist.bannerId;
   }
-  return logos;
+  return pages;
 }
 
 const genreKey = (name: string) => name.normalize('NFKC').toLocaleLowerCase('en').replace(/[\s_-]+/g, '');
@@ -1202,7 +1225,7 @@ async function prepare(): Promise<SyncManifest> {
   });
   tracks.push(...preparedTracks);
   await attachCredits(tracks, apple, root, (artwork) => addAppleArtwork(artworks, appleArtworkJobs, artwork));
-  const artistLogos = await attachArtistLogos(tracks, apple, previous?.artistLogos, artworks,
+  const artistPages = await attachArtistPages(tracks, apple, previous?.artistPages, artworks,
     (artwork) => addAppleArtwork(artworks, appleArtworkJobs, artwork));
   await attachGenres(tracks, apple);
   const pairing = attachAac51(tracks, altFiles, previousByPath);
@@ -1214,7 +1237,7 @@ async function prepare(): Promise<SyncManifest> {
     track.appleMusic?.artistArtworkId,
     ...[...track.appleMusic?.credits?.artists ?? [], ...track.appleMusic?.credits?.albumArtists ?? []]
       .map((credit) => credit.artworkId),
-    ...[...track.artists ?? [], ...track.albumArtists ?? []].map((artist) => artist.logoId),
+    ...[...track.artists ?? [], ...track.albumArtists ?? []].flatMap((artist) => [artist.logoId, artist.video?.previewId, artist.bannerId]),
   ]).filter((id): id is string => !!id));
   console.log(`本機解析完成：${audioCount} 首；沿用 ${reused} 首，重新解析 ${audioCount - reused} 首`);
 
@@ -1225,7 +1248,7 @@ async function prepare(): Promise<SyncManifest> {
     scanId,
     artworks: [...artworks.values()].filter((artwork) => referencedArtwork.has(artwork.id)),
     tracks,
-    artistLogos,
+    artistPages,
   };
 }
 

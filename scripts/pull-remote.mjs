@@ -81,6 +81,8 @@ async function pullArtwork() {
       UNION SELECT artwork_id FROM albums WHERE artwork_id IS NOT NULL
       UNION SELECT artwork_id FROM artists WHERE artwork_id IS NOT NULL
       UNION SELECT logo_artwork_id FROM artists WHERE logo_artwork_id IS NOT NULL
+      UNION SELECT motion_preview_id FROM artists WHERE motion_preview_id IS NOT NULL
+      UNION SELECT banner_artwork_id FROM artists WHERE banner_artwork_id IS NOT NULL
     `).all();
     const ids = results.map((row) => row.id).filter((id) => /^[a-f0-9]{40}$/.test(id));
     const jobs = ids.flatMap((id) => ARTWORK_SIZES.map((size) => ({ id, size, key: `art/${ARTWORK_ASSET_VERSION}/${id}/${size}.webp` })));

@@ -144,7 +144,7 @@ npm run sync:local
 這個指令會依序：
 
 1. 在本機並行掃描 PikPak WebDAV，解析新增或變動的音訊標籤、歌詞與封面。
-2. 以 Apple Music 日本目錄配對歌曲，補上日文顯示名稱與藝人照片；配對結果只快取在本機及必要的 D1 欄位。Apple 有提供藝人 logo（透明背景的藝人名稱字樣）時一併保存，在桌面版歌手頁顯示於彩條上方；logo 同樣依 `APPLE_MUSIC_REFRESH_DAYS` 定期重新確認。
+2. 以 Apple Music 日本目錄配對歌曲，補上日文顯示名稱與藝人照片；配對結果只快取在本機及必要的 D1 欄位。Apple 有提供藝人 logo（透明背景的藝人名稱字樣）時一併保存，在桌面版歌手頁顯示於彩條上方。有動態背景影片的藝人只保存影片網址與一張預覽圖，影片在桌面版歌手頁從 Apple CDN 串流播放（手機版與開啟「減少動態效果」時只顯示圖片）；沒有影片的藝人改用 Apple 的 4:1 橫幅當桌面版背景，兩者都沒有才用藝人照片。logo、動態背景與橫幅同樣依 `APPLE_MUSIC_REFRESH_DAYS` 定期重新確認。
 3. 使用你的訂閱 Token 取得 TTML。原始檔會以訂閱 storefront 的 Apple Music song ID 命名並寫入 PikPak `/ascooo-music/lyrics`，例如 `1446781787.ttml`；已存在的 TTML 會直接重用，同一輪有多首歌曲配到相同 ID 時也只會讀取或下載一次。
 4. 專輯封面由 Sharp 產生 512 px 與 2000 px WebP；Apple CDN 已提供 WebP 的藝人照片則直接保存，只有 CDN 未回傳 WebP 時才轉檔。
 5. 將完整結果寫到被 Git 忽略的 `.sync-cache/library.json`。

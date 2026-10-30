@@ -2,8 +2,9 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, ty
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom';
 import { api, artUrl } from './api/client';
-import type { Album, Artist, ArtistCredit, HomeData, ManagedTrack, ManagedTrackStats, ManagedUser, Track } from './api/types';
+import type { Album, Artist, ArtistCredit, ArtistVideo, HomeData, ManagedTrack, ManagedTrackStats, ManagedUser, Track } from './api/types';
 import { formatLongDuration, formatReleaseDate } from './lib/format';
+import { useMediaQuery } from './lib/media-query';
 import { canPlayAtmos, usePlayer } from './store/player';
 import { IMMERSIVE_STYLES, LYRICS_FONTS, LYRICS_MODES, SURROUND_FORMATS, usePreferences, type LyricsMode, type SurroundFormat } from './store/preferences';
 import { useSession } from './store/session';
@@ -12,6 +13,7 @@ import { toast } from './store/toast';
 import { Artwork } from './components/Artwork';
 import { AtmosMark, hasAtmosMark, SurroundLogo } from './components/DolbyLogo';
 import { AlbumGrid, ArtistGrid, PlaylistGrid } from './components/MediaGrid';
+import { MotionLoop } from './components/MotionLoop';
 import { RubberSegment } from './components/RubberSegment';
 import { TrackList } from './components/TrackList';
 import { IconChevronLeft, IconDisc, IconEye, IconEyeOff, IconFont, IconHeart, IconLogout, IconMore, IconMusic, IconPlay, IconPlus, IconSearch, IconShuffle, IconSparkle, IconSync, IconTrash, IconUser, IconWave } from './components/Icons';
@@ -60,19 +62,33 @@ function SectionHeading({ title, link, linkLabel = '查看全部' }: { title: st
 
 const HOME_CACHE_TTL = 30_000;
 const LIBRARY_CACHE_TTL = 120_000;
-const ALBUM_CACHE_TTL = 120_000;
-const ALBUM_CACHE_LIMIT = 20;
+// Album and artist pages: a page returned to from one of its links renders at once, so its scroll position is
+// restored before it paints instead of after the header has flashed at the top.
+const DETAIL_CACHE_TTL = 120_000;
+const DETAIL_CACHE_LIMIT = 20;
+/** How long motion artwork plays before the hero's art and copy step aside for it. */
+const HERO_RECEDE_DELAY = 3000;
+/** On-screen space between the artist's name and the buttons once the hero has stepped aside. */
+const HERO_RECEDE_GAP = 20;
 type AlbumData = Awaited<ReturnType<typeof api.album>>;
+type ArtistData = Awaited<ReturnType<typeof api.artist>>;
+type DetailCache<T> = Map<string, { cachedAt: number; data: T }>;
 let homeCache: { userId: number; cachedAt: number; data: HomeData } | null = null;
-const albumCache = new Map<string, { cachedAt: number; data: AlbumData }>();
+const albumCache: DetailCache<AlbumData> = new Map();
+const artistCache: DetailCache<ArtistData> = new Map();
 
-function cacheAlbum(key: string, data: AlbumData) {
-  albumCache.delete(key);
-  albumCache.set(key, { cachedAt: Date.now(), data });
-  if (albumCache.size > ALBUM_CACHE_LIMIT) {
-    const oldestKey = albumCache.keys().next().value;
-    if (oldestKey !== undefined) albumCache.delete(oldestKey);
+function cacheDetail<T>(cache: DetailCache<T>, key: string, data: T) {
+  cache.delete(key);
+  cache.set(key, { cachedAt: Date.now(), data });
+  if (cache.size > DETAIL_CACHE_LIMIT) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey !== undefined) cache.delete(oldestKey);
   }
+}
+
+function cachedDetail<T>(cache: DetailCache<T>, key: string): T | null {
+  const entry = cache.get(key);
+  return entry && Date.now() - entry.cachedAt < DETAIL_CACHE_TTL ? entry.data : null;
 }
 
 export function HomePage() {
@@ -158,10 +174,59 @@ function CreditLinks({ artists }: { artists: ArtistCredit[] }) {
   return <>{artists.map((artist, index) => <Fragment key={artist.id}>{index === 0 ? null : index === artists.length - 1 ? ' & ' : ', '}<Link to={`/artist/${artist.id}`} state={{ pageTitle: artist.name }} className="collection-hero__subtitle-link">{artist.name}</Link></Fragment>)}</>;
 }
 
-function CollectionHero({ artworkId, logoId, title, subtitle, subtitleArtists, meta = '', badge, tracks, compactTitle = false, detailLayout = false, mobileBackAction, menu }: { artworkId?: string | null; logoId?: string | null; title: string; subtitle?: string; subtitleArtists?: ArtistCredit[]; meta?: string; badge?: React.ReactNode; tracks: Track[]; compactTitle?: boolean; detailLayout?: boolean; mobileBackAction?: React.ReactNode; menu?: React.ReactNode }) {
+function CollectionHero({ artworkId, logoId, video, bannerId, title, subtitle, subtitleArtists, meta = '', badge, tracks, compactTitle = false, detailLayout = false, fullBleed = false, mobileBackAction, menu }: { artworkId?: string | null; logoId?: string | null; video?: ArtistVideo | null; bannerId?: string | null; title: string; subtitle?: string; subtitleArtists?: ArtistCredit[]; meta?: string; badge?: React.ReactNode; tracks: Track[]; compactTitle?: boolean; detailLayout?: boolean; fullBleed?: boolean; mobileBackAction?: React.ReactNode; menu?: React.ReactNode }) {
   const playList = usePlayer((s) => s.playList);
   const hasMeta = !!(meta || badge);
-  return <header className={`collection-hero${compactTitle ? ' collection-hero--compact-title' : ''}${detailLayout ? ' collection-hero--detail' : ''}`}>{mobileBackAction ? <div className="collection-hero__mobile-back">{mobileBackAction}</div> : null}{menu ? <div className="collection-hero__menu">{menu}</div> : null}<Artwork artworkId={artworkId} title={title} artist={subtitle} className="collection-hero__art" loading="eager" size={2000} /><div className="collection-hero__copy"><div className="collection-hero__details"><h1>{title}</h1>{subtitle ? <p>{subtitleArtists?.length ? <CreditLinks artists={subtitleArtists} /> : subtitle}</p> : null}{hasMeta ? <small className="collection-hero__meta">{meta ? <span>{meta}</span> : null}{badge ? <>{meta ? <i aria-hidden="true">·</i> : null}{badge}</> : null}</small> : null}</div><div className="collection-hero__actions"><button type="button" className="primary-button" disabled={!tracks.length} onClick={() => playList(tracks)}><IconPlay size={18} />播放</button><button type="button" className="round-button round-button--outline" disabled={!tracks.length} aria-label="隨機播放" onClick={() => playList(tracks, 0, { shuffle: true })}><IconShuffle size={19} /></button></div></div>{logoId ? <img key={logoId} className="collection-hero__logo" src={artUrl(logoId, 2000)!} alt="" loading="lazy" decoding="async" draggable={false} onError={(event) => { event.currentTarget.hidden = true; }} /> : null}</header>;
+  // Desktop widths take the wide images: the motion artwork (or its still), else Apple's banner. Photos are often
+  // too small to fill that width sharply. Phones keep the photo behind the stacked hero.
+  const wide = useMediaQuery('(min-width: 901px)');
+  const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
+  const motion = fullBleed && wide ? video : null;
+  const wideStill = motion?.previewId ?? (fullBleed && wide ? bannerId : null);
+  const backdropSrc = fullBleed ? artUrl(wideStill ?? artworkId, 2000) : null;
+  // Once the motion artwork has played a few seconds, the art and copy step aside to the bottom-left so the video
+  // shows. --recede-y is how far down that is, which depends on the hero's height; --actions-lift is how far the
+  // buttons rise, unscaled, to sit under the name in place of the counts; --copy-drop lowers both to the art's foot.
+  const heroRef = useRef<HTMLElement>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
+  const [videoPlaying, setVideoPlaying] = useState(false);
+  const [receded, setReceded] = useState(false);
+  useEffect(() => {
+    if (!videoPlaying) return;
+    const timer = window.setTimeout(() => setReceded(true), HERO_RECEDE_DELAY);
+    return () => window.clearTimeout(timer);
+  }, [videoPlaying]);
+  useLayoutEffect(() => {
+    const hero = heroRef.current;
+    const main = mainRef.current;
+    if (!receded || !hero || !main) return;
+    const place = () => {
+      const bottom = hero.clientHeight - parseFloat(getComputedStyle(hero).paddingBottom);
+      main.style.setProperty('--recede-y', `${bottom - main.offsetTop - main.offsetHeight}px`);
+      const name = main.querySelector('h1');
+      const actions = main.querySelector<HTMLElement>('.collection-hero__actions');
+      const art = main.querySelector<HTMLElement>('.collection-hero__art');
+      if (!name || !actions || !art) return;
+      // Untransformed offsets within main. The copy's transform makes it its children's offsetParent.
+      const topIn = (element: HTMLElement) => {
+        let top = 0;
+        for (let node: HTMLElement | null = element; node && node !== main; node = node.offsetParent as HTMLElement | null) top += node.offsetTop;
+        return top;
+      };
+      const scale = parseFloat(getComputedStyle(main).getPropertyValue('--recede-scale'));
+      const lift = topIn(actions) - topIn(name) - name.offsetHeight - HERO_RECEDE_GAP / scale;
+      main.style.setProperty('--actions-lift', `${lift}px`);
+      // Then the name and buttons drop together until the buttons, at full size, end level with the art.
+      const buttonsBottom = topIn(actions) - lift + actions.offsetHeight / scale;
+      main.style.setProperty('--copy-drop', `${topIn(art) + art.offsetHeight - buttonsBottom}px`);
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(hero);
+    return () => observer.disconnect();
+  }, [receded]);
+  const body = <><Artwork artworkId={artworkId} title={title} artist={subtitle} className="collection-hero__art" loading="eager" size={2000} /><div className="collection-hero__copy"><div className="collection-hero__details"><h1>{title}</h1>{subtitle ? <p>{subtitleArtists?.length ? <CreditLinks artists={subtitleArtists} /> : subtitle}</p> : null}{hasMeta ? <small className="collection-hero__meta">{meta ? <span>{meta}</span> : null}{badge ? <>{meta ? <i aria-hidden="true">·</i> : null}{badge}</> : null}</small> : null}</div><div className="collection-hero__actions"><button type="button" className="primary-button" disabled={!tracks.length} onClick={() => playList(tracks)}><IconPlay size={18} />播放</button><button type="button" className="round-button round-button--outline" disabled={!tracks.length} aria-label="隨機播放" onClick={() => playList(tracks, 0, { shuffle: true })}><IconShuffle size={19} /></button></div></div></>;
+  return <header ref={heroRef} className={`collection-hero${compactTitle ? ' collection-hero--compact-title' : ''}${detailLayout ? ' collection-hero--detail' : ''}${fullBleed ? ' collection-hero--full-bleed' : ''}${receded ? ' collection-hero--receded' : ''}`}>{mobileBackAction ? <div className="collection-hero__mobile-back">{mobileBackAction}</div> : null}{menu ? <div className="collection-hero__menu">{menu}</div> : null}{backdropSrc ? <div className={`collection-hero__backdrop${wideStill ? ' collection-hero__backdrop--wide' : ''}${motion ? ' collection-hero__backdrop--motion' : ''}`}><img key={backdropSrc} src={backdropSrc} alt="" decoding="async" draggable={false} onError={(event) => { event.currentTarget.hidden = true; }} />{motion && !reducedMotion ? <MotionLoop src={motion.url} onPlaying={() => setVideoPlaying(true)} /> : null}</div> : null}{fullBleed ? <div ref={mainRef} className="collection-hero__main">{body}</div> : body}{logoId ? <img key={logoId} className="collection-hero__logo" src={artUrl(logoId, 2000)!} alt="" loading="lazy" decoding="async" draggable={false} onError={(event) => { event.currentTarget.hidden = true; }} /> : null}</header>;
 }
 
 export function AlbumPage() {
@@ -169,11 +234,10 @@ export function AlbumPage() {
   const navigate = useNavigate();
   const userId = useSession((s) => s.user?.id ?? 0);
   const cacheKey = `${userId}:${id}`;
-  const cachedEntry = albumCache.get(cacheKey);
-  const cached = cachedEntry && Date.now() - cachedEntry.cachedAt < ALBUM_CACHE_TTL ? cachedEntry.data : null;
+  const cached = cachedDetail(albumCache, cacheKey);
   const request = useRequest<AlbumData>(async () => {
     const data = await api.album(id);
-    cacheAlbum(cacheKey, data);
+    cacheDetail(albumCache, cacheKey, data);
     return data;
   }, [id, userId], cached, cached !== null);
   useDynamicPageTitle(request.data?.album.title);
@@ -193,7 +257,14 @@ export function AlbumPage() {
 export function ArtistPage() {
   const id = Number(useParams().id);
   const navigate = useNavigate();
-  const request = useRequest(() => api.artist(id), [id]);
+  const userId = useSession((s) => s.user?.id ?? 0);
+  const cacheKey = `${userId}:${id}`;
+  const cached = cachedDetail(artistCache, cacheKey);
+  const request = useRequest<ArtistData>(async () => {
+    const data = await api.artist(id);
+    cacheDetail(artistCache, cacheKey, data);
+    return data;
+  }, [id, userId], cached, cached !== null);
   useDynamicPageTitle(request.data?.artist.name);
   if (request.loading) return <LoadingBlock rows={8} />;
   if (request.error || !request.data) return <RequestError message={request.error} retry={request.reload} />;
@@ -204,7 +275,7 @@ export function ArtistPage() {
     else navigate('/library?tab=artists', { replace: true });
   };
   const mobileBackAction = <button type="button" className="collection-back-button" aria-label="返回" onClick={goBack}><IconChevronLeft size={20} /></button>;
-  return <><CollectionHero artworkId={artist.artworkId} logoId={artist.logoId} title={artist.name} meta={`${albums.length} 張專輯 · ${tracks.length} 首熱門歌曲`} tracks={tracks} compactTitle detailLayout mobileBackAction={mobileBackAction} /><section className="page-section page-section--tight"><SectionHeading title="熱門歌曲" link={`/artist/${artist.id}/tracks`} linkLabel="所有歌曲" /><TrackList tracks={tracks.slice(0, 10)} /></section>{albums.length ? <section className="page-section"><SectionHeading title="專輯" /><AlbumGrid albums={albums} /></section> : null}</>;
+  return <><CollectionHero artworkId={artist.artworkId} logoId={artist.logoId} video={artist.video} bannerId={artist.bannerId} title={artist.name} meta={`${albums.length} 張專輯 · ${tracks.length} 首熱門歌曲`} tracks={tracks} compactTitle detailLayout fullBleed mobileBackAction={mobileBackAction} /><section className="page-section page-section--tight"><SectionHeading title="熱門歌曲" link={`/artist/${artist.id}/tracks`} linkLabel="所有歌曲" /><TrackList tracks={tracks.slice(0, 10)} /></section>{albums.length ? <section className="page-section"><SectionHeading title="專輯" /><AlbumGrid albums={albums} /></section> : null}</>;
 }
 
 export function ArtistTracksPage() {

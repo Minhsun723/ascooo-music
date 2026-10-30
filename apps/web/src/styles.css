@@ -585,6 +585,42 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
 .collection-hero--detail .collection-hero__meta > i { display: inline; }
 .collection-hero--detail .collection-hero__meta > .dolby-logo { transform: translateY(0); }
 .collection-hero--detail .collection-hero__actions { margin-top: clamp(40px, 5vw, 76px); }
+/* Full-bleed: the photo also fills the whole hero behind the art, darkened toward the copy and the edges. The hero
+   runs up under the top bar (78px), which starts clear and takes on its usual backdrop over the first 240px of
+   scrolling. Without scroll-driven animations, the zero-length animation ends filled in, as the bar always was. */
+.collection-hero--full-bleed { min-height: calc(clamp(440px, 58vh, 640px) + 78px); margin-top: calc(-24px - 78px); padding-top: calc(60px + 78px); background: #101012; }
+.app-shell__body:has(.collection-hero--full-bleed) .topbar { background: none; backdrop-filter: none; }
+.app-shell__body:has(.collection-hero--full-bleed) .topbar::before { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(to bottom, rgba(8,8,8,.96) 55%, rgba(8,8,8,.78)); backdrop-filter: blur(18px); animation: topbar-fill linear both; animation-timeline: scroll(root); animation-range: 0 240px; }
+@keyframes topbar-fill { from { opacity: 0; } }
+.collection-hero__backdrop { position: absolute; inset: 0; overflow: hidden; }
+.collection-hero__backdrop img, .collection-hero__backdrop video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 28%; }
+/* Motion artwork, its still and banners are framed wide around the center, unlike square photos. A 16:9 video loses
+   its top and bottom in the wide hero, so it sits a little low to keep more of the top. */
+.collection-hero__backdrop--wide img, .collection-hero__backdrop video { object-position: center 30%; }
+.collection-hero__backdrop video { opacity: 0; transition: opacity .9s ease; }
+.collection-hero__backdrop video[data-playing] { opacity: 1; }
+.collection-hero__backdrop::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(8,8,8,.62) 0, rgba(8,8,8,0) 180px), linear-gradient(to top, rgba(8,8,8,.92) 0%, rgba(8,8,8,.42) 40%, rgba(8,8,8,.18) 72%), linear-gradient(to right, rgba(8,8,8,.7) 0%, rgba(8,8,8,.28) 62%, rgba(8,8,8,.12) 100%); }
+/* Motion artwork is there to be seen: darkened only where the top bar, the copy and the page below meet it. */
+.collection-hero__backdrop--motion::after { background: linear-gradient(to bottom, rgba(8,8,8,.5) 0, rgba(8,8,8,0) 160px), linear-gradient(to top, rgba(8,8,8,.9) 0%, rgba(8,8,8,.45) 18%, rgba(8,8,8,.1) 45%, rgba(8,8,8,0) 65%), linear-gradient(to right, rgba(8,8,8,.5) 0%, rgba(8,8,8,.15) 45%, rgba(8,8,8,0) 70%); }
+/* Past 1540px the page drops its max width so the hero reaches both edges of the content area; the sections keep
+   the old column, and the hero's contents, logo and gradient rule line up with it as if the hero were 1540px wide. */
+.page:has(> .collection-hero--full-bleed) { --page-gutter: clamp(24px, 3.5vw, 56px); width: 100%; }
+.page:has(> .collection-hero--full-bleed) > :not(.collection-hero) { max-width: calc(1540px - 2 * var(--page-gutter)); margin-inline: auto; }
+.collection-hero--full-bleed { padding-inline: max(var(--page-gutter), (100% + 2 * var(--page-gutter) - 1540px) / 2 + var(--page-gutter)); }
+.collection-hero--full-bleed::after, .collection-hero--full-bleed .collection-hero__logo { right: calc((100% - min(100%, 1540px)) / 2 + min(100%, 1540px) * .05); width: calc(min(100%, 1540px) * .32); }
+.collection-hero--full-bleed h1 { text-shadow: 0 2px 24px rgba(0,0,0,.35); }
+.collection-hero--full-bleed .collection-hero__meta { color: rgba(255,255,255,.72); }
+.collection-hero--full-bleed .collection-hero__actions { margin-top: 32px; }
+/* The art and copy as one box on the hero's columns, so they can step aside together to the bottom-left: smaller,
+   with the counts faded out and the buttons, kept at full size, closed up under the name. Everything follows one
+   animated --recede (0 to 1), so the buttons' counter-scale cancels the box's exactly on every frame.
+   CollectionHero measures --recede-y, --actions-lift and --copy-drop. */
+@property --recede { syntax: '<number>'; inherits: true; initial-value: 0; }
+.collection-hero__main { --recede-scale: .64; --scale: calc(1 - (1 - var(--recede-scale)) * var(--recede)); position: relative; z-index: 1; grid-column: 1 / -1; align-self: center; display: grid; grid-template-columns: subgrid; align-items: center; transform-origin: left bottom; transform: translateY(calc(var(--recede-y, 0px) * var(--recede))) scale(var(--scale)); transition: --recede 1.2s var(--ease-out); }
+.collection-hero--receded .collection-hero__main { --recede: 1; }
+.collection-hero__main .collection-hero__copy { transform: translateY(calc(var(--copy-drop, 0px) * var(--recede))); }
+.collection-hero__main .collection-hero__meta { opacity: calc(1 - 2 * var(--recede)); }
+.collection-hero__main .collection-hero__actions { transform-origin: left top; transform: translateY(calc(var(--actions-lift, 0px) * -1 * var(--recede))) scale(calc(1 / var(--scale))); }
 .collection-hero__mobile-back { display: none; }
 .collection-hero__menu { position: absolute; z-index: 3; top: 20px; right: clamp(20px, 3vw, 44px); }
 .collection-hero__menu .menu-popover { top: calc(100% + 6px); right: 0; bottom: auto; }
@@ -859,6 +895,11 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
   .collection-hero { grid-template-columns: minmax(150px, 230px) minmax(0,1fr); min-height: 330px; margin: -18px -18px 0; padding-inline: 18px; }
   .collection-hero__mobile-back { position: absolute; z-index: 2; top: 14px; left: 18px; display: flex; }
   .collection-hero__logo { display: none; }
+  /* Under the 66px top bar, as on desktop. */
+  .collection-hero.collection-hero--full-bleed { margin-top: calc(-18px - 66px); padding-top: calc(76px + 66px); }
+  .collection-hero--full-bleed .collection-hero__mobile-back { top: calc(14px + 66px); }
+  /* No motion artwork plays here, so the art and copy keep the narrow layouts' own placement. */
+  .collection-hero__main, .collection-hero--receded .collection-hero__main { display: contents; --recede: 0; }
   /* Detail heroes carry the back button: 14px offset + 44px button + 18px gap before the art. */
   .collection-hero--detail { padding-top: 76px; }
   /* Pin the art to the top so a multi-line title can't push it away from the back button. */
@@ -890,6 +931,7 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
   .collection-hero.collection-hero--detail .collection-hero__details > p { color: #fff; font-size: 1.02rem; font-weight: 650; letter-spacing: .012em; }
   .collection-hero.collection-hero--detail .collection-hero__meta { justify-content: center; gap: 6px; margin-top: 4px; color: rgba(255,255,255,.64); font-size: .68rem; line-height: 1.35; }
   .collection-hero.collection-hero--detail .collection-hero__actions { justify-content: center; margin-top: 18px; }
+  .collection-hero.collection-hero--full-bleed { padding-top: calc(18px + 66px); }
   .media-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 14px; }
   .media-grid--artists { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .media-grid--shelf > :nth-child(n+7) { display: none; }

@@ -98,7 +98,26 @@ interface CatalogArtist {
 
 interface AppleArtist {
   id: string;
-  attributes?: { editorialArtwork?: Record<string, AppleArtwork | undefined> };
+  attributes?: {
+    editorialArtwork?: Record<string, AppleArtwork | undefined>;
+    editorialVideo?: Record<string, { video?: string; previewFrame?: AppleArtwork } | undefined>;
+  };
+}
+
+/** Apple's motion artwork for an artist: a silent loop of about half a minute. */
+export interface AppleMotionVideo {
+  /** HLS master playlist on Apple's CDN. */
+  url: string;
+  /** A still of the video, also 16:9. */
+  preview: AppleArtwork;
+}
+
+/** What Apple shows at the top of an artist's page, beyond their photo. */
+export interface AppleArtistPage {
+  logo: AppleArtwork | null;
+  video: AppleMotionVideo | null;
+  /** A 4:1 header image without text, 4320 px wide, for pages without a video. */
+  banner: AppleArtwork | null;
 }
 
 interface CatalogItem {
@@ -471,27 +490,37 @@ export class AppleMusicClient {
   }
 
   /**
-   * The logo Apple shows on each artist's page: their name in their own
-   * lettering, trimmed to its edges on a transparent background. About a
-   * quarter of artists have one; the rest map to null. The color version is
-   * preferred over the white one. brandLogo is not a logo for every artist
-   * (for some it is a square portrait), so it is never used.
+   * The logo and motion artwork Apple shows at the top of each artist's page.
+   * The logo is their name in their own lettering, trimmed to its edges on a
+   * transparent background; the color version is preferred over the white
+   * one. brandLogo is not a logo for every artist (for some it is a square
+   * portrait), so it is never used. The video is the 16:9 one Apple plays
+   * behind the logo, and the banner (bannerUber) the still header it shows
+   * otherwise. About a quarter of artists have each.
    */
-  async artistLogos(ids: string[]): Promise<Map<string, AppleArtwork | null>> {
-    const logos = new Map<string, AppleArtwork | null>();
+  async artistPages(ids: string[]): Promise<Map<string, AppleArtistPage>> {
+    const pages = new Map<string, AppleArtistPage>();
     const unique = [...new Set(ids)];
     // The artists resource takes at most 50 IDs per request.
     for (let i = 0; i < unique.length; i += 50) {
       const batch = unique.slice(i, i + 50);
-      const payload = await this.get(`catalog/${this.storefront}/artists`, { ids: batch.join(','), extend: 'editorialArtwork' });
+      const payload = await this.get(`catalog/${this.storefront}/artists`, {
+        ids: batch.join(','),
+        extend: 'editorialArtwork,editorialVideo',
+      });
       const found = new Map(((payload.data as unknown as AppleArtist[] | undefined) ?? []).map((artist) => [artist.id, artist]));
       for (const id of batch) {
-        const artwork = found.get(id)?.attributes?.editorialArtwork;
+        const { editorialArtwork: artwork, editorialVideo: videos } = found.get(id)?.attributes ?? {};
         const logo = artwork?.musicContentColorLogoTrimmed ?? artwork?.musicContentWhiteLogoTrimmed;
-        logos.set(id, logo?.url ? logo : null);
+        const video = videos?.motionArtistFullscreen16x9 ?? videos?.motionArtistWide16x9;
+        pages.set(id, {
+          logo: logo?.url ? logo : null,
+          video: video?.video && video.previewFrame?.url ? { url: video.video, preview: video.previewFrame } : null,
+          banner: artwork?.bannerUber?.url ? artwork.bannerUber : null,
+        });
       }
     }
-    return logos;
+    return pages;
   }
 
   /** Pair each artist's catalog-language name with the English one, choosing between them as matchTrackAt does. */
@@ -635,10 +664,18 @@ export class AppleMusicClient {
   }
 }
 
-export function appleArtworkUrl(template: string, size: number): string {
-  return template
-    .replace(/\{w\}/g, String(size))
-    .replace(/\{h\}/g, String(size))
+/**
+ * The artwork as a WebP that fits a `size` px square, in its own proportions.
+ * The size is spelled out in the URL because some templates crop to the
+ * requested shape ("sr", as on 4:1 banners) instead of fitting inside it
+ * ("bb"); neither is asked for more than the original.
+ */
+export function appleArtworkUrl(artwork: AppleArtwork, size: number): string {
+  const { width, height } = artwork;
+  const scale = width > 0 && height > 0 ? Math.min(1, size / Math.max(width, height)) : 0;
+  return artwork.url
+    .replace(/\{w\}/g, String(scale ? Math.round(width * scale) : size))
+    .replace(/\{h\}/g, String(scale ? Math.round(height * scale) : size))
     .replace(/\{f\}/g, 'webp')
     .replace(/\.(?:jpg|jpeg|png)(?=\?|$)/i, '.webp');
 }
