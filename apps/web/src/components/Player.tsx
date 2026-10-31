@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, artUrl } from '../api/client';
 import type { Lyrics, Track } from '../api/types';
@@ -42,12 +42,234 @@ const PLAYER_FLICK_VELOCITY = 0.2;
 const PLAYER_FLICK_MIN_DISTANCE = 24;
 /** How far the player is dragged down before the page beneath counts as uncovered, so a tap doesn't. */
 const PLAYER_DRAG_PULL_DISTANCE = 12;
+/** Movement before a press turns into a drag instead of a tap. It stays under the browsers' own
+ *  scroll slop so a touch can still be claimed before native scrolling takes it. */
+const PLAYER_DRAG_SLOP = 6;
+/** Presses that never move the player: the scrubbers drag on their own, and menus float above it. */
+const PLAYER_DRAG_IGNORE = '.range-field, .menu-popover';
 
 function transformTranslateY(transform: string) {
   if (!transform || transform === 'none') return 0;
   const values = transform.slice(transform.indexOf('(') + 1, -1).split(',').map(Number);
   const y = transform.startsWith('matrix3d') ? values[13] : values[5];
   return Number.isFinite(y) ? y : 0;
+}
+
+/** Whether a scroller between the press and the player is scrolled down, so a pull should scroll it back first. */
+function scrolledFromTop(from: Element, player: Element) {
+  for (let element: Element | null = from; element; element = element.parentElement) {
+    if (element.scrollTop > 0 && /auto|scroll/.test(getComputedStyle(element).overflowY)) return true;
+    if (element === player) break;
+  }
+  return false;
+}
+
+/** Pulls the player down from anywhere on it, the way a native sheet works: a downward drag moves the
+ *  player once everything under the finger is scrolled to the top, and scrolls the content otherwise. */
+function useDragToDismiss(playerRef: RefObject<HTMLElement | null>, mounted: boolean) {
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!mounted || !player) return;
+
+    let press: { kind: 'touch' | 'pointer'; id: number; target: Element; x: number; y: number } | null = null;
+    let drag: { startY: number; lastY: number; baseY: number; currentY: number; startTime: number } | null = null;
+    let settle: Animation | null = null;
+    let touchListeners: AbortController | null = null;
+    let swallowClick = false;
+
+    const shouldClaim = (target: Element, dx: number, dy: number) => usePlayer.getState().nowPlayingOpen && (
+      // The header never scrolls, so it takes a drag either way; pulling it up rubber-bands.
+      !!target.closest('.now-playing__header') || (dy > Math.abs(dx) && !scrolledFromTop(target, player))
+    );
+
+    const begin = (clientY: number, timeStamp: number) => {
+      const currentY = transformTranslateY(getComputedStyle(player).transform);
+      settle?.cancel();
+      settle = null;
+      for (const animation of player.getAnimations({ subtree: false })) {
+        if (animation.playState === 'running') animation.finish();
+      }
+      drag = { startY: clientY, lastY: clientY, baseY: currentY, currentY, startTime: timeStamp };
+      player.dataset.dragging = 'true';
+      player.style.transform = `translate3d(0, ${currentY}px, 0)`;
+    };
+
+    const move = (clientY: number) => {
+      if (!drag) return;
+      const rawDistance = drag.baseY + clientY - drag.startY;
+      drag.lastY = clientY;
+      drag.currentY = rawDistance >= 0 ? rawDistance : rawDistance * 0.18;
+      player.style.transform = `translate3d(0, ${drag.currentY}px, 0)`;
+      const pulled = drag.currentY > PLAYER_DRAG_PULL_DISTANCE;
+      const state = usePlayer.getState();
+      if (state.nowPlayingPulled !== pulled) state.setNowPlayingPulled(pulled);
+    };
+
+    const finish = (timeStamp: number, cancelled: boolean) => {
+      if (!drag) return;
+      const { startY, lastY, currentY, startTime } = drag;
+      drag = null;
+      const gestureDistance = Math.max(0, lastY - startY);
+      const gestureVelocity = gestureDistance / Math.max(1, timeStamp - startTime);
+      const dismissDistance = Math.min(window.innerHeight * PLAYER_DRAG_DISMISS_RATIO, PLAYER_DRAG_DISMISS_MAX);
+      const shouldDismiss = !cancelled && currentY > 0 && (
+        currentY >= dismissDistance
+        || (gestureVelocity >= PLAYER_FLICK_VELOCITY && gestureDistance >= PLAYER_FLICK_MIN_DISTANCE)
+      );
+
+      if (shouldDismiss) {
+        player.style.setProperty('--now-exit-y', `${currentY}px`);
+        player.style.setProperty('--now-exit-duration', '400ms');
+        player.removeAttribute('data-dragging');
+        usePlayer.getState().setNowPlaying(false);
+        return;
+      }
+
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const easing = getComputedStyle(document.documentElement).getPropertyValue('--ease-drawer').trim();
+      const animation = player.animate(
+        [
+          { transform: `translate3d(0, ${currentY}px, 0)` },
+          { transform: 'translate3d(0, 0, 0)' },
+        ],
+        { duration: reduceMotion ? 160 : 300, easing: reduceMotion ? 'ease' : easing, fill: 'forwards' },
+      );
+      settle = animation;
+      animation.onfinish = () => {
+        if (settle !== animation) return;
+        player.style.transform = '';
+        player.removeAttribute('data-dragging');
+        animation.cancel();
+        settle = null;
+        usePlayer.getState().setNowPlayingPulled(false);
+      };
+    };
+
+    const releaseTouch = () => {
+      touchListeners?.abort();
+      touchListeners = null;
+      if (press?.kind === 'touch') press = null;
+    };
+
+    const pressedTouch = (event: TouchEvent) => {
+      if (press?.kind !== 'touch') return null;
+      const id = press.id;
+      return Array.from(event.changedTouches).find((touch) => touch.identifier === id) ?? null;
+    };
+
+    const onTouchMove = (event: TouchEvent) => {
+      const touch = pressedTouch(event);
+      if (!press || !touch) return;
+      if (drag) {
+        if (event.cancelable) event.preventDefault();
+        move(touch.clientY);
+        return;
+      }
+      const dx = touch.clientX - press.x;
+      const dy = touch.clientY - press.y;
+      if (Math.hypot(dx, dy) < PLAYER_DRAG_SLOP) return;
+      if (!event.cancelable || !shouldClaim(press.target, dx, dy)) {
+        releaseTouch();
+        return;
+      }
+      event.preventDefault();
+      begin(touch.clientY, event.timeStamp);
+    };
+
+    const onTouchEnd = (event: TouchEvent) => {
+      const touch = pressedTouch(event);
+      if (!touch) return;
+      releaseTouch();
+      if (!drag) return;
+      // Keeps the lift from also tapping whatever the drag began on.
+      if (event.cancelable) event.preventDefault();
+      move(touch.clientY);
+      finish(event.timeStamp, event.type === 'touchcancel');
+    };
+
+    const onTouchStart = (event: TouchEvent) => {
+      // A pen reaches pointerdown first; its touch takes over, since only a touch can hold the scroll back.
+      if (drag || press?.kind === 'touch' || event.touches.length !== 1) return;
+      const target = event.target as HTMLElement;
+      if (target.closest(PLAYER_DRAG_IGNORE)) return;
+      const touch = event.changedTouches[0];
+      press = { kind: 'touch', id: touch.identifier, target, x: touch.clientX, y: touch.clientY };
+      // A touch keeps reporting to the element it began on, even once a re-render (new lyrics, a
+      // queue change) takes that element out of the player and its events stop bubbling up here.
+      touchListeners = new AbortController();
+      target.addEventListener('touchmove', onTouchMove, { passive: false, signal: touchListeners.signal });
+      target.addEventListener('touchend', onTouchEnd, { signal: touchListeners.signal });
+      target.addEventListener('touchcancel', onTouchEnd, { signal: touchListeners.signal });
+    };
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.pointerType === 'touch' || !event.isPrimary || event.button !== 0 || drag || press?.kind === 'touch') return;
+      swallowClick = false;
+      const target = event.target as Element;
+      press = target.closest(PLAYER_DRAG_IGNORE) ? null : { kind: 'pointer', id: event.pointerId, target, x: event.clientX, y: event.clientY };
+    };
+
+    const onPointerMove = (event: PointerEvent) => {
+      if (press?.kind !== 'pointer' || press.id !== event.pointerId) return;
+      if (drag) {
+        move(event.clientY);
+        return;
+      }
+      // The button came up somewhere the player never heard about.
+      if (event.buttons === 0) {
+        press = null;
+        return;
+      }
+      const dx = event.clientX - press.x;
+      const dy = event.clientY - press.y;
+      if (Math.hypot(dx, dy) < PLAYER_DRAG_SLOP) return;
+      if (!shouldClaim(press.target, dx, dy)) {
+        press = null;
+        return;
+      }
+      try { player.setPointerCapture(event.pointerId); } catch { /* still drags while over the player */ }
+      begin(event.clientY, event.timeStamp);
+    };
+
+    const onPointerEnd = (event: PointerEvent) => {
+      if (press?.kind !== 'pointer' || press.id !== event.pointerId) return;
+      press = null;
+      if (!drag) return;
+      if (player.hasPointerCapture(event.pointerId)) player.releasePointerCapture(event.pointerId);
+      const lifted = event.type === 'pointerup';
+      // Keeps the release from also clicking whatever the drag began on.
+      swallowClick = lifted;
+      if (lifted) move(event.clientY);
+      finish(event.timeStamp, !lifted);
+    };
+
+    const onClick = (event: MouseEvent) => {
+      if (!swallowClick) return;
+      swallowClick = false;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    const listeners = new AbortController();
+    const { signal } = listeners;
+    player.addEventListener('touchstart', onTouchStart, { passive: true, signal });
+    // iOS only lets a touch's moves be cancelled when a blocking touchmove listener was already in
+    // place where it landed, so the player keeps one; the real work happens on the pressed element.
+    player.addEventListener('touchmove', () => {}, { passive: false, signal });
+    player.addEventListener('pointerdown', onPointerDown, { signal });
+    player.addEventListener('pointermove', onPointerMove, { signal });
+    player.addEventListener('pointerup', onPointerEnd, { signal });
+    player.addEventListener('pointercancel', onPointerEnd, { signal });
+    player.addEventListener('lostpointercapture', onPointerEnd, { signal });
+    player.addEventListener('click', onClick, { capture: true, signal });
+    // The cover art would otherwise start a native image drag under the mouse.
+    player.addEventListener('dragstart', (event) => event.preventDefault(), { signal });
+    return () => {
+      listeners.abort();
+      releaseTouch();
+      settle?.cancel();
+    };
+  }, [playerRef, mounted]);
 }
 
 function OverflowMarquee({ text, play = true }: { text: string; play?: boolean }) {
@@ -428,7 +650,6 @@ export function NowPlaying() {
   const toggleMute = usePlayer((s) => s.toggleMute);
   const setQueueOpen = usePlayer((s) => s.setQueueOpen);
   const setOpen = usePlayer((s) => s.setNowPlaying);
-  const setPulled = usePlayer((s) => s.setNowPlayingPulled);
   const source = usePlayer((s) => s.source);
   const lyricsMode = usePreferences((s) => s.lyricsMode);
   const immersiveStyle = usePreferences((s) => s.immersiveStyle);
@@ -438,14 +659,6 @@ export function NowPlaying() {
   const [shouldRender, setShouldRender] = useState(open);
   const nowPlayingRef = useRef<HTMLElement | null>(null);
   const lyricsPanelRef = useRef<HTMLDivElement | null>(null);
-  const settleAnimationRef = useRef<Animation | null>(null);
-  const dragRef = useRef<{
-    pointerId: number;
-    startY: number;
-    baseY: number;
-    currentY: number;
-    startTime: number;
-  } | null>(null);
 
   useEffect(() => {
     if (open) setShouldRender(true);
@@ -509,92 +722,7 @@ export function NowPlaying() {
     return () => window.removeEventListener('resize', resetClippedScroll);
   }, [shouldRender]);
 
-  useEffect(() => () => settleAnimationRef.current?.cancel(), []);
-
-  const startPlayerDrag = (event: ReactPointerEvent<HTMLElement>) => {
-    if (!event.isPrimary || event.button !== 0 || dragRef.current) return;
-    if ((event.target as HTMLElement).closest('button, a, input, summary')) return;
-    const player = nowPlayingRef.current;
-    if (!player) return;
-
-    const currentY = transformTranslateY(getComputedStyle(player).transform);
-    settleAnimationRef.current?.cancel();
-    settleAnimationRef.current = null;
-    for (const animation of player.getAnimations({ subtree: false })) {
-      if (animation.playState === 'running') animation.finish();
-    }
-
-    dragRef.current = {
-      pointerId: event.pointerId,
-      startY: event.clientY,
-      baseY: currentY,
-      currentY,
-      startTime: event.timeStamp,
-    };
-    player.dataset.dragging = 'true';
-    player.style.transform = `translate3d(0, ${currentY}px, 0)`;
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const movePlayerDrag = (event: ReactPointerEvent<HTMLElement>) => {
-    const drag = dragRef.current;
-    const player = nowPlayingRef.current;
-    if (!drag || !player || drag.pointerId !== event.pointerId) return;
-
-    const rawDistance = drag.baseY + event.clientY - drag.startY;
-    const distance = rawDistance >= 0 ? rawDistance : rawDistance * 0.18;
-    drag.currentY = distance;
-    player.style.transform = `translate3d(0, ${distance}px, 0)`;
-    const pulled = distance > PLAYER_DRAG_PULL_DISTANCE;
-    if (usePlayer.getState().nowPlayingPulled !== pulled) setPulled(pulled);
-  };
-
-  const finishPlayerDrag = (event: ReactPointerEvent<HTMLElement>, cancelled = false) => {
-    const drag = dragRef.current;
-    const player = nowPlayingRef.current;
-    if (!drag || !player || drag.pointerId !== event.pointerId) return;
-    dragRef.current = null;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-
-    const rawDistance = drag.baseY + event.clientY - drag.startY;
-    drag.currentY = rawDistance >= 0 ? rawDistance : rawDistance * 0.18;
-    player.style.transform = `translate3d(0, ${drag.currentY}px, 0)`;
-    const gestureDistance = Math.max(0, event.clientY - drag.startY);
-    const gestureDuration = Math.max(1, event.timeStamp - drag.startTime);
-    const gestureVelocity = gestureDistance / gestureDuration;
-    const dismissDistance = Math.min(window.innerHeight * PLAYER_DRAG_DISMISS_RATIO, PLAYER_DRAG_DISMISS_MAX);
-    const shouldDismiss = !cancelled && drag.currentY > 0 && (
-      drag.currentY >= dismissDistance
-      || (gestureVelocity >= PLAYER_FLICK_VELOCITY && gestureDistance >= PLAYER_FLICK_MIN_DISTANCE)
-    );
-
-    if (shouldDismiss) {
-      player.style.setProperty('--now-exit-y', `${drag.currentY}px`);
-      player.style.setProperty('--now-exit-duration', '400ms');
-      player.removeAttribute('data-dragging');
-      setOpen(false);
-      return;
-    }
-
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const easing = getComputedStyle(document.documentElement).getPropertyValue('--ease-drawer').trim();
-    const animation = player.animate(
-      [
-        { transform: `translate3d(0, ${drag.currentY}px, 0)` },
-        { transform: 'translate3d(0, 0, 0)' },
-      ],
-      { duration: reduceMotion ? 160 : 300, easing: reduceMotion ? 'ease' : easing, fill: 'forwards' },
-    );
-    settleAnimationRef.current = animation;
-    animation.onfinish = () => {
-      if (settleAnimationRef.current !== animation) return;
-      player.style.transform = '';
-      player.removeAttribute('data-dragging');
-      animation.cancel();
-      settleAnimationRef.current = null;
-      setPulled(false);
-    };
-  };
+  useDragToDismiss(nowPlayingRef, shouldRender && !!track);
 
   if (!shouldRender || !track) return null;
   const style = { '--now-accent': palette.accent, '--now-deep': palette.deep, '--now-glow': palette.glow } as CSSProperties;
@@ -615,15 +743,10 @@ export function NowPlaying() {
       }}
     >
       <div className="now-playing__ambient" aria-hidden="true" />
-      <header
-        className="now-playing__header"
-        onPointerDown={startPlayerDrag}
-        onPointerMove={movePlayerDrag}
-        onPointerUp={finishPlayerDrag}
-        onPointerCancel={(event) => finishPlayerDrag(event, true)}
-        onLostPointerCapture={(event) => finishPlayerDrag(event, true)}
-      >
-        <button type="button" className="icon-button now-playing__close" aria-label="關閉正在播放" onClick={() => setOpen(false)}><IconChevronDown /></button>
+      {/* The whole header is the close target; the button keeps it reachable by keyboard, and its
+          click bubbles up here. A drag that starts here swallows its own click (see useDragToDismiss). */}
+      <header className="now-playing__header" onClick={() => setOpen(false)}>
+        <button type="button" className="icon-button now-playing__close" aria-label="關閉正在播放"><IconChevronDown /></button>
         <span className="now-playing__label">
           <span>NOW PLAYING</span>
           {playingAtmos ? <DolbyLogo variant="atmos" className="now-playing__dolby" /> : source === 'aac51' ? <SurroundLogo variant="atmos" className="now-playing__dolby" /> : quality ? <span className="quality-badge">{quality}</span> : null}
