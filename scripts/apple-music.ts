@@ -100,22 +100,34 @@ interface AppleArtist {
   id: string;
   attributes?: {
     editorialArtwork?: Record<string, AppleArtwork | undefined>;
-    editorialVideo?: Record<string, { video?: string; previewFrame?: AppleArtwork } | undefined>;
+    editorialVideo?: Record<string, AppleEditorialVideo | undefined>;
   };
+}
+
+interface AppleEditorialVideo {
+  video?: string;
+  previewFrame?: AppleArtwork;
 }
 
 /** Apple's motion artwork for an artist: a silent loop of about half a minute. */
 export interface AppleMotionVideo {
   /** HLS master playlist on Apple's CDN. */
   url: string;
-  /** A still of the video, also 16:9. */
+  /** A still of the video, in the same shape. */
   preview: AppleArtwork;
+}
+
+function motionVideo(video: AppleEditorialVideo | undefined): AppleMotionVideo | null {
+  return video?.video && video.previewFrame?.url ? { url: video.video, preview: video.previewFrame } : null;
 }
 
 /** What Apple shows at the top of an artist's page, beyond their photo. */
 export interface AppleArtistPage {
   logo: AppleArtwork | null;
+  /** 16:9, for wide screens. */
   video: AppleMotionVideo | null;
+  /** 1:1, for phones. Apple makes it alongside the 16:9 one. */
+  squareVideo: AppleMotionVideo | null;
   /** A 4:1 header image without text, 4320 px wide, for pages without a video. */
   banner: AppleArtwork | null;
 }
@@ -495,8 +507,9 @@ export class AppleMusicClient {
    * transparent background; the color version is preferred over the white
    * one. brandLogo is not a logo for every artist (for some it is a square
    * portrait), so it is never used. The video is the 16:9 one Apple plays
-   * behind the logo, and the banner (bannerUber) the still header it shows
-   * otherwise. About a quarter of artists have each.
+   * behind the logo, the square video the one its iPhone app plays instead,
+   * and the banner (bannerUber) the still header it shows otherwise. About a
+   * quarter of artists have each.
    */
   async artistPages(ids: string[]): Promise<Map<string, AppleArtistPage>> {
     const pages = new Map<string, AppleArtistPage>();
@@ -512,10 +525,10 @@ export class AppleMusicClient {
       for (const id of batch) {
         const { editorialArtwork: artwork, editorialVideo: videos } = found.get(id)?.attributes ?? {};
         const logo = artwork?.musicContentColorLogoTrimmed ?? artwork?.musicContentWhiteLogoTrimmed;
-        const video = videos?.motionArtistFullscreen16x9 ?? videos?.motionArtistWide16x9;
         pages.set(id, {
           logo: logo?.url ? logo : null,
-          video: video?.video && video.previewFrame?.url ? { url: video.video, preview: video.previewFrame } : null,
+          video: motionVideo(videos?.motionArtistFullscreen16x9 ?? videos?.motionArtistWide16x9),
+          squareVideo: motionVideo(videos?.motionArtistSquare1x1),
           banner: artwork?.bannerUber?.url ? artwork.bannerUber : null,
         });
       }

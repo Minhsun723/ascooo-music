@@ -84,14 +84,16 @@ export interface Artist {
   artworkId: string | null;
   /** Apple Music's logo for the artist, on a transparent background. Only on the artist detail response. */
   logoId?: string | null;
-  /** Apple Music's motion artwork for the artist. Only on the artist detail response. */
+  /** Apple Music's 16:9 motion artwork for the artist. Only on the artist detail response. */
   video?: ArtistVideo | null;
+  /** Apple Music's square cut of the same, for phones. Only on the artist detail response. */
+  squareVideo?: ArtistVideo | null;
   /** Apple Music's 4:1 header image for the artist, without text. Only on the artist detail response. */
   bannerId?: string | null;
   trackCount?: number;
 }
 
-/** A silent 16:9 loop streamed from Apple's CDN, and a still of it. */
+/** A silent loop streamed from Apple's CDN, and a still of it. */
 export interface ArtistVideo {
   /** HLS master playlist. */
   url: string;

@@ -118,6 +118,8 @@ interface ImportedArtist {
   logoId?: string;
   /** Apple's motion artwork for the artist. Unset without one, as logoId. */
   video?: ArtistVideo;
+  /** Apple's square motion artwork for the artist, for phones. Unset without one, as logoId. */
+  squareVideo?: ArtistVideo;
   /** Apple's 4:1 header image for the artist. Unset without one, as logoId. */
   bannerId?: string;
 }
@@ -133,6 +135,8 @@ interface CachedArtistPage {
   /** Null when Apple has no logo for the artist. */
   logoId: string | null;
   video: ArtistVideo | null;
+  /** Absent in entries looked up before square videos were, which are looked up again. */
+  squareVideo?: ArtistVideo | null;
   /** Absent in entries looked up before banners were, which are looked up again. */
   bannerId?: string | null;
   checkedAt: number;
@@ -640,12 +644,12 @@ async function attachCredits(
 }
 
 /**
- * Give every credited artist the logo, motion artwork and banner Apple shows
- * at the top of their page. Apple adds them over time, so each artist is
- * looked up again after the refresh interval, in a few batched requests. The
- * video stays on Apple's CDN; only its still is saved. An artist whose images
- * fail to download keeps what was recorded before, so the next sync tries
- * again.
+ * Give every credited artist the logo, motion artwork (16:9 and square) and
+ * banner Apple shows at the top of their page. Apple adds them over time, so
+ * each artist is looked up again after the refresh interval, in a few batched
+ * requests. The videos stay on Apple's CDN; only their stills are saved. An
+ * artist whose images fail to download keeps what was recorded before, so the
+ * next sync tries again.
  */
 async function attachArtistPages(
   tracks: PreparedTrack[],
@@ -659,21 +663,30 @@ async function attachArtistPages(
   const pages: Record<string, CachedArtistPage> = {};
   for (const id of ids) {
     const page = previous?.[id];
-    if (page && [page.logoId, page.video?.previewId, page.bannerId].every((artworkId) => !artworkId || artworks.has(artworkId))) pages[id] = page;
+    if (!page) continue;
+    const artworkIds = [page.logoId, page.video?.previewId, page.squareVideo?.previewId, page.bannerId];
+    if (artworkIds.every((artworkId) => !artworkId || artworks.has(artworkId))) pages[id] = page;
   }
-  const stale = [...ids].filter((id) =>
-    !pages[id] || pages[id].bannerId === undefined || Date.now() - pages[id].checkedAt >= refreshInterval());
+  const stale = [...ids].filter((id) => !pages[id] || pages[id].bannerId === undefined || pages[id].squareVideo === undefined ||
+    Date.now() - pages[id].checkedAt >= refreshInterval());
   if (apple && stale.length) {
     try {
       const found = await apple.artistPages(stale);
       const checkedAt = Date.now();
       await mapConcurrent(stale, 4, async (id) => {
-        const { logo, video, banner } = found.get(id) ?? { logo: null, video: null, banner: null };
+        const { logo, video, squareVideo, banner } = found.get(id) ?? { logo: null, video: null, squareVideo: null, banner: null };
         const logoId = logo ? await addArtwork(logo) : null;
         const previewId = video ? await addArtwork(video.preview) : null;
+        const squarePreviewId = squareVideo ? await addArtwork(squareVideo.preview) : null;
         const bannerId = banner ? await addArtwork(banner) : null;
-        if (!!logo !== !!logoId || !!video !== !!previewId || !!banner !== !!bannerId) return;
-        pages[id] = { logoId, video: video && previewId ? { url: video.url, previewId } : null, bannerId, checkedAt };
+        if (!!logo !== !!logoId || !!video !== !!previewId || !!squareVideo !== !!squarePreviewId || !!banner !== !!bannerId) return;
+        pages[id] = {
+          logoId,
+          video: video && previewId ? { url: video.url, previewId } : null,
+          squareVideo: squareVideo && squarePreviewId ? { url: squareVideo.url, previewId: squarePreviewId } : null,
+          bannerId,
+          checkedAt,
+        };
       });
       console.log(`  Apple Music 歌手 logo、動態背景與橫幅：查詢 ${stale.length} 位`);
     } catch (error) {
@@ -686,6 +699,8 @@ async function attachArtistPages(
     else delete artist.logoId;
     if (page?.video) artist.video = page.video;
     else delete artist.video;
+    if (page?.squareVideo) artist.squareVideo = page.squareVideo;
+    else delete artist.squareVideo;
     if (page?.bannerId) artist.bannerId = page.bannerId;
     else delete artist.bannerId;
   }
@@ -1237,7 +1252,7 @@ async function prepare(): Promise<SyncManifest> {
     track.appleMusic?.artistArtworkId,
     ...[...track.appleMusic?.credits?.artists ?? [], ...track.appleMusic?.credits?.albumArtists ?? []]
       .map((credit) => credit.artworkId),
-    ...[...track.artists ?? [], ...track.albumArtists ?? []].flatMap((artist) => [artist.logoId, artist.video?.previewId, artist.bannerId]),
+    ...[...track.artists ?? [], ...track.albumArtists ?? []].flatMap((artist) => [artist.logoId, artist.video?.previewId, artist.squareVideo?.previewId, artist.bannerId]),
   ]).filter((id): id is string => !!id));
   console.log(`本機解析完成：${audioCount} 首；沿用 ${reused} 首，重新解析 ${audioCount - reused} 首`);
 

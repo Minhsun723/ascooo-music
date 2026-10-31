@@ -281,12 +281,24 @@ interface ImportedArtist {
   /** Apple's logo for the artist. Absent: they have none, and any stored one is cleared. */
   logoId?: string | null;
   /** Apple's motion artwork: its HLS playlist and a still in R2. Absent: cleared, as logoId. */
-  video?: { url: string; previewId: string } | null;
+  video?: ImportedVideo | null;
+  /** Apple's square motion artwork, for phones. Absent: cleared, as logoId. */
+  squareVideo?: ImportedVideo | null;
   /** Apple's 4:1 header image. Absent: cleared, as logoId. */
   bannerId?: string | null;
 }
 
+interface ImportedVideo {
+  url: string;
+  previewId: string;
+}
+
 const APPLE_VIDEO_URL = /^https:\/\/mvod\.itunes\.apple\.com\/[\w./-]+\.m3u8$/;
+
+function invalidVideo(video: ImportedVideo | null | undefined): boolean {
+  return video != null && (typeof video.url !== 'string' || video.url.length > 1000 ||
+    !APPLE_VIDEO_URL.test(video.url) || !/^[a-f0-9]{40}$/.test(video.previewId));
+}
 
 /** An artist known only by a tag; equal names (ignoring case) share one row. */
 async function upsertArtist(db: D1Database, name: string): Promise<{ id: number }> {
@@ -313,7 +325,7 @@ async function upsertAppleArtist(db: D1Database, artist: ImportedArtist): Promis
     `UPDATE artists
      SET apple_artist_id = ?1, display_name = NULLIF(?2, name COLLATE BINARY), aliases = ?3,
        artwork_id = COALESCE(?4, artwork_id), logo_artwork_id = ?5, motion_video_url = ?6, motion_preview_id = ?7,
-       banner_artwork_id = ?8
+       banner_artwork_id = ?8, motion_square_video_url = ?9, motion_square_preview_id = ?10
      WHERE id = COALESCE(
        (SELECT id FROM artists WHERE apple_artist_id = ?1),
        (SELECT id FROM artists
@@ -322,22 +334,27 @@ async function upsertAppleArtist(db: D1Database, artist: ImportedArtist): Promis
      )
      RETURNING id, name, display_name, aliases, search_key`,
   ).bind(artist.appleId, name, aliasesJson, artist.artworkId, artist.logoId ?? null,
-    artist.video?.url ?? null, artist.video?.previewId ?? null, artist.bannerId ?? null).first<ArtistRow>();
+    artist.video?.url ?? null, artist.video?.previewId ?? null, artist.bannerId ?? null,
+    artist.squareVideo?.url ?? null, artist.squareVideo?.previewId ?? null).first<ArtistRow>();
   if (existing) return syncArtistSearchKey(db, existing);
 
   const row = await db.prepare(
     `INSERT INTO artists (name, apple_artist_id, aliases, artwork_id, logo_artwork_id, motion_video_url, motion_preview_id,
-       banner_artwork_id, search_key)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+       banner_artwork_id, motion_square_video_url, motion_square_preview_id, search_key)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
      -- Another Apple artist already holds this exact name; the two share its page.
      ON CONFLICT(name) DO UPDATE SET artwork_id = COALESCE(artists.artwork_id, excluded.artwork_id),
        logo_artwork_id = COALESCE(artists.logo_artwork_id, excluded.logo_artwork_id),
        motion_preview_id = CASE WHEN artists.motion_video_url IS NULL THEN excluded.motion_preview_id ELSE artists.motion_preview_id END,
        motion_video_url = COALESCE(artists.motion_video_url, excluded.motion_video_url),
-       banner_artwork_id = COALESCE(artists.banner_artwork_id, excluded.banner_artwork_id)
+       banner_artwork_id = COALESCE(artists.banner_artwork_id, excluded.banner_artwork_id),
+       motion_square_preview_id = CASE WHEN artists.motion_square_video_url IS NULL
+         THEN excluded.motion_square_preview_id ELSE artists.motion_square_preview_id END,
+       motion_square_video_url = COALESCE(artists.motion_square_video_url, excluded.motion_square_video_url)
      RETURNING id, name, display_name, aliases, search_key`,
   ).bind(name, artist.appleId, aliasesJson, artist.artworkId, artist.logoId ?? null,
     artist.video?.url ?? null, artist.video?.previewId ?? null, artist.bannerId ?? null,
+    artist.squareVideo?.url ?? null, artist.squareVideo?.previewId ?? null,
     artistSearchKey(name, null, aliases)).first<ArtistRow>();
   if (!row) throw new Error(`無法建立藝人：${name}`);
   return syncArtistSearchKey(db, row);
@@ -383,8 +400,7 @@ function validArtists(value: unknown): ImportedArtist[] | null {
     artist.artworkId !== null && !/^[a-f0-9]{40}$/.test(artist.artworkId) ||
     artist.logoId != null && !/^[a-f0-9]{40}$/.test(artist.logoId) ||
     artist.bannerId != null && !/^[a-f0-9]{40}$/.test(artist.bannerId) ||
-    artist.video != null && (typeof artist.video.url !== 'string' || artist.video.url.length > 1000 ||
-      !APPLE_VIDEO_URL.test(artist.video.url) || !/^[a-f0-9]{40}$/.test(artist.video.previewId)))) {
+    invalidVideo(artist.video) || invalidVideo(artist.squareVideo))) {
     throw new HTTPException(400, { message: '歌手資料格式錯誤' });
   }
   return value.length ? value as ImportedArtist[] : null;

@@ -246,7 +246,7 @@ const ARTIST_TRACK_IDS = `artist_track_ids AS (
 async function findArtist(db: D1Database, id: number) {
   const artist = await db.prepare(
     `SELECT ar.id, COALESCE(ar.display_name, ar.name) AS name, ar.artwork_id, ar.logo_artwork_id, ar.motion_video_url, ar.motion_preview_id,
-       ar.banner_artwork_id
+       ar.banner_artwork_id, ar.motion_square_video_url, ar.motion_square_preview_id
      FROM artists ar WHERE ar.id = ? AND (
        EXISTS (SELECT 1 FROM track_artists ta CROSS JOIN tracks t ON t.id = ta.track_id
                WHERE ta.artist_id = ar.id AND t.status = 'ready' AND t.visible = 1)
@@ -261,6 +261,8 @@ async function findArtist(db: D1Database, id: number) {
     motion_video_url: string | null;
     motion_preview_id: string | null;
     banner_artwork_id: string | null;
+    motion_square_video_url: string | null;
+    motion_square_preview_id: string | null;
   }>();
   if (!artist) throw new HTTPException(404, { message: '找不到這位歌手' });
   return artist;
@@ -295,6 +297,9 @@ catalog.get('/artists/:id', anonymousEdgeCache, async (c) => {
       logoId: artist.logo_artwork_id,
       video: artist.motion_video_url && artist.motion_preview_id
         ? { url: artist.motion_video_url, previewId: artist.motion_preview_id }
+        : null,
+      squareVideo: artist.motion_square_video_url && artist.motion_square_preview_id
+        ? { url: artist.motion_square_video_url, previewId: artist.motion_square_preview_id }
         : null,
       bannerId: artist.banner_artwork_id,
     },

@@ -587,11 +587,12 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
 .collection-hero--detail .collection-hero__actions { margin-top: clamp(40px, 5vw, 76px); }
 /* Full-bleed: the photo also fills the whole hero behind the art, darkened toward the copy and the edges. The hero
    runs up under the top bar (78px), which starts clear and takes on its usual backdrop over the first 240px of
-   scrolling. Without scroll-driven animations, the zero-length animation ends filled in, as the bar always was. */
+   scrolling. Without scroll-driven animations, the zero-length animation ends filled in, as the bar always was. A
+   page too short to scroll has no scroll timeline, so the animation does nothing and the bar stays clear. */
 .collection-hero--full-bleed { min-height: calc(clamp(440px, 58vh, 640px) + 78px); margin-top: calc(-24px - 78px); padding-top: calc(60px + 78px); background: #101012; }
 .app-shell__body:has(.collection-hero--full-bleed) .topbar { background: none; backdrop-filter: none; }
-.app-shell__body:has(.collection-hero--full-bleed) .topbar::before { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(to bottom, rgba(8,8,8,.96) 55%, rgba(8,8,8,.78)); backdrop-filter: blur(18px); animation: topbar-fill linear both; animation-timeline: scroll(root); animation-range: 0 240px; }
-@keyframes topbar-fill { from { opacity: 0; } }
+.app-shell__body:has(.collection-hero--full-bleed) .topbar::before { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(to bottom, rgba(8,8,8,.96) 55%, rgba(8,8,8,.78)); backdrop-filter: blur(18px); opacity: 0; animation: topbar-fill linear both; animation-timeline: scroll(root); animation-range: 0 240px; }
+@keyframes topbar-fill { from { opacity: 0; } to { opacity: 1; } }
 .collection-hero__backdrop { position: absolute; inset: 0; overflow: hidden; }
 .collection-hero__backdrop img, .collection-hero__backdrop video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 28%; }
 /* Motion artwork, its still and banners are framed wide around the center, unlike square photos. A 16:9 video loses
@@ -898,8 +899,25 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
   /* Under the 66px top bar, as on desktop. */
   .collection-hero.collection-hero--full-bleed { margin-top: calc(-18px - 66px); padding-top: calc(76px + 66px); }
   .collection-hero--full-bleed .collection-hero__mobile-back { top: calc(14px + 66px); }
-  /* No motion artwork plays here, so the art and copy keep the narrow layouts' own placement. */
+  /* The art and copy never step aside here, so they keep the narrow layouts' own placement. */
   .collection-hero__main, .collection-hero--receded .collection-hero__main { display: contents; --recede: 0; }
+  /* The backdrop, motion artwork or photo, stands alone with no art in front: the name on the left and the buttons,
+     as icons, on the right, in one row at its foot over a darker bottom edge. Tablets frame it taller than 16:9,
+     cropping the video's sides or the photo's top and bottom. */
+  .collection-hero.collection-hero--full-bleed { min-height: clamp(440px, 64vw, 72svh); grid-template-columns: minmax(0, 1fr); }
+  .collection-hero--full-bleed .collection-hero__copy { align-self: end; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 0; }
+  .collection-hero--full-bleed .collection-hero__details { flex: 1; min-width: 0; }
+  .collection-hero--full-bleed h1 { margin: 0; }
+  /* A name with a logo is a button holding both in one cell, so the logo, fitted to the name's side of the row, takes
+     the name's place without moving anything. Tapping it blurs one out and the other in. */
+  .collection-hero__name { width: 100%; display: grid; align-items: center; padding: 0; border: 0; background: none; text-align: inherit; letter-spacing: inherit; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+  .collection-hero__name > * { grid-area: 1 / 1; transform-origin: left center; transition: opacity .5s var(--ease-out), filter .5s var(--ease-out), transform .5s var(--ease-out); }
+  .collection-hero__name-logo { width: 100%; height: 1.9em; object-fit: contain; object-position: left center; opacity: 0; filter: blur(8px); transform: scale(.94); pointer-events: none; }
+  .collection-hero__name[data-logo] .collection-hero__name-text { opacity: 0; filter: blur(8px); transform: scale(.96); }
+  .collection-hero__name[data-logo] .collection-hero__name-logo { opacity: 1; filter: blur(0); transform: none; }
+  .collection-hero--full-bleed .collection-hero__actions { flex: none; gap: 10px; margin-top: 0; }
+  .collection-hero--full-bleed .collection-hero__actions :is(.primary-button, .round-button) { width: 40px; height: 40px; min-height: 40px; padding: 0; }
+  .collection-hero__backdrop::after { background: linear-gradient(to bottom, rgba(8,8,8,.5) 0, rgba(8,8,8,0) 150px), linear-gradient(to top, rgba(8,8,8,.88) 0%, rgba(8,8,8,.4) 24%, rgba(8,8,8,0) 48%); }
   /* Detail heroes carry the back button: 14px offset + 44px button + 18px gap before the art. */
   .collection-hero--detail { padding-top: 76px; }
   /* Pin the art to the top so a multi-line title can't push it away from the back button. */
@@ -931,7 +949,12 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
   .collection-hero.collection-hero--detail .collection-hero__details > p { color: #fff; font-size: 1.02rem; font-weight: 650; letter-spacing: .012em; }
   .collection-hero.collection-hero--detail .collection-hero__meta { justify-content: center; gap: 6px; margin-top: 4px; color: rgba(255,255,255,.64); font-size: .68rem; line-height: 1.35; }
   .collection-hero.collection-hero--detail .collection-hero__actions { justify-content: center; margin-top: 18px; }
-  .collection-hero.collection-hero--full-bleed { padding-top: calc(18px + 66px); }
+  /* Phones show the square video or photo whole: the hero is as tall as it is wide, and the row drops to its foot. */
+  .collection-hero.collection-hero--full-bleed { min-height: min(100vw, 72svh); align-items: stretch; padding-top: calc(18px + 66px); text-align: left; }
+  .collection-hero--full-bleed .collection-hero__copy { margin-top: auto; }
+  .collection-hero.collection-hero--full-bleed .collection-hero__details { margin-top: 0; }
+  .collection-hero.collection-hero--full-bleed h1 { max-width: none; margin: 0; font-size: clamp(1.55rem, 7vw, 2rem); line-height: 1.12; overflow-wrap: anywhere; }
+  .collection-hero.collection-hero--full-bleed .collection-hero__actions { margin-top: 0; }
   .media-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 14px; }
   .media-grid--artists { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .media-grid--shelf > :nth-child(n+7) { display: none; }
