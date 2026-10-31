@@ -40,6 +40,8 @@ const PLAYER_DRAG_DISMISS_MAX = 96;
 const PLAYER_DRAG_DISMISS_RATIO = 0.12;
 const PLAYER_FLICK_VELOCITY = 0.2;
 const PLAYER_FLICK_MIN_DISTANCE = 24;
+/** How far the player is dragged down before the page beneath counts as uncovered, so a tap doesn't. */
+const PLAYER_DRAG_PULL_DISTANCE = 12;
 
 function transformTranslateY(transform: string) {
   if (!transform || transform === 'none') return 0;
@@ -426,6 +428,7 @@ export function NowPlaying() {
   const toggleMute = usePlayer((s) => s.toggleMute);
   const setQueueOpen = usePlayer((s) => s.setQueueOpen);
   const setOpen = usePlayer((s) => s.setNowPlaying);
+  const setPulled = usePlayer((s) => s.setNowPlayingPulled);
   const source = usePlayer((s) => s.source);
   const lyricsMode = usePreferences((s) => s.lyricsMode);
   const immersiveStyle = usePreferences((s) => s.immersiveStyle);
@@ -542,6 +545,8 @@ export function NowPlaying() {
     const distance = rawDistance >= 0 ? rawDistance : rawDistance * 0.18;
     drag.currentY = distance;
     player.style.transform = `translate3d(0, ${distance}px, 0)`;
+    const pulled = distance > PLAYER_DRAG_PULL_DISTANCE;
+    if (usePlayer.getState().nowPlayingPulled !== pulled) setPulled(pulled);
   };
 
   const finishPlayerDrag = (event: ReactPointerEvent<HTMLElement>, cancelled = false) => {
@@ -587,6 +592,7 @@ export function NowPlaying() {
       player.removeAttribute('data-dragging');
       animation.cancel();
       settleAnimationRef.current = null;
+      setPulled(false);
     };
   };
 

@@ -26,6 +26,8 @@ interface PlayerState {
   /** The file actually streaming for the current track. */
   source: AudioSource;
   nowPlayingOpen: boolean;
+  /** The open player is being dragged down, uncovering the page beneath it. */
+  nowPlayingPulled: boolean;
   queueOpen: boolean;
 
   playList: (tracks: Track[], start?: number, opts?: { shuffle?: boolean }) => void;
@@ -42,6 +44,7 @@ interface PlayerState {
   toggleShuffle: () => void;
   cycleRepeat: () => void;
   setNowPlaying: (open: boolean) => void;
+  setNowPlayingPulled: (pulled: boolean) => void;
   setQueueOpen: (open: boolean) => void;
   resetForSession: (userId: number | null) => void;
 }
@@ -168,6 +171,7 @@ export const usePlayer = create<PlayerState>()(
         error: null,
         source: 'original',
         nowPlayingOpen: false,
+        nowPlayingPulled: false,
         queueOpen: false,
 
         playList(tracks, start = 0, opts) {
@@ -284,7 +288,8 @@ export const usePlayer = create<PlayerState>()(
           set({ repeat: order[(order.indexOf(get().repeat) + 1) % 3] });
         },
 
-        setNowPlaying: (open) => set({ nowPlayingOpen: open, queueOpen: false }),
+        setNowPlaying: (open) => set({ nowPlayingOpen: open, nowPlayingPulled: false, queueOpen: false }),
+        setNowPlayingPulled: (pulled) => set({ nowPlayingPulled: pulled }),
         setQueueOpen: (open) => set({ queueOpen: open }),
         resetForSession(userId) {
           const state = get();
@@ -309,6 +314,7 @@ export const usePlayer = create<PlayerState>()(
             error: null,
             source: 'original',
             nowPlayingOpen: false,
+            nowPlayingPulled: false,
             queueOpen: false,
           });
         },

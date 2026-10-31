@@ -8,11 +8,14 @@ import type Hls from 'hls.js';
  * video's src: canPlayType is no guide, as Chrome answers "maybe" for HLS and
  * then fails to play Apple's. The video stays transparent until it is
  * actually playing, so the still beneath it shows while it loads or if it
- * fails, and it pauses while scrolled out of view.
+ * fails. It plays only while `paused` is unset and some of it is on screen,
+ * with `rootMargin` (as an IntersectionObserver takes it) trimming the screen
+ * of anything that covers it, such as a sticky bar.
  */
-export function MotionLoop({ src, className = '', onPlaying }: { src: string; className?: string; onPlaying?: () => void }) {
+export function MotionLoop({ src, paused = false, rootMargin, className = '', onPlaying }: { src: string; paused?: boolean; rootMargin?: string; className?: string; onPlaying?: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
+  const [onScreen, setOnScreen] = useState(true);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -41,33 +44,38 @@ export function MotionLoop({ src, className = '', onPlaying }: { src: string; cl
         hls.attachMedia(video);
       }).catch(() => {});
     }
-    // autoPlay starts it; this only stops it off screen and resumes it on the way back.
-    let offscreen = false;
-    const observer = new IntersectionObserver(([entry]) => {
-      if (!entry.isIntersecting) {
-        offscreen = true;
-        video.pause();
-      } else if (offscreen) {
-        offscreen = false;
-        video.play().catch(() => {});
-      }
-    });
-    observer.observe(video);
     return () => {
       cancelled = true;
-      observer.disconnect();
       hls?.destroy();
       video.removeAttribute('src');
       video.load();
     };
   }, [src]);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const observer = new IntersectionObserver(([entry]) => setOnScreen(entry.isIntersecting), { rootMargin });
+    observer.observe(video);
+    return () => observer.disconnect();
+  }, [rootMargin]);
+
+  // Autoplay starts it once enough has loaded, if it should be playing by then; play() and pause() do the rest. A
+  // play() before the stream is attached is cut short by the attaching, which autoplay then takes over from.
+  const run = onScreen && !paused;
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.autoplay = run;
+    if (run) video.play().catch(() => {});
+    else video.pause();
+  }, [run]);
+
   return (
     <video
       ref={videoRef}
       className={className}
       data-playing={playing || undefined}
-      autoPlay
       muted
       loop
       playsInline
