@@ -1004,8 +1004,11 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
   .account-row__delete { grid-column: 3; grid-row: 1 / span 2; width: 44px; padding: 0; }
   .account-row__delete span { display: none; }
   .now-playing { overflow-y: auto; overscroll-behavior-y: contain; }
-  .now-playing__header { position: sticky; top: 0; height: 64px; padding: 0 16px; background: color-mix(in srgb, var(--now-deep), transparent 20%); backdrop-filter: blur(16px); }
+  .now-playing__header { position: sticky; top: 0; height: 64px; padding: 0 16px; }
   .now-playing__header::before { content: ""; position: absolute; top: 7px; left: 50%; width: 34px; height: 4px; border-radius: 999px; background: rgba(255,255,255,.28); transform: translateX(-50%); pointer-events: none; }
+  /* The scrim fades out below the header instead of ending in a hard edge; it stops at the
+     artwork's top (header + layout padding) so the cover is never blurred at rest. */
+  .now-playing__header::after { content: ""; position: absolute; z-index: -1; inset: 0 0 -14px; background: color-mix(in srgb, var(--now-deep), transparent 20%); backdrop-filter: blur(16px); mask-image: linear-gradient(to bottom, black 45%, transparent); pointer-events: none; }
   .now-playing__label { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .now-playing__layout { width: 100%; min-width: 0; max-width: 100%; height: auto; min-height: calc(100dvh - 64px); grid-template-columns: minmax(0, 1fr); gap: 40px; padding: 14px 24px 100px; }
   .now-playing__visual { width: 100%; justify-self: center; }
@@ -1062,8 +1065,9 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
    art and lyrics, so they stack like phones: controls on top, lyrics scroll below. */
 @media (orientation: portrait) and (min-width: 641px) and (max-width: 1100px) {
   .now-playing { overflow-y: auto; overscroll-behavior-y: contain; }
-  .now-playing__header { position: sticky; top: 0; height: 68px; padding: 0 24px; background: color-mix(in srgb, var(--now-deep), transparent 20%); backdrop-filter: blur(16px); }
+  .now-playing__header { position: sticky; top: 0; height: 68px; padding: 0 24px; }
   .now-playing__header::before { content: ""; position: absolute; top: 8px; left: 50%; width: 38px; height: 4px; border-radius: 999px; background: rgba(255,255,255,.28); transform: translateX(-50%); pointer-events: none; }
+  .now-playing__header::after { content: ""; position: absolute; z-index: -1; inset: 0 0 -20px; background: color-mix(in srgb, var(--now-deep), transparent 20%); backdrop-filter: blur(16px); mask-image: linear-gradient(to bottom, black 45%, transparent); pointer-events: none; }
   .now-playing__layout { width: 100%; min-width: 0; max-width: 100%; height: auto; min-height: calc(100dvh - 68px); grid-template-columns: minmax(0, 1fr); gap: 48px; padding: 20px clamp(32px, 7vw, 72px) 120px; }
   .now-playing__visual { width: min(100%, 560px); justify-self: center; }
   .now-playing__art { width: min(62vw, 480px); }
