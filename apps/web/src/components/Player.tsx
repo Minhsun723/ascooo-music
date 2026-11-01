@@ -272,6 +272,38 @@ function useDragToDismiss(playerRef: RefObject<HTMLElement | null>, mounted: boo
   }, [playerRef, mounted]);
 }
 
+/** Keeps the screen from dimming while the open player is playing, so the lyrics stay readable. Browsers
+ *  drop the lock whenever the page is hidden, so it is taken again each time the page comes back. */
+function useScreenWakeLock(active: boolean) {
+  useEffect(() => {
+    if (!active || !('wakeLock' in navigator)) return;
+    let lock: WakeLockSentinel | null = null;
+    let requesting = false;
+    let stopped = false;
+
+    const acquire = () => {
+      if (requesting || document.visibilityState !== 'visible' || (lock && !lock.released)) return;
+      requesting = true;
+      navigator.wakeLock.request('screen')
+        .then((next) => {
+          if (stopped) void next.release();
+          else lock = next;
+        })
+        // Refused (battery saver, an insecure origin): the screen just dims as it normally would.
+        .catch(() => {})
+        .finally(() => { requesting = false; });
+    };
+
+    acquire();
+    document.addEventListener('visibilitychange', acquire);
+    return () => {
+      stopped = true;
+      document.removeEventListener('visibilitychange', acquire);
+      void lock?.release();
+    };
+  }, [active]);
+}
+
 function OverflowMarquee({ text, play = true }: { text: string; play?: boolean }) {
   const viewportRef = useRef<HTMLSpanElement | null>(null);
   const textRef = useRef<HTMLSpanElement | null>(null);
@@ -640,6 +672,7 @@ function NowPlayingQueue() {
 export function NowPlaying() {
   const open = usePlayer((s) => s.nowPlayingOpen);
   const track = useCurrentTrack();
+  const isPlaying = usePlayer((s) => s.isPlaying);
   const currentTime = usePlayer((s) => s.currentTime);
   const duration = usePlayer((s) => s.duration);
   const volume = usePlayer((s) => s.volume);
@@ -723,6 +756,7 @@ export function NowPlaying() {
   }, [shouldRender]);
 
   useDragToDismiss(nowPlayingRef, shouldRender && !!track);
+  useScreenWakeLock(open && isPlaying && !!track);
 
   if (!shouldRender || !track) return null;
   const style = { '--now-accent': palette.accent, '--now-deep': palette.deep, '--now-glow': palette.glow } as CSSProperties;
