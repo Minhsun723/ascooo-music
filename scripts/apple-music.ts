@@ -134,8 +134,16 @@ export interface AppleArtistPage {
 
 interface CatalogItem {
   audioLocale: string;
+  /** Upper case; albums have none. */
+  isrc: string | null;
   albumId: string | null;
   artists: CatalogArtist[];
+}
+
+/** One album in the storefront that carries a recording, with its name in each catalog language read. */
+interface AlbumRelease {
+  id: string;
+  names: string[];
 }
 
 interface AppleResponse {
@@ -204,6 +212,15 @@ function similarity(left: string | undefined, right: string | undefined): number
   let overlap = 0;
   for (const [pair, count] of aa) overlap += Math.min(count, bb.get(pair) ?? 0);
   return (2 * overlap) / ([...aa.values()].reduce((sum, n) => sum + n, 0) + [...bb.values()].reduce((sum, n) => sum + n, 0));
+}
+
+/** Apple's suffix on single and EP titles, which tags often leave off. */
+const RELEASE_SUFFIX = /\s+-\s+(?:single|ep)\s*$/i;
+
+/** The same album name, ignoring " - Single" or " - EP" on either side. */
+function sameAlbum(left: string, right: string): boolean {
+  const key = (name: string) => compact(name.replace(RELEASE_SUFFIX, ''));
+  return !!key(left) && key(left) === key(right);
 }
 
 const VERSION_MARKERS = [
@@ -460,8 +477,14 @@ export class AppleMusicClient {
    * read in both catalog languages so a tag spelled either way can be matched.
    * A song Apple re-issued under a new ID is found by its ISRC; songs the
    * storefront does not carry at all are left out.
+   *
+   * albumId is the release named like the local album, when one carries the
+   * same recording and credits someone. The song's own album is whichever
+   * release the match landed on: Bang Bang matched on Sweet Talker (Deluxe
+   * Version), which credits only Jessie J, though the file came from the
+   * single that credits all three.
    */
-  async songCredits(songs: Array<{ songId: string; isrc: string | null }>): Promise<Map<string, AppleSongCredits>> {
+  async songCredits(songs: Array<{ songId: string; isrc: string | null; album?: string }>): Promise<Map<string, AppleSongCredits>> {
     const native = await this.catalogCredits('songs', songs.map((song) => song.songId), this.language);
     const missing = songs.filter((song) => !native.has(song.songId) && song.isrc);
     const byIsrc = await this.songIdsByIsrc(this.storefront, missing.map((song) => song.isrc!));
@@ -474,6 +497,22 @@ export class AppleMusicClient {
     const english = this.language === 'en-US'
       ? native
       : await this.catalogCredits('songs', songs.map((song) => current(song.songId)), 'en-US');
+    const releases = await this.albumsByIsrc(songs.flatMap((song) => {
+      const isrc = native.get(current(song.songId))?.isrc;
+      return song.album && isrc ? [isrc] : [];
+    }));
+    // Releases named like the local album, for songs whose own album is not one.
+    const named = new Map<string, string[]>();
+    for (const { songId, album } of songs) {
+      const song = native.get(current(songId));
+      if (!album || !song?.isrc) continue;
+      const ids = (releases.get(song.isrc) ?? [])
+        .filter((release) => release.names.some((name) => sameAlbum(album, name)))
+        .map((release) => release.id);
+      if (ids.length && !(song.albumId && ids.includes(song.albumId))) named.set(songId, ids);
+    }
+    // Apple credits no one on a compilation, so one cannot stand in for the song's own album.
+    const credited = await this.catalogCredits('albums', [...new Set([...named.values()].flat())], this.language);
 
     const credits = new Map<string, AppleSongCredits>();
     for (const { songId } of songs) {
@@ -483,9 +522,39 @@ export class AppleMusicClient {
       let locale = song.audioLocale;
       if (locale === 'zxx' && song.albumId) locale = await this.albumAudioLocale(this.storefront, song.albumId) ?? locale;
       const japanese = locale.startsWith('ja');
-      credits.set(songId, { japanese, albumId: song.albumId, artists: this.mergeCredits(song.artists, english.get(id)?.artists, japanese) });
+      const albumId = named.get(songId)?.find((album) => credited.get(album)?.artists.length) ?? song.albumId;
+      credits.set(songId, { japanese, albumId, artists: this.mergeCredits(song.artists, english.get(id)?.artists, japanese) });
     }
     return credits;
+  }
+
+  /**
+   * Every album in the storefront that carries each ISRC, in Apple's order.
+   * One recording is often on a dozen: the single, the album and its deluxe
+   * edition, soundtracks, compilations. Album names are read in both catalog
+   * languages, as a ja-JP read can give a Western album a katakana name.
+   */
+  private async albumsByIsrc(isrcs: string[]): Promise<Map<string, AlbumRelease[]>> {
+    const names = new Map<string, Map<string, Set<string>>>();
+    const unique = [...new Set(isrcs)];
+    for (const language of new Set([this.language, 'en-US'])) {
+      for (let i = 0; i < unique.length; i += 25) {
+        const payload = await this.get(`catalog/${this.storefront}/songs`, {
+          'filter[isrc]': unique.slice(i, i + 25).join(','),
+          l: language,
+        });
+        for (const song of (payload.data as unknown as AppleSong[] | undefined) ?? []) {
+          const isrc = song.attributes?.isrc?.toUpperCase();
+          const id = song.relationships?.albums?.data?.[0]?.id;
+          const name = song.attributes?.albumName?.trim();
+          if (!isrc || !id || !name) continue;
+          const albums = names.get(isrc) ?? new Map<string, Set<string>>();
+          albums.set(id, (albums.get(id) ?? new Set()).add(name));
+          names.set(isrc, albums);
+        }
+      }
+    }
+    return new Map([...names].map(([isrc, albums]) => [isrc, [...albums].map(([id, albumNames]) => ({ id, names: [...albumNames] }))]));
   }
 
   /**
@@ -564,6 +633,7 @@ export class AppleMusicClient {
       for (const item of (payload.data as unknown as AppleSong[] | undefined) ?? []) {
         items.set(item.id, {
           audioLocale: (item.attributes?.audioLocale ?? '').toLowerCase(),
+          isrc: item.attributes?.isrc?.toUpperCase() ?? null,
           albumId: item.relationships?.albums?.data?.[0]?.id ?? null,
           artists: (item.relationships?.artists?.data ?? []).flatMap((artist) => {
             const id = artist.id?.trim();

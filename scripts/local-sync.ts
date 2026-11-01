@@ -325,8 +325,9 @@ const APPLE_MATCH_VERSION = 3;
 // version 3 finds songs Taiwan lists under another ID by ISRC.
 const APPLE_GENRE_VERSION = 3;
 // Bump when the credit lookup changes so cached credits are looked up again.
-// Version 2 finds songs Apple re-issued under a new ID by their ISRC.
-const APPLE_CREDITS_VERSION = 2;
+// Version 2 finds songs Apple re-issued under a new ID by their ISRC; version
+// 3 takes the album credits from the release named like the local album.
+const APPLE_CREDITS_VERSION = 3;
 
 function lyricsFormat(path: string, content: string): 'lrc' | 'ttml' | 'plain' {
   if (extOf(path) === 'ttml' || /<tt(?:\s|>)/i.test(content)) return 'ttml';
@@ -520,12 +521,18 @@ async function attachCredits(
   root: string,
   addArtistArtwork: (artwork: AppleArtwork) => Promise<string | null>,
 ): Promise<void> {
+  // As the Worker titles the album: the tag, else the folder's name.
+  const albumTitle = (track: PreparedTrack) => {
+    const folder = parentDir(track.path);
+    return nfc(track.metadata.album || (folder === root ? '' : folder.slice(folder.lastIndexOf('/') + 1)));
+  };
   const pending = tracks.filter((track) => track.appleMusic && track.appleMusic.creditsVersion !== APPLE_CREDITS_VERSION);
   if (apple && pending.length) {
     try {
       const songs = await apple.songCredits(pending.map((track) => ({
         songId: track.appleMusic!.songId,
         isrc: track.appleMusic!.isrc ?? track.metadata.isrc ?? null,
+        album: albumTitle(track),
       })));
       const albumIds = new Set([...songs.values()].flatMap((song) => song.albumId ? [song.albumId] : []));
       const japaneseAlbums = new Set([...songs.values()].flatMap((song) => song.japanese && song.albumId ? [song.albumId] : []));
@@ -588,11 +595,9 @@ async function attachCredits(
   const albums = new Map<string, PreparedTrack[]>();
   for (const track of tracks) {
     const meta = track.metadata;
-    const folder = parentDir(track.path);
-    const folderName = folder === root ? '' : folder.slice(folder.lastIndexOf('/') + 1);
     const artist = nfc(meta.artist || guessFromFilename(track.path).artist || meta.albumArtist ||
       track.appleMusic?.artistName.trim() || '未知歌手');
-    const key = `${nfc(meta.album || folderName || '未知專輯').toLowerCase()}\u0000${(nfc(meta.albumArtist) || artist).toLowerCase()}`;
+    const key = `${(albumTitle(track) || '未知專輯').toLowerCase()}\u0000${(nfc(meta.albumArtist) || artist).toLowerCase()}`;
     albums.set(key, [...albums.get(key) ?? [], track]);
   }
   const albumCredits = new Map<PreparedTrack, CachedCredit[]>();
