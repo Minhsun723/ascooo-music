@@ -377,13 +377,27 @@ h1, h2, h3 { font-family: var(--font-display); letter-spacing: -.035em; }
 .lyrics-lines__glow { position: absolute; inset: 0; z-index: -1; color: transparent; pointer-events: none; }
 /* Strength follows the fill, as a drop-shadow of the .34-alpha unsung text would; held notes add a white
    halo with --glow. Blur radii are twice the old drop-shadow() lengths, which are standard deviations.
-   A filter on the word instead gets cut off at its box in Safari, which only repaints the box. */
+   A filter on the word instead gets cut off at its box in Safari, which only repaints the box.
+   Each glow word is a layer of its own, so its lift and swell move without repainting, and a repaint of
+   one word no longer redraws the blurred glows of the words around it. */
 .lyrics-lines__glow > span {
+  position: relative;
   display: inline-block;
   transform-origin: 50% 80%;
-  text-shadow:
-    0 0 calc(var(--glow, 0) * 28px) rgba(255,255,255,calc(var(--glow, 0) * .75)),
-    0 0 36px color-mix(in srgb, var(--now-glow) calc(34% + 66% * var(--p, 0)), transparent);
+  will-change: transform;
+  text-shadow: 0 0 calc(var(--glow, 0) * 28px) rgba(255,255,255,calc(var(--glow, 0) * .75));
+}
+/* The tinted glow, under the halo as it was when both were one text-shadow list. Fading a full-strength
+   shadow is the same as mixing its colour with transparent, but the compositor applies the opacity, so
+   the 36px blur is drawn once per line instead of every frame the fill moves. */
+.lyrics-lines__glow > span::before {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  text-shadow: 0 0 36px var(--now-glow);
+  opacity: calc(.34 + .66 * var(--p, 0));
+  will-change: opacity;
 }
 .lyrics-lines button.is-active .lyrics-word {
   color: transparent;
@@ -400,8 +414,10 @@ h1, h2, h3 { font-family: var(--font-display); letter-spacing: -.035em; }
 }
 .lyrics-lines button:hover { color: rgba(255,255,255,.65); filter: none; }
 .lyrics-panel[data-user-scrolling] .lyrics-lines button { filter: none; }
-/* The active line is never blurred; dropping the filter keeps Safari from clipping its glow to the button box. */
-.lyrics-lines button.is-active { color: #fff; text-shadow: 0 0 30px var(--now-glow); filter: none; }
+/* The active line is never blurred; dropping the filter keeps Safari from clipping its glow to the button box.
+   It keeps a layer of its own while active (the scale-in and the wave already give it one for a moment):
+   the fill repaints it every frame, and in the shared layer each repaint reran its neighbours' blur. */
+.lyrics-lines button.is-active { color: #fff; text-shadow: 0 0 30px var(--now-glow); filter: none; will-change: transform; }
 /* Background vocals: a smaller row under the lead, in the list only while their line is sung (data-open is set from JS).
    When the line moves on, the row leaves the flow at once, so the scroll wave measures the final layout, but stays
    painted in place while it fades. This must follow the is-active rule above, which would put it back in the flow. */

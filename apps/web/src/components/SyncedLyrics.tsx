@@ -63,13 +63,16 @@ function splitTrailingSpace(text: string) {
   return [body, text.slice(body.length)] as const;
 }
 
-/** The sung words, or with `glow` their copy underneath; both wrap the same, so the glow lines up. */
+/**
+ * The sung words, or with `glow` their copy underneath; both wrap the same, so the glow lines up.
+ * The copy repeats its text in data-text for the tinted layer drawn from it in CSS.
+ */
 function timedWords(words: LyricWord[], glow = false) {
   return words.map((word, wordIndex) => {
     const [body, trailing] = splitTrailingSpace(word.text);
     return (
       <Fragment key={`${word.time}-${wordIndex}`}>
-        <span className={glow ? undefined : 'lyrics-word'}>{body}</span>{trailing}
+        <span className={glow ? undefined : 'lyrics-word'} data-text={glow ? body : undefined}>{body}</span>{trailing}
       </Fragment>
     );
   });
@@ -161,17 +164,30 @@ export function SyncedLyrics({ lines: sourceLines, panelRef, onSeek }: {
     }
 
     const anchor = Math.max(0, index);
+    const view = panel.getBoundingClientRect();
+    // Measured before any line is moved, so the browser lays out once rather than once per line.
+    const after = lineRefs.current.map((el) => el?.getBoundingClientRect());
     lineRefs.current.forEach((el, i) => {
-      if (!el) return;
+      const rect = after[i];
+      if (!el || !rect) return;
       const offset = i - anchor;
       // Interlude rows pop in and out in place; collapsed ones measure at 0 and would fly in.
       if (lines[i]?.interlude || offset < -WAVE_BEFORE - 4 || offset > WAVE_AFTER + 4) {
         settleLine(el, i);
         return;
       }
-      const delta = before[i] - el.getBoundingClientRect().top;
+      const delta = before[i] - rect.top;
       if (Math.abs(delta) < 1) return;
       const currentY = Number(gsap.getProperty(el, 'y')) || 0;
+      // A line that glides entirely outside the panel is clipped the whole way, so settling it looks
+      // the same, and spares a moving blurred layer per line. The margin covers what paints past the
+      // button box: the blur, and a fading background-vocal row.
+      const end = rect.top - currentY;
+      const margin = rect.height;
+      if (Math.max(before[i], end) + rect.height + margin <= view.top || Math.min(before[i], end) - margin >= view.bottom) {
+        settleLine(el, i);
+        return;
+      }
       // The previous wave must be killed by its handle: neither 'auto' overwrite nor
       // killTweensOf(el, 'y') stops a fromTo still in its delay, which then stays parked on its
       // start offset for good, leaving lines overlapping or a gap where the active line should be.
@@ -222,9 +238,22 @@ export function SyncedLyrics({ lines: sourceLines, panelRef, onSeek }: {
         rowEl.style.setProperty('--fade', String(gsap.utils.clamp(0, 1, 1 - (time - outAt) / INTERLUDE_OUT)));
       }
     };
+    // While paused the clock only moves on a seek, so the ticker can sleep instead of waking every frame.
+    const start = () => gsap.ticker.add(tick);
+    // A paused reading also resets the smoothed clock, as every paused frame used to; without it,
+    // resuming would extrapolate from the last playing frame and jump ahead.
+    const stop = () => { gsap.ticker.remove(tick); tick(); };
     tick();
-    gsap.ticker.add(tick);
-    return () => gsap.ticker.remove(tick);
+    if (!audio.paused) start();
+    audio.addEventListener('play', start);
+    audio.addEventListener('pause', stop);
+    audio.addEventListener('seeked', tick);
+    return () => {
+      gsap.ticker.remove(tick);
+      audio.removeEventListener('play', start);
+      audio.removeEventListener('pause', stop);
+      audio.removeEventListener('seeked', tick);
+    };
   }, [lines]);
 
   // Line change: depth (scale + blur by distance) and the scroll wave.
@@ -238,11 +267,14 @@ export function SyncedLyrics({ lines: sourceLines, panelRef, onSeek }: {
       gsap.set(el, { '--blur': `${reduce ? 0 : Math.min(distance, MAX_BLUR_DISTANCE) * BLUR_PER_LINE}px` });
       const text = el.firstElementChild;
       const scale = i === active || reduce ? 1 : 0.95;
+      // Only the lines entering or leaving the active state change scale. A tween on the rest would
+      // still lift each one's text, and so its blur, onto a layer of its own for the whole tween.
+      if (!text || (!gsap.isTweening(text) && gsap.getProperty(text, 'scale') === scale)) return;
       if (distance > WAVE_AFTER + 4) {
-        if (text) gsap.set(text, { scale });
+        gsap.set(text, { scale });
         return;
       }
-      if (text) gsap.to(text, { scale, duration: i === active ? 0.7 : 0.5, ease: i === active ? 'back.out(1.6)' : 'power2.out', overwrite: 'auto' });
+      gsap.to(text, { scale, duration: i === active ? 0.7 : 0.5, ease: i === active ? 'back.out(1.6)' : 'power2.out', overwrite: 'auto' });
     });
 
     follow(!hasFollowedRef.current || reduce, () => openActive(active));
