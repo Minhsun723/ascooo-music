@@ -21,5 +21,9 @@ export interface SessionUser {
 
 export type AppEnv = {
   Bindings: Env;
-  Variables: { user: SessionUser };
+  Variables: {
+    user: SessionUser;
+    /** A session started or renewed while handling this request; deliverSession sends it with the response. */
+    session: { token: string; exp: number };
+  };
 };

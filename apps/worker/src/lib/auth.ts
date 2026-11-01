@@ -1,10 +1,12 @@
 import type { Context, MiddlewareHandler } from 'hono';
-import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
+import { deleteCookie, generateCookie, getCookie } from 'hono/cookie';
 import { HTTPException } from 'hono/http-exception';
 import { sign, verify } from 'hono/jwt';
 import type { AppEnv, SessionUser } from '../env';
 
 const COOKIE = 'am_session';
+/** Carries a renewed token back to the app, which cannot receive the website's cookie. */
+const SESSION_TOKEN_HEADER = 'X-Session-Token';
 const SESSION_DAYS = 30;
 // A session is trusted on its signature alone for this long; after that D1
 // confirms the account still exists and the session was not revoked.
@@ -47,29 +49,46 @@ export async function verifyLogin(password: string, stored: string | undefined):
   return valid && stored !== undefined;
 }
 
-/**
- * `version` is the user's session_version. The hourly re-check passes the
- * original `exp`, so renewing a session never extends its lifetime.
- */
-export async function startSession(
-  c: Context<AppEnv>,
-  user: SessionUser,
-  version: number,
-  exp = Math.floor(Date.now() / 1000) + SESSION_DAYS * 86400,
-) {
+const newSessionExpiry = () => Math.floor(Date.now() / 1000) + SESSION_DAYS * 86400;
+
+/** The Android app sends its session as a Bearer token; the website never does. */
+function bearerToken(c: Context<AppEnv>): string | null {
+  return c.req.header('authorization')?.match(/^Bearer\s+(\S+)$/i)?.[1] ?? null;
+}
+
+/** `version` is the user's session_version. Only the app may see this token; the website gets it as an httpOnly cookie. */
+export async function signSession(c: Context<AppEnv>, user: SessionUser, version: number, exp = newSessionExpiry()) {
   const iat = Math.floor(Date.now() / 1000);
-  const token = await sign(
-    { sub: user.id, name: user.username, role: user.role, ver: version, iat, exp },
-    c.env.JWT_SECRET,
-    'HS256',
-  );
-  setCookie(c, COOKIE, token, {
+  return sign({ sub: user.id, name: user.username, role: user.role, ver: version, iat, exp }, c.env.JWT_SECRET, 'HS256');
+}
+
+/**
+ * The hourly re-check passes the original `exp`, so renewing a session never
+ * extends its lifetime. The token leaves with the finished response; see deliverSession.
+ */
+export async function startSession(c: Context<AppEnv>, user: SessionUser, version: number, exp = newSessionExpiry()) {
+  c.set('session', { token: await signSession(c, user, version, exp), exp });
+}
+
+/**
+ * Send a session started during this request: in a header to the app, as an httpOnly cookie to the website.
+ * It is written onto the final response because a route that returns its own Response (a stream) drops
+ * headers set earlier through c.header(), and with them a renewal.
+ */
+export function deliverSession(c: Context<AppEnv>) {
+  const session = c.get('session');
+  if (!session) return;
+  if (bearerToken(c)) {
+    c.res.headers.set(SESSION_TOKEN_HEADER, session.token);
+    return;
+  }
+  c.res.headers.append('Set-Cookie', generateCookie(COOKIE, session.token, {
     httpOnly: true,
     secure: new URL(c.req.url).protocol === 'https:',
     sameSite: 'Lax',
     path: '/',
-    maxAge: exp - iat,
-  });
+    maxAge: session.exp - Math.floor(Date.now() / 1000),
+  }));
 }
 
 export function endSession(c: Context<AppEnv>) {
@@ -82,7 +101,8 @@ export function clearStaleSession(c: Context<AppEnv>) {
 }
 
 export async function readSession(c: Context<AppEnv>): Promise<SessionUser | null> {
-  const token = getCookie(c, COOKIE);
+  // A Bearer token stands alone: when the app sends one, a stray cookie is never consulted.
+  const token = bearerToken(c) ?? getCookie(c, COOKIE);
   if (!token) return null;
   let p: Awaited<ReturnType<typeof verify>>;
   try {

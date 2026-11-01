@@ -109,6 +109,16 @@ npm run deploy
 
 `npm run deploy` 會先建置 React，再將 `apps/web/dist`、Hono Worker 與 bindings 一次部署到 `music.ascooo.com`。
 
+## App 登入（Bearer token）
+
+網站以 httpOnly cookie 保存登入狀態；Android App 改用 Bearer token。兩者共用帳號、30 天有效期與撤銷規則：
+
+- 登入：`POST /api/auth/login` 的內容多帶 `"client": "app"`，回應為 `{ user, token }` 且不設定 cookie。網站不帶這個欄位，因此網頁上的程式永遠讀不到 token。
+- 之後的請求帶 `Authorization: Bearer <token>`。token 只能送往本站，不可放進網址，也不可附在 Apple CDN 等其他網域的請求上。
+- token 簽發超過一小時後，下一個請求會向 D1 重新確認，並在回應的 `X-Session-Token` 標頭附上新 token，App 要以它取代舊的；到期時間不會因此延長。串流等任何 API 回應都可能帶這個標頭。
+- 任一裝置改密碼後，其他裝置最多一小時內失效；在 App 裡改密碼時，新 token 同樣由 `X-Session-Token` 傳回。
+- 公開的目錄 API 在 token 失效時不會回 401，而是當成未登入，因此 App 啟動時應先呼叫 `GET /api/auth/status` 確認。
+
 ## 本機優先同步
 
 同步不再要求線上 Worker 從 PikPak 讀取及解析整首音訊。先在 `.dev.vars` 填入本機 WebDAV 設定與部署站台的管理員登入資料：

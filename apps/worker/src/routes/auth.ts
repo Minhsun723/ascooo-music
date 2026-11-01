@@ -8,6 +8,7 @@ import {
   readSession,
   requireAdmin,
   requireUser,
+  signSession,
   startSession,
   verifyLogin,
   verifyPassword,
@@ -61,7 +62,7 @@ auth.post('/login', async (c) => {
   if (!success) {
     return c.json({ error: '登入嘗試次數過多，請稍後再試' }, 429, { 'Retry-After': '60' });
   }
-  const body = await c.req.json<{ username?: string; password?: string }>();
+  const body = await c.req.json<{ username?: string; password?: string; client?: string }>();
   const row = await c.env.DB.prepare(
     'SELECT id, username, password_hash, role, session_version FROM users WHERE username = ?',
   )
@@ -70,6 +71,8 @@ auth.post('/login', async (c) => {
   const valid = await verifyLogin(String(body.password ?? ''), row?.password_hash);
   if (!row || !valid) throw new HTTPException(401, { message: '帳號或密碼錯誤' });
   const user: SessionUser = { id: row.id, username: row.username, role: row.role };
+  // Only the app asks for the token itself. The website never does, so script on the page cannot read its session.
+  if (body.client === 'app') return c.json({ user, token: await signSession(c, user, row.session_version) });
   await startSession(c, user, row.session_version);
   return c.json({ user });
 });

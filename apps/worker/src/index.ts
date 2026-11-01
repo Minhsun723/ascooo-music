@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { logger } from 'hono/logger';
 import type { AppEnv } from './env';
-import { loadUser, requireUser } from './lib/auth';
+import { deliverSession, loadUser, requireUser } from './lib/auth';
 import auth from './routes/auth';
 import library, { catalog } from './routes/library';
 import me from './routes/me';
@@ -21,6 +21,7 @@ app.use('*', async (c, next) => {
   c.res = new Response(c.res.body, c.res);
   c.res.headers.set('X-Content-Type-Options', 'nosniff');
   c.res.headers.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox; frame-ancestors 'none'");
+  deliverSession(c);
 });
 
 app.get('/health', (c) => c.json({ ok: true }));
