@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Compose draws everything; this only colours the window and the launch splash
+         so the app opens on the same near-black as the website. -->
+    <style name="Theme.AscoooMusic" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/brand_background</item>
+        <item name="android:windowSplashScreenBackground">@color/brand_background</item>
+    </style>
+</resources>

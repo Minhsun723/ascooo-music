@@ -1,0 +1,84 @@
+package com.ascooo.android.music.playback
+
+import android.os.Bundle
+import androidx.annotation.OptIn
+import androidx.core.net.toUri
+import androidx.media3.common.C
+import androidx.media3.common.Format
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.Tracks
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
+import com.ascooo.android.music.data.Track
+
+/** Which file plays: the original, or the AAC 5.1 copy made for devices without a Dolby decoder. */
+enum class AudioSource {
+  Original,
+  Aac51,
+}
+
+private val DOLBY_ATMOS = setOf("ec-3", "eac3", "e-ac-3")
+
+val Track.isDolbyAtmos: Boolean
+  get() = codec?.lowercase() in DOLBY_ATMOS
+
+/**
+ * Whether ExoPlayer will find a decoder for the library's Atmos files (E-AC-3 JOC). Media3 is asked
+ * directly so the answer matches what the player will do: it falls back to a plain E-AC-3 decoder
+ * (the 5.1 bed) everywhere except on Google's phones, whose E-AC-3 decoder cannot take JOC streams.
+ * A Pixel therefore plays the AAC 5.1 copy, as Chrome does.
+ */
+val canDecodeAtmos: Boolean by lazy { hasAtmosDecoder() }
+
+@OptIn(UnstableApi::class)
+private fun hasAtmosDecoder(): Boolean =
+  runCatching {
+      val atmos = Format.Builder().setSampleMimeType(MimeTypes.AUDIO_E_AC3_JOC).build()
+      MediaCodecUtil.getDecoderInfosSoftMatch(MediaCodecSelector.DEFAULT, atmos, false, false).isNotEmpty()
+    }
+    .getOrDefault(false)
+
+fun Track.pickSource(): AudioSource = if (hasAac51 && isDolbyAtmos && !canDecodeAtmos) AudioSource.Aac51 else AudioSource.Original
+
+/**
+ * The current item has audio but no track this phone can decode. ExoPlayer then plays on in
+ * silence with its clock still running, instead of failing.
+ */
+val Tracks.audioUnplayable: Boolean
+  get() = containsType(C.TRACK_TYPE_AUDIO) && !isTypeSupported(C.TRACK_TYPE_AUDIO)
+
+fun streamUrl(baseUrl: String, trackId: Long, source: AudioSource): String =
+  "$baseUrl/api/stream/$trackId" + if (source == AudioSource.Aac51) "?v=aac51" else ""
+
+/** Covers come in 512 px (lists) and 2000 px (album hero, Now Playing, lock screen). */
+fun artworkUrl(baseUrl: String, artworkId: String?, size: Int = 512): String? =
+  artworkId?.let { "$baseUrl/api/art/$it/$size?v=1" }
+
+const val EXTRA_HAS_AAC51 = "ascooo.hasAac51"
+
+/**
+ * The stream goes in RequestMetadata because a controller's MediaItem reaches the session without
+ * its local URI; [PlaybackService] turns it back into the item's URI.
+ */
+fun Track.toMediaItem(baseUrl: String): MediaItem =
+  MediaItem.Builder()
+    .setMediaId(id.toString())
+    .setRequestMetadata(
+      MediaItem.RequestMetadata.Builder().setMediaUri(streamUrl(baseUrl, id, pickSource()).toUri()).build()
+    )
+    .setMediaMetadata(
+      MediaMetadata.Builder()
+        .setTitle(title)
+        .setArtist(artist)
+        .setAlbumTitle(album)
+        .setArtworkUri(artworkUrl(baseUrl, artworkId, 2000)?.toUri())
+        .setDurationMs((duration * 1000).toLong())
+        .setIsPlayable(true)
+        .setIsBrowsable(false)
+        .setExtras(Bundle().apply { putBoolean(EXTRA_HAS_AAC51, hasAac51) })
+        .build()
+    )
+    .build()
