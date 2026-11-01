@@ -92,25 +92,17 @@ function assertInRoot(env: Env, dir: string) {
 }
 
 sync.get('/status', async (c) => {
-  const db = c.env.DB;
-  const [counts, errors] = await db.batch([
-    db.prepare(
-      `SELECT status, COUNT(*) AS n, SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) AS errors FROM tracks GROUP BY status`,
-    ),
-    db.prepare(`SELECT id, path, error FROM tracks WHERE error IS NOT NULL ORDER BY updated_at DESC LIMIT 50`),
-  ]);
-  const by: Record<string, number> = {};
-  let errorCount = 0;
-  for (const r of counts.results as { status: string; n: number; errors: number }[]) {
-    by[r.status] = r.n;
-    errorCount += r.errors;
-  }
+  const counts = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS ready,
+       COALESCE(SUM(LOWER(codec) IN ('ec-3','eac3','e-ac-3')), 0) AS atmos,
+       COALESCE(SUM(alt_path IS NOT NULL), 0) AS aac51
+     FROM tracks WHERE status = 'ready'`,
+  ).first<{ ready: number; atmos: number; aac51: number }>();
   return c.json({
     root: normalizePath(c.env.MUSIC_ROOT || '/'),
-    ready: by.ready ?? 0,
-    pending: by.pending ?? 0,
-    errorCount,
-    errors: errors.results,
+    ready: counts?.ready ?? 0,
+    atmos: counts?.atmos ?? 0,
+    aac51: counts?.aac51 ?? 0,
   });
 });
 

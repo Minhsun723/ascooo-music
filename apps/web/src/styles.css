@@ -669,10 +669,9 @@ button.cappella-bubble:hover { filter: brightness(1.18); }
 .sync-summary div:last-child { border: 0; }
 .sync-summary strong { font: 700 1.7rem/1 var(--font-display); }
 .sync-summary span { color: var(--muted); font-size: .7rem; }
-.sync-root { display: grid; gap: 6px; margin: 20px 0; }
+.sync-root { display: grid; gap: 6px; margin-top: 20px; }
 .sync-root span { color: var(--muted); font-size: .7rem; }
 .sync-root code { width: fit-content; padding: 8px 10px; border-radius: 6px; color: var(--text-soft); background: rgba(255,255,255,.05); font: .72rem/1 var(--font-mono); }
-.sync-progress { display: flex; align-items: center; gap: 10px; margin: 18px 0; padding: 12px; border-radius: 8px; color: var(--text-soft); background: rgba(255,255,255,.04); font-size: .75rem; }
 .is-spinning { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .settings-note { color: var(--text-soft); line-height: 1.8; font-size: .85rem; }

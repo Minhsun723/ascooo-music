@@ -111,7 +111,7 @@ export function HomePage() {
       {data.recentAlbums.length ? <section className="page-section"><SectionHeading title="新進唱片櫃" link="/library?tab=albums" /><AlbumGrid albums={data.recentAlbums.slice(0, 12)} shelf /></section> : null}
       {data.recentPlays.length ? <section className="page-section"><SectionHeading title="最近聽過" /><TrackList tracks={data.recentPlays.slice(0, 8)} compact numbered={false} /></section> : null}
       {data.randomAlbums.length ? <section className="page-section"><SectionHeading title="再翻一張唱片" /><AlbumGrid albums={data.randomAlbums.slice(0, 12)} shelf /></section> : null}
-      {!data.stats.tracks ? <EmptyState title="音樂庫還是空的" copy="到設定頁連線 PikPak，執行第一次同步後，歌曲就會出現在這裡。" action={<Link to="/settings" className="primary-button"><IconSync size={18} />前往同步設定</Link>} /> : null}
+      {!data.stats.tracks ? <EmptyState title="音樂庫暫無內容" /> : null}
     </>
   );
 }
@@ -805,10 +805,7 @@ export function SettingsPage() {
   const user = useSession((s) => s.user)!;
   const logout = useSession((s) => s.logout);
   const status = useLibrarySync((s) => s.status);
-  const syncing = useLibrarySync((s) => s.syncing);
-  const progress = useLibrarySync((s) => s.progress);
   const loadStatus = useLibrarySync((s) => s.loadStatus);
-  const runSync = useLibrarySync((s) => s.run);
   const [passwords, setPasswords] = useState({ current: '', next: '' });
   const [savingPassword, setSavingPassword] = useState(false);
   const lyricsFont = usePreferences((s) => s.lyricsFont);
@@ -874,12 +871,10 @@ export function SettingsPage() {
             </div>
             <div className="sync-summary">
               <div><strong>{status?.ready.toLocaleString() ?? '—'}</strong><span>可播放歌曲</span></div>
-              <div><strong>{status?.pending.toLocaleString() ?? '—'}</strong><span>等待處理</span></div>
-              <div><strong>{status?.errorCount.toLocaleString() ?? '—'}</strong><span>需留意</span></div>
+              <div><strong>{status?.atmos.toLocaleString() ?? '—'}</strong><span>杜比全景聲</span></div>
+              <div><strong>{status?.aac51.toLocaleString() ?? '—'}</strong><span>5.1 環繞</span></div>
             </div>
             <div className="sync-root"><span>同步根目錄</span><code>{status?.root ?? '從 Worker 設定讀取'}</code></div>
-            {progress ? <div className="sync-progress" role="status"><span className={syncing ? 'is-spinning' : ''}><IconSync size={17} /></span>{progress}</div> : null}
-            <button type="button" className="primary-button" disabled={syncing} onClick={() => void runSync()}><IconSync size={18} />遠端同步</button>
           </section>
         ) : null}
 

@@ -139,7 +139,8 @@ export interface Lyrics {
 export interface SyncStatus {
   root: string;
   ready: number;
-  pending: number;
-  errorCount: number;
-  errors: { id: number; path: string; error: string }[];
+  /** Ready tracks in Dolby Atmos. */
+  atmos: number;
+  /** Ready tracks with an AAC 5.1 copy. */
+  aac51: number;
 }
