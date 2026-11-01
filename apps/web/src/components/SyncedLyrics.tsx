@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import gsap from 'gsap';
 import { activeIndex, splitBackground, withInterludes, type LyricLine, type LyricWord } from '../lib/lrc';
 import { getAudio, getPlaybackTime } from '../store/player';
@@ -87,6 +87,43 @@ function timedRow(words: LyricWord[], active: boolean, className = 'lyrics-lines
     </span>
   );
 }
+
+/** Memoized, so a line change rerenders only the two rows whose active state flips, not every word of the song. */
+const LyricRow = memo(function LyricRow({ line, vocals, index, active, lineRefs, onPick }: {
+  line: LyricLine;
+  vocals: { lead: LyricWord[]; background: LyricWord[] };
+  index: number;
+  active: boolean;
+  lineRefs: RefObject<(HTMLButtonElement | null)[]>;
+  onPick: (time: number) => void;
+}) {
+  return (
+    <button
+      type="button"
+      ref={(node) => { lineRefs.current[index] = node; }}
+      className={[line.interlude && 'lyrics-lines__interlude', active && 'is-active'].filter(Boolean).join(' ')}
+      aria-label={line.interlude ? '間奏' : line.text || '♪'}
+      // Don't take focus on click, so Space keeps toggling playback instead of re-seeking.
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={() => onPick(line.time)}
+    >
+      {line.interlude ? (
+        <span className="lyrics-lines__text lyrics-interlude" aria-hidden="true">
+          <span className="lyrics-interlude__dots"><i /><i /><i /></span>
+        </span>
+      ) : line.words?.length ? (
+        <>
+          {timedRow(vocals.lead, active)}
+          {vocals.background.length
+            ? timedRow(vocals.background, active, 'lyrics-lines__text lyrics-lines__text--timed lyrics-lines__bg')
+            : null}
+        </>
+      ) : (
+        <span className="lyrics-lines__text" aria-hidden="true">{line.text || '♪'}</span>
+      )}
+    </button>
+  );
+});
 
 export function SyncedLyrics({ lines: sourceLines, panelRef, onSeek }: {
   lines: LyricLine[];
@@ -207,6 +244,10 @@ export function SyncedLyrics({ lines: sourceLines, panelRef, onSeek }: {
     panelRef.current?.removeAttribute('data-user-scrolling');
   };
 
+  // Stable, so it doesn't rerender the memoized rows; endUserScroll only touches refs.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const pick = useCallback((time: number) => { endUserScroll(); onSeek(time); }, [onSeek]);
+
   useLayoutEffect(() => {
     lineRefs.current.length = lines.length;
     waveTweensRef.current.forEach((tween) => tween?.kill());
@@ -264,7 +305,10 @@ export function SyncedLyrics({ lines: sourceLines, panelRef, onSeek }: {
       const distance = active < 0 ? i + 1 : Math.abs(i - active);
       // Set, not tweened: a changing blur radius re-rasterizes every line each frame, which drops
       // frames on large high-DPI screens. One step of 0.7px is too small to notice jumping.
-      gsap.set(el, { '--blur': `${reduce ? 0 : Math.min(distance, MAX_BLUR_DISTANCE) * BLUR_PER_LINE}px` });
+      // Written directly, and only when it changes: gsap.set reads the computed style first, which
+      // between writes forces a style recalc for every line of the song.
+      const blur = `${reduce ? 0 : Math.min(distance, MAX_BLUR_DISTANCE) * BLUR_PER_LINE}px`;
+      if (el.style.getPropertyValue('--blur') !== blur) el.style.setProperty('--blur', blur);
       const text = el.firstElementChild;
       const scale = i === active || reduce ? 1 : 0.95;
       // Only the lines entering or leaving the active state change scale. A tween on the rest would
@@ -342,31 +386,15 @@ export function SyncedLyrics({ lines: sourceLines, panelRef, onSeek }: {
   return (
     <div className="lyrics-lines">
       {lines.map((line, index) => (
-        <button
-          type="button"
+        <LyricRow
           key={`${line.time}-${index}`}
-          ref={(node) => { lineRefs.current[index] = node; }}
-          className={[line.interlude && 'lyrics-lines__interlude', index === active && 'is-active'].filter(Boolean).join(' ')}
-          aria-label={line.interlude ? '間奏' : line.text || '♪'}
-          // Don't take focus on click, so Space keeps toggling playback instead of re-seeking.
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => { endUserScroll(); onSeek(line.time); }}
-        >
-          {line.interlude ? (
-            <span className="lyrics-lines__text lyrics-interlude" aria-hidden="true">
-              <span className="lyrics-interlude__dots"><i /><i /><i /></span>
-            </span>
-          ) : line.words?.length ? (
-            <>
-              {timedRow(vocals[index].lead, index === active)}
-              {vocals[index].background.length
-                ? timedRow(vocals[index].background, index === active, 'lyrics-lines__text lyrics-lines__text--timed lyrics-lines__bg')
-                : null}
-            </>
-          ) : (
-            <span className="lyrics-lines__text" aria-hidden="true">{line.text || '♪'}</span>
-          )}
-        </button>
+          line={line}
+          vocals={vocals[index]}
+          index={index}
+          active={index === active}
+          lineRefs={lineRefs}
+          onPick={pick}
+        />
       ))}
     </div>
   );
