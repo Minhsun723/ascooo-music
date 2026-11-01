@@ -10,6 +10,7 @@ import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Path
+import retrofit2.http.Query
 
 /** The Worker's `/api` routes the app uses. */
 interface AscoooApi {
@@ -19,7 +20,26 @@ interface AscoooApi {
 
   @GET("home") suspend fun home(): HomeData
 
+  @GET("search") suspend fun search(@Query("q") query: String): SearchResults
+
+  // The library asks for the same amounts as the website's library page.
+  @GET("tracks?sort=added&limit=500") suspend fun tracks(): TrackList
+
+  @GET("albums?sort=added&limit=300") suspend fun albums(): AlbumList
+
+  @GET("artists?limit=500") suspend fun artists(): ArtistList
+
   @GET("albums/{id}") suspend fun album(@Path("id") id: Long): AlbumDetail
+
+  @GET("artists/{id}") suspend fun artist(@Path("id") id: Long): ArtistDetail
+
+  @GET("artists/{id}/tracks") suspend fun artistTracks(@Path("id") id: Long): ArtistTracks
+
+  @GET("me/favorites") suspend fun favorites(): TrackList
+
+  @GET("me/playlists") suspend fun playlists(): PlaylistList
+
+  @GET("me/playlists/{id}") suspend fun playlist(@Path("id") id: Long): PlaylistDetail
 
   @POST("me/history") suspend fun history(@Body body: HistoryRequest)
 }

@@ -1,5 +1,6 @@
 package com.ascooo.android.music.ui.settings
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Spacer
@@ -34,6 +35,7 @@ import com.ascooo.android.music.R
 import com.ascooo.android.music.appContainer
 import com.ascooo.android.music.data.User
 import com.ascooo.android.music.playback.canDecodeAtmos
+import com.ascooo.android.music.ui.components.StatusBarScrim
 import kotlinx.coroutines.launch
 
 @Composable
@@ -42,54 +44,57 @@ fun SettingsScreen(user: User?, onSignOut: () -> Unit, modifier: Modifier = Modi
   val dynamicColor by container.settings.dynamicColor.collectAsStateWithLifecycle(initialValue = false)
   val scope = rememberCoroutineScope()
 
-  Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().padding(bottom = 24.dp)) {
-    Text("設定", style = MaterialTheme.typography.headlineMediumEmphasized, modifier = Modifier.padding(start = 20.dp, top = 24.dp, bottom = 8.dp))
+  Box(modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().padding(bottom = 24.dp)) {
+      Text("設定", style = MaterialTheme.typography.headlineMediumEmphasized, modifier = Modifier.padding(start = 20.dp, top = 24.dp, bottom = 8.dp))
 
-    Group("帳號") {
-      Item(
-        headline = user?.username ?: "已登入",
-        supporting = when (user?.role) {
-          "admin" -> "管理員"
-          null -> "目前離線，無法確認帳號資訊"
-          else -> "使用者"
-        },
+      Group("帳號") {
+        Item(
+          headline = user?.username ?: "已登入",
+          supporting = when (user?.role) {
+            "admin" -> "管理員"
+            null -> "目前離線，無法確認帳號資訊"
+            else -> "使用者"
+          },
+        )
+      }
+
+      Group("外觀") {
+        SwitchItem(
+          headline = "跟隨桌布配色",
+          supporting = "使用 Material You 依桌布產生的顏色；關閉時使用 Ascooo 的品牌配色",
+          checked = dynamicColor,
+          onCheckedChange = { scope.launch { container.settings.setDynamicColor(it) } },
+        )
+      }
+
+      Group("播放") {
+        Item(
+          headline = "杜比全景聲",
+          supporting =
+            if (canDecodeAtmos) "這台裝置能解碼杜比全景聲，直接播放原始檔"
+            else "這台裝置無法解碼杜比全景聲，有 AAC 5.1 版本時改播該版本",
+        )
+      }
+
+      OutlinedButton(
+        onClick = onSignOut,
+        shapes = ButtonDefaults.shapes(),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 24.dp),
+      ) {
+        Icon(painterResource(R.drawable.ic_logout), contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+        Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+        Text("登出")
+      }
+
+      Text(
+        "版本 ${BuildConfig.VERSION_NAME}" + if (BuildConfig.DEBUG) " · ${container.baseUrl}" else "",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 20.dp),
       )
     }
-
-    Group("外觀") {
-      SwitchItem(
-        headline = "跟隨桌布配色",
-        supporting = "使用 Material You 依桌布產生的顏色；關閉時使用 Ascooo 的品牌配色",
-        checked = dynamicColor,
-        onCheckedChange = { scope.launch { container.settings.setDynamicColor(it) } },
-      )
-    }
-
-    Group("播放") {
-      Item(
-        headline = "杜比全景聲",
-        supporting =
-          if (canDecodeAtmos) "這台裝置能解碼杜比全景聲，直接播放原始檔"
-          else "這台裝置無法解碼杜比全景聲，有 AAC 5.1 版本時改播該版本",
-      )
-    }
-
-    OutlinedButton(
-      onClick = onSignOut,
-      shapes = ButtonDefaults.shapes(),
-      modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 24.dp),
-    ) {
-      Icon(painterResource(R.drawable.ic_logout), contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
-      Spacer(Modifier.width(ButtonDefaults.IconSpacing))
-      Text("登出")
-    }
-
-    Text(
-      "版本 ${BuildConfig.VERSION_NAME}" + if (BuildConfig.DEBUG) " · ${container.baseUrl}" else "",
-      style = MaterialTheme.typography.bodySmall,
-      color = MaterialTheme.colorScheme.onSurfaceVariant,
-      modifier = Modifier.padding(horizontal = 20.dp),
-    )
+    StatusBarScrim()
   }
 }
 

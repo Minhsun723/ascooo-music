@@ -2,12 +2,20 @@ package com.ascooo.android.music.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.annotation.DrawableRes
+import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
@@ -23,22 +31,31 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.IntOffset
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
+import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
+import androidx.navigation3.runtime.rememberDecoratedNavEntries
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
+import androidx.navigation3.scene.Scene
 import androidx.navigation3.ui.NavDisplay
 import com.ascooo.android.music.R
 import com.ascooo.android.music.data.Track
 import com.ascooo.android.music.data.User
 import com.ascooo.android.music.ui.album.AlbumScreen
-import com.ascooo.android.music.ui.components.ComingSoon
+import com.ascooo.android.music.ui.artist.ArtistScreen
+import com.ascooo.android.music.ui.collection.ArtistTracksScreen
+import com.ascooo.android.music.ui.collection.FavoritesScreen
+import com.ascooo.android.music.ui.collection.PlaylistScreen
 import com.ascooo.android.music.ui.home.HomeScreen
+import com.ascooo.android.music.ui.library.LibraryScreen
 import com.ascooo.android.music.ui.player.MiniPlayer
 import com.ascooo.android.music.ui.player.NowPlayingScreen
 import com.ascooo.android.music.ui.player.PlayerViewModel
+import com.ascooo.android.music.ui.search.SearchScreen
 import com.ascooo.android.music.ui.settings.SettingsScreen
 import kotlinx.serialization.Serializable
 
@@ -52,6 +69,14 @@ import kotlinx.serialization.Serializable
 
 @Serializable data class AlbumRoute(val id: Long) : NavKey
 
+@Serializable data class ArtistRoute(val id: Long) : NavKey
+
+@Serializable data class ArtistTracksRoute(val id: Long) : NavKey
+
+@Serializable data class PlaylistRoute(val id: Long) : NavKey
+
+@Serializable data object FavoritesRoute : NavKey
+
 /** The same four destinations as the website's mobile tab bar. */
 private enum class Tab(val route: NavKey, val label: String, @DrawableRes val icon: Int, @DrawableRes val selectedIcon: Int) {
   Home(HomeRoute, "首頁", R.drawable.ic_home, R.drawable.ic_home_filled),
@@ -60,13 +85,81 @@ private enum class Tab(val route: NavKey, val label: String, @DrawableRes val ic
   Settings(SettingsRoute, "設定", R.drawable.ic_settings, R.drawable.ic_settings_filled),
 }
 
+private const val TAB_METADATA = "ascooo.tab"
+
 @Composable
 fun MainShell(user: User?, player: PlayerViewModel, onSignOut: () -> Unit) {
-  val backStack = rememberNavBackStack(HomeRoute)
+  // Each tab keeps its own history, so leaving a tab and coming back finds it as it was.
+  val stacks = Tab.entries.associateWith { rememberNavBackStack(it.route) }
+  var tab by rememberSaveable { mutableStateOf(Tab.Home) }
   val playerState by player.state.collectAsStateWithLifecycle()
   var nowPlayingOpen by rememberSaveable { mutableStateOf(false) }
   val currentId = playerState.nowPlaying?.mediaId
   val play: (List<Track>, Int) -> Unit = { tracks, index -> player.play(tracks, index) }
+
+  // Opening a page already in this tab's history goes back to it rather than stacking a copy.
+  fun open(route: NavKey) {
+    val stack = stacks.getValue(tab)
+    val at = stack.indexOf(route)
+    if (at < 0) stack.add(route) else while (stack.lastIndex > at) stack.removeAt(stack.lastIndex)
+  }
+  fun back() {
+    val stack = stacks.getValue(tab)
+    if (stack.size > 1) stack.removeAt(stack.lastIndex)
+  }
+  val openAlbum: (Long) -> Unit = { open(AlbumRoute(it)) }
+  val openArtist: (Long) -> Unit = { open(ArtistRoute(it)) }
+
+  val provider =
+    entryProvider<NavKey> {
+      entry<HomeRoute> { HomeScreen(onOpenAlbum = openAlbum, onPlay = play, currentId = currentId) }
+      entry<SearchRoute> { SearchScreen(openAlbum, openArtist, play, currentId) }
+      entry<LibraryRoute> {
+        LibraryScreen(
+          onOpenAlbum = openAlbum,
+          onOpenArtist = openArtist,
+          onOpenPlaylist = { open(PlaylistRoute(it)) },
+          onOpenFavorites = { open(FavoritesRoute) },
+          onPlay = play,
+          currentId = currentId,
+        )
+      }
+      entry<SettingsRoute> { SettingsScreen(user, onSignOut) }
+      entry<AlbumRoute> { route -> AlbumScreen(route.id, ::back, openAlbum, openArtist, play, currentId) }
+      entry<ArtistRoute> { route ->
+        ArtistScreen(route.id, ::back, openAlbum, onOpenAllTracks = { open(ArtistTracksRoute(route.id)) }, onPlay = play, currentId = currentId)
+      }
+      entry<ArtistTracksRoute> { route -> ArtistTracksScreen(route.id, ::back, play, currentId) }
+      entry<PlaylistRoute> { route -> PlaylistScreen(route.id, ::back, play, currentId) }
+      entry<FavoritesRoute> { FavoritesScreen(::back, play, currentId) }
+    }
+
+  // Every tab's entries stay decorated while the app runs, keeping their saved state and view
+  // models. Content keys carry the tab, so the same album open in two tabs gets two separate states.
+  val entries =
+    Tab.entries.associateWith { owner ->
+      rememberDecoratedNavEntries(
+        backStack = stacks.getValue(owner),
+        entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator(), rememberViewModelStoreNavEntryDecorator()),
+        entryProvider = { key ->
+          val entry = provider(key)
+          NavEntry(key, "${owner.name}/${entry.contentKey}", entry.metadata + (TAB_METADATA to owner.name)) { entry.Content() }
+        },
+      )
+    }
+
+  val spatial = MaterialTheme.motionScheme.defaultSpatialSpec<IntOffset>()
+  val effects = MaterialTheme.motionScheme.defaultEffectsSpec<Float>()
+  val fastEffects = MaterialTheme.motionScheme.fastEffectsSpec<Float>()
+  // Pages within a tab slide along the x axis; switching tabs fades through, as Material specifies.
+  fun AnimatedContentTransitionScope<Scene<NavKey>>.transition(forward: Boolean): ContentTransform =
+    if (initialState.entries.first().metadata[TAB_METADATA] != targetState.entries.first().metadata[TAB_METADATA]) {
+      fadeIn(effects) togetherWith fadeOut(fastEffects)
+    } else {
+      val direction = if (forward) 1 else -1
+      (slideInHorizontally(spatial) { direction * it / 5 } + fadeIn(effects)) togetherWith
+        (slideOutHorizontally(spatial) { -direction * it / 5 } + fadeOut(fastEffects))
+    }
 
   Box(Modifier.fillMaxSize()) {
     Scaffold(
@@ -77,20 +170,16 @@ fun MainShell(user: User?, player: PlayerViewModel, onSignOut: () -> Unit) {
         Column {
           MiniPlayer(playerState, player, onOpen = { nowPlayingOpen = true })
           ShortNavigationBar {
-            val root = backStack.firstOrNull()
-            Tab.entries.forEach { tab ->
-              val selected = root == tab.route
+            Tab.entries.forEach { item ->
+              val selected = item == tab
               ShortNavigationBarItem(
                 selected = selected,
                 onClick = {
-                  // Tapping a tab, even the current one, goes back to its top.
-                  if (!selected || backStack.size > 1) {
-                    backStack.clear()
-                    backStack.add(tab.route)
-                  }
+                  // Tapping the current tab again goes back to its top.
+                  if (selected) stacks.getValue(item).let { while (it.size > 1) it.removeAt(it.lastIndex) } else tab = item
                 },
-                icon = { Icon(painterResource(if (selected) tab.selectedIcon else tab.icon), contentDescription = null) },
-                label = { Text(tab.label) },
+                icon = { Icon(painterResource(if (selected) item.selectedIcon else item.icon), contentDescription = null) },
+                label = { Text(item.label) },
               )
             }
           }
@@ -98,20 +187,13 @@ fun MainShell(user: User?, player: PlayerViewModel, onSignOut: () -> Unit) {
       },
     ) { padding ->
       NavDisplay(
-        backStack = backStack,
-        onBack = { backStack.removeLastOrNull() },
-        modifier = Modifier.padding(padding),
-        entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator(), rememberViewModelStoreNavEntryDecorator()),
-        entryProvider =
-          entryProvider {
-            entry<HomeRoute> { HomeScreen(onOpenAlbum = { backStack.add(AlbumRoute(it)) }, onPlay = play, currentId = currentId) }
-            entry<SearchRoute> { ComingSoon("搜尋") }
-            entry<LibraryRoute> { ComingSoon("音樂庫") }
-            entry<SettingsRoute> { SettingsScreen(user, onSignOut) }
-            entry<AlbumRoute> { route ->
-              AlbumScreen(route.id, onBack = { backStack.removeLastOrNull() }, onPlay = play, currentId = currentId)
-            }
-          },
+        entries = entries.getValue(tab),
+        // Consumed so a screen's imePadding counts only the part of the keyboard above the bars.
+        modifier = Modifier.padding(padding).consumeWindowInsets(padding),
+        transitionSpec = { transition(forward = true) },
+        popTransitionSpec = { transition(forward = false) },
+        predictivePopTransitionSpec = { transition(forward = false) },
+        onBack = ::back,
       )
     }
 
@@ -123,5 +205,7 @@ fun MainShell(user: User?, player: PlayerViewModel, onSignOut: () -> Unit) {
       NowPlayingScreen(playerState, player, onCollapse = { nowPlayingOpen = false })
     }
   }
+  // Back from the top of another tab returns to Home before leaving the app.
+  BackHandler(enabled = tab != Tab.Home && stacks.getValue(tab).size == 1) { tab = Tab.Home }
   BackHandler(enabled = nowPlayingOpen) { nowPlayingOpen = false }
 }

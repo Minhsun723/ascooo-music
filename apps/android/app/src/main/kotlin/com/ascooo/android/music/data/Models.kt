@@ -52,6 +52,10 @@ data class Album(
   val releaseDate: String? = null,
 )
 
+/** An artist in lists and search results; [trackCount] is only on the library list. */
+@Serializable
+data class Artist(val id: Long, val name: String, val artworkId: String? = null, val trackCount: Int = 0)
+
 @Serializable
 data class LibraryStats(val tracks: Int = 0)
 
@@ -66,6 +70,47 @@ data class HomeData(
 
 @Serializable
 data class AlbumDetail(val album: Album, val tracks: List<Track>, val moreByArtist: List<Album> = emptyList())
+
+/** An artist's page: their albums and up to 50 most played songs. */
+@Serializable
+data class ArtistDetail(val artist: Artist, val albums: List<Album> = emptyList(), val tracks: List<Track> = emptyList())
+
+@Serializable
+data class SearchResults(
+  val tracks: List<Track> = emptyList(),
+  val albums: List<Album> = emptyList(),
+  val artists: List<Artist> = emptyList(),
+)
+
+@Serializable
+data class TrackList(val tracks: List<Track> = emptyList(), val total: Int = 0)
+
+@Serializable
+data class AlbumList(val albums: List<Album> = emptyList())
+
+@Serializable
+data class ArtistList(val artists: List<Artist> = emptyList())
+
+/** All of one artist's songs, for the artist page's "所有歌曲". */
+@Serializable
+data class ArtistTracks(val artist: Artist, val tracks: List<Track> = emptyList())
+
+@Serializable
+data class Playlist(
+  val id: Long,
+  val name: String,
+  val description: String? = null,
+  val trackCount: Int = 0,
+  val artworkId: String? = null,
+  /** Epoch milliseconds. */
+  val updatedAt: Long = 0,
+)
+
+@Serializable
+data class PlaylistList(val playlists: List<Playlist> = emptyList())
+
+@Serializable
+data class PlaylistDetail(val playlist: Playlist, val tracks: List<Track> = emptyList())
 
 /**
  * `client = "app"` makes the Worker return the token itself instead of setting the website's cookie.
