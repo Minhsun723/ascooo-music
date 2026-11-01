@@ -29,12 +29,24 @@ const int = (v: string | undefined, def: number, max = 500) => {
   return Number.isFinite(n) && n >= 0 ? Math.min(n, max) : def;
 };
 
-function shuffledTake<T>(items: T[], limit: number): T[] {
-  for (let i = items.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [items[i], items[j]] = [items[j], items[i]];
-  }
-  return items.slice(0, limit);
+/** Spreads a seed and a value into an unsigned 32-bit hash (murmur3's finalizer). */
+function mix32(seed: number, value: number) {
+  let h = seed ^ Math.imul(value, 0x9e3779b1);
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/**
+ * Ranks rows by a hash of the seed and their id rather than shuffling, so a row keeps its place
+ * when the candidate window shifts because the library grew.
+ */
+function seededTake<T extends { id: number }>(items: T[], seed: number, limit: number): T[] {
+  return items
+    .map((item) => ({ item, rank: mix32(seed, item.id) }))
+    .sort((a, b) => a.rank - b.rank)
+    .slice(0, limit)
+    .map(({ item }) => item);
 }
 
 const TRACK_SORTS: Record<string, string> = {
@@ -59,6 +71,10 @@ const ALBUM_SORTS: Record<string, string> = {
 catalog.get('/home', anonymousEdgeCache, async (c) => {
   const uid = viewerId(c);
   const db = c.env.DB;
+  // The web app keeps one seed for an hour so its random shelves survive a reload. The anonymous
+  // edge cache leaves seed out of its key: signed-out visitors share whichever picks the colo stored.
+  const seedParam = parseInt(c.req.query('seed') ?? '', 10);
+  const seed = Number.isFinite(seedParam) ? seedParam >>> 0 : Math.floor(Math.random() * 2 ** 32);
   const [trackBound, albumBound] = await db.batch([
     db.prepare("SELECT MAX(id) AS max_id FROM tracks WHERE status = 'ready' AND visible = 1"),
     db.prepare(
@@ -67,12 +83,12 @@ catalog.get('/home', anonymousEdgeCache, async (c) => {
        )`,
     ),
   ]);
-  const randomStart = (result: D1Result) => {
+  const randomStart = (result: D1Result, salt: number) => {
     const max = Number((result.results[0] as { max_id: number | null } | undefined)?.max_id ?? 0);
-    return max > 0 ? Math.floor(Math.random() * max) + 1 : 0;
+    return max > 0 ? Math.floor((mix32(seed, salt) / 2 ** 32) * max) + 1 : 0;
   };
-  const trackStart = randomStart(trackBound);
-  const albumStart = randomStart(albumBound);
+  const trackStart = randomStart(trackBound, -1);
+  const albumStart = randomStart(albumBound, -2);
   const randomAlbumQuery = (comparison: '>=' | '<') => db.prepare(
     `WITH picked AS (
        SELECT al.id FROM albums al
@@ -125,14 +141,14 @@ catalog.get('/home', anonymousEdgeCache, async (c) => {
     ),
     ...(recentPlaysQuery ? [recentPlaysQuery] : []),
   ]);
-  const randomAlbums = shuffledTake([
+  const randomAlbums = seededTake([
     ...(randomAlbumsAfter.results as AlbumRow[]),
     ...(randomAlbumsBefore.results as AlbumRow[]),
-  ], 12);
-  const randomTracks = shuffledTake([
+  ], seed, 12);
+  const randomTracks = seededTake([
     ...(randomTracksAfter.results as TrackRow[]),
     ...(randomTracksBefore.results as TrackRow[]),
-  ], 20);
+  ], seed, 20);
   return c.json({
     recentAlbums: (recentAlbums.results as AlbumRow[]).map(toAlbum),
     recentPlays: recentPlays ? (recentPlays.results as TrackRow[]).map(toTrack) : [],

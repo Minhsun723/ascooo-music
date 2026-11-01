@@ -61,6 +61,9 @@ function SectionHeading({ title, link, linkLabel = '查看全部' }: { title: st
 }
 
 const HOME_CACHE_TTL = 30_000;
+/** How long 現在就播放 and 再翻一張唱片 keep their picks, counted from the first load that drew them. */
+const HOME_SEED_TTL = 60 * 60_000;
+const HOME_SEED_KEY = 'ascooo-home-seed';
 const LIBRARY_CACHE_TTL = 120_000;
 // Album and artist pages: a page returned to from one of its links renders at once, so its scroll position is
 // restored before it paints instead of after the header has flashed at the top.
@@ -93,11 +96,30 @@ function cachedDetail<T>(cache: DetailCache<T>, key: string): T | null {
   return entry && Date.now() - entry.cachedAt < DETAIL_CACHE_TTL ? entry.data : null;
 }
 
+/** The seed the server draws the home page's random shelves from; reused until it is an hour old. */
+function homeSeed(): number {
+  try {
+    const stored = JSON.parse(localStorage.getItem(HOME_SEED_KEY) ?? 'null') as { seed?: unknown; issuedAt?: unknown } | null;
+    if (stored && Number.isInteger(stored.seed) && typeof stored.issuedAt === 'number' && Date.now() - stored.issuedAt < HOME_SEED_TTL) {
+      return stored.seed as number;
+    }
+  } catch {
+    // Unreadable storage only costs the shelves their persistence.
+  }
+  const seed = Math.floor(Math.random() * 2 ** 32);
+  try {
+    localStorage.setItem(HOME_SEED_KEY, JSON.stringify({ seed, issuedAt: Date.now() }));
+  } catch {
+    // Same as above: without storage the next reload simply draws new picks.
+  }
+  return seed;
+}
+
 export function HomePage() {
   const userId = useSession((s) => s.user?.id ?? 0);
   const cached = homeCache?.userId === userId && Date.now() - homeCache.cachedAt < HOME_CACHE_TTL ? homeCache.data : null;
   const request = useRequest<HomeData>(async () => {
-    const data = await api.home();
+    const data = await api.home(homeSeed());
     homeCache = { userId, cachedAt: Date.now(), data };
     return data;
   }, [], cached, cached !== null);

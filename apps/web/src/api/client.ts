@@ -64,7 +64,7 @@ export const api = {
     createUser: (username: string, password: string, role: string) => post('/auth/users', { username, password, role }),
     deleteUser: (id: number) => request(`/auth/users/${id}`, { method: 'DELETE' }),
   },
-  home: () => get<HomeData>('/home'),
+  home: (seed: number) => get<HomeData>(`/home?seed=${seed}`),
   tracks: (sort = 'added', limit = 100, offset = 0) =>
     get<{ tracks: Track[]; total: number }>(`/tracks?sort=${sort}&limit=${limit}&offset=${offset}`),
   albums: (sort = 'added', limit = 200, offset = 0) => get<{ albums: Album[] }>(`/albums?sort=${sort}&limit=${limit}&offset=${offset}`),
