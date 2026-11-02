@@ -13,6 +13,13 @@ val localProperties = Properties().apply {
 }
 val productionApi = "https://music.ascooo.com"
 
+// Release builds are signed with the key keystore.properties names. Both stay out of Git and need
+// a backup of their own: an app signed with a lost key can't be updated, only reinstalled.
+// Without the file, a release build comes out unsigned.
+val keystoreProperties = Properties().apply {
+  rootProject.file("keystore.properties").takeIf { it.exists() }?.inputStream()?.use(::load)
+}
+
 android {
   namespace = "com.ascooo.android.music"
   compileSdk {
@@ -27,13 +34,27 @@ android {
     buildConfigField("String", "API_BASE_URL", "\"$productionApi\"")
   }
 
+  signingConfigs {
+    if (!keystoreProperties.isEmpty) {
+      create("release") {
+        storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+        storePassword = keystoreProperties.getProperty("storePassword")
+        keyAlias = keystoreProperties.getProperty("keyAlias")
+        keyPassword = keystoreProperties.getProperty("keyPassword")
+      }
+    }
+  }
   buildTypes {
     debug {
       val api = localProperties.getProperty("ascooo.apiBaseUrl") ?: productionApi
       buildConfigField("String", "API_BASE_URL", "\"$api\"")
     }
+    // The build to judge smoothness by and to use day to day: a debuggable build runs Compose
+    // several times slower. R8 shrinks and optimizes the code; the libraries bring their own rules.
     release {
-      isMinifyEnabled = false
+      signingConfig = signingConfigs.findByName("release")
+      isMinifyEnabled = true
+      isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
     }
   }
