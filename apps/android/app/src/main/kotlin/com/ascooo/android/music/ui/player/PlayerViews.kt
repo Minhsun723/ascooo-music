@@ -1,6 +1,6 @@
 package com.ascooo.android.music.ui.player
 
-import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
@@ -37,12 +37,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -67,7 +67,6 @@ import com.ascooo.android.music.ui.theme.animateCoverColors
 import com.ascooo.android.music.ui.theme.cachedCoverColors
 import com.ascooo.android.music.ui.theme.coverColors
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 /**
  * The playhead. Every player event (a seek, a pause, a new track) re-reads it in the same frame, so a
@@ -138,10 +137,13 @@ fun NowPlayingScreen(state: PlayerUiState, player: PlayerViewModel, onCollapse: 
   val fraction = scrubbing ?: (position.toFloat() / duration).coerceIn(0f, 1f)
 
   // Pulled down, the page lifts off as a card over the app. A flick down or a drag past a quarter of
-  // the screen closes it; anything less springs back.
-  val drag = remember { Animatable(0f) }
+  // the screen closes it; anything less springs back. The finger moves the page directly, and the
+  // spring after it runs inside the drag state too, so a finger landing mid-spring takes over
+  // instead of the two cancelling each other.
+  var offset by remember { mutableFloatStateOf(0f) }
+  var settling by remember { mutableStateOf(false) }
+  val dragState = rememberDraggableState { delta -> offset = (offset + delta).coerceAtLeast(0f) }
   var height by remember { mutableIntStateOf(0) }
-  val scope = rememberCoroutineScope()
   val density = LocalDensity.current
   val dismissVelocity = with(density) { DismissVelocity.toPx() }
   val maxCorner = with(density) { 28.dp.toPx() }
@@ -163,21 +165,27 @@ fun NowPlayingScreen(state: PlayerUiState, player: PlayerViewModel, onCollapse: 
         .onSizeChanged { height = it.height }
         // Ahead of the layer, so the finger is measured against the screen rather than the moving page.
         .draggable(
-          state = rememberDraggableState { delta -> scope.launch { drag.snapTo((drag.value + delta).coerceAtLeast(0f)) } },
+          state = dragState,
           orientation = Orientation.Vertical,
-          startDragImmediately = drag.isRunning,
+          startDragImmediately = settling,
           onDragStopped = { velocity ->
-            if (velocity > dismissVelocity || (velocity > -dismissVelocity && drag.value > height / 4f)) {
-              drag.animateTo(height.toFloat(), closeSpec, velocity)
-              onCollapse()
-            } else {
-              drag.animateTo(0f, settleSpec, velocity)
+            val close = velocity > dismissVelocity || (velocity > -dismissVelocity && offset > height / 4f)
+            // Closed as the finger lets go, so the page stops taking touches while it carries on down.
+            if (close) onCollapse()
+            settling = true
+            try {
+              // A new drag on a page springing back cancels this and takes over from where it is.
+              dragState.drag {
+                val target = if (close) height.toFloat() else 0f
+                animate(offset, target, velocity, if (close) closeSpec else settleSpec) { value, _ -> dragBy(value - offset) }
+              }
+            } finally {
+              settling = false
             }
           },
         )
         .graphicsLayer {
-          // The spring back overshoots a hair past the top; the page and its corners stop there.
-          val offset = drag.value.coerceAtLeast(0f)
+          // The spring back would overshoot a hair past the top; the drag state stops it there.
           translationY = offset
           shape = RoundedCornerShape((offset / 4).coerceAtMost(maxCorner))
           clip = true

@@ -6,6 +6,7 @@ import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -54,6 +55,7 @@ import androidx.navigation3.runtime.rememberDecoratedNavEntries
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.scene.Scene
+import androidx.navigation3.ui.LocalNavAnimatedContentScope
 import androidx.navigation3.ui.NavDisplay
 import com.ascooo.android.music.R
 import com.ascooo.android.music.appContainer
@@ -67,6 +69,7 @@ import com.ascooo.android.music.ui.collection.PlaylistScreen
 import com.ascooo.android.music.ui.components.LocalTrackActions
 import com.ascooo.android.music.ui.components.TrackActions
 import com.ascooo.android.music.ui.components.TrackActionsHere
+import com.ascooo.android.music.ui.components.passTouchesThrough
 import com.ascooo.android.music.ui.home.HomeScreen
 import com.ascooo.android.music.ui.library.LibraryScreen
 import com.ascooo.android.music.ui.player.MiniPlayer
@@ -178,7 +181,11 @@ fun MainShell(user: User?, player: PlayerViewModel, onSignOut: () -> Unit) {
         entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator(), rememberViewModelStoreNavEntryDecorator()),
         entryProvider = { key ->
           val entry = provider(key)
-          NavEntry(key, "${owner.name}/${entry.contentKey}", entry.metadata + (TAB_METADATA to owner.name)) { entry.Content() }
+          NavEntry(key, "${owner.name}/${entry.contentKey}", entry.metadata + (TAB_METADATA to owner.name)) {
+            // Taps go to the page being navigated to, never to one fading out over it.
+            val leaving = LocalNavAnimatedContentScope.current.transition.targetState == EnterExitState.PostExit
+            Box(Modifier.passTouchesThrough(leaving)) { entry.Content() }
+          }
         },
       )
     }
@@ -255,7 +262,15 @@ fun MainShell(user: User?, player: PlayerViewModel, onSignOut: () -> Unit) {
         enter = slideInVertically(MaterialTheme.motionScheme.defaultSpatialSpec()) { it },
         exit = slideOutVertically(MaterialTheme.motionScheme.fastSpatialSpec()) { it },
       ) {
-        key(nowPlayingOpenings) { NowPlayingScreen(playerState, player, onCollapse = { nowPlayingOpen = false }) }
+        key(nowPlayingOpenings) {
+          NowPlayingScreen(
+            playerState,
+            player,
+            onCollapse = { nowPlayingOpen = false },
+            // Closed, it takes no more touches while it slides away; the app under it already does.
+            modifier = Modifier.passTouchesThrough(transition.targetState == EnterExitState.PostExit),
+          )
+        }
       }
 
       // Above Now Playing too, so a message sent from there isn't hidden under it. Otherwise it sits
