@@ -1,5 +1,6 @@
 package com.ascooo.android.music.ui.settings
 
+import android.os.Build
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -39,7 +40,7 @@ import com.ascooo.android.music.ui.components.StatusBarScrim
 import kotlinx.coroutines.launch
 
 @Composable
-fun SettingsScreen(user: User?, onSignOut: () -> Unit, modifier: Modifier = Modifier) {
+fun SettingsScreen(user: User?, onOpenLanguage: () -> Unit, onSignOut: () -> Unit, modifier: Modifier = Modifier) {
   val container = LocalContext.current.appContainer
   val dynamicColor by container.settings.dynamicColor.collectAsStateWithLifecycle(initialValue = false)
   val scope = rememberCoroutineScope()
@@ -59,6 +60,10 @@ fun SettingsScreen(user: User?, onSignOut: () -> Unit, modifier: Modifier = Modi
         )
       }
 
+      Group("一般") {
+        LanguageItem(onOpenLanguage)
+      }
+
       Group("外觀") {
         SwitchItem(
           headline = "跟隨桌布配色",
@@ -73,7 +78,7 @@ fun SettingsScreen(user: User?, onSignOut: () -> Unit, modifier: Modifier = Modi
           headline = "杜比全景聲",
           supporting =
             if (canDecodeAtmos) "這台裝置能解碼杜比全景聲，直接播放原始檔"
-            else "這台裝置無法解碼杜比全景聲，有 AAC 5.1 版本時改播該版本",
+            else "這台裝置無法解碼杜比全景聲",
         )
       }
 
@@ -100,13 +105,15 @@ fun SettingsScreen(user: User?, onSignOut: () -> Unit, modifier: Modifier = Modi
 
 /** A titled block of rows on one rounded container, as in Android's own settings. */
 @Composable
-private fun Group(title: String, content: @Composable ColumnScope.() -> Unit) {
-  Text(
-    title,
-    style = MaterialTheme.typography.labelLarge,
-    color = MaterialTheme.colorScheme.tertiary,
-    modifier = Modifier.padding(start = 32.dp, top = 20.dp, bottom = 8.dp),
-  )
+internal fun Group(title: String? = null, content: @Composable ColumnScope.() -> Unit) {
+  if (title != null) {
+    Text(
+      title,
+      style = MaterialTheme.typography.labelLarge,
+      color = MaterialTheme.colorScheme.tertiary,
+      modifier = Modifier.padding(start = 32.dp, top = 20.dp, bottom = 8.dp),
+    )
+  }
   Surface(
     shape = MaterialTheme.shapes.extraLarge,
     color = MaterialTheme.colorScheme.surfaceContainer,
@@ -123,6 +130,24 @@ private fun Item(headline: String, supporting: String) {
     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
   ) {
     Text(headline)
+  }
+}
+
+/** Shows the language the app is set to; [LanguageScreen] is where it is picked. */
+@Composable
+private fun LanguageItem(onOpen: () -> Unit) {
+  // Per-app languages arrived in Android 13; before that the app can only follow the system.
+  if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+    Item(headline = "語言", supporting = "Android 13 以上才能為個別 App 指定語言，目前跟隨系統")
+    return
+  }
+  val chosen by rememberAppLocales()
+  ListItem(
+    onClick = onOpen,
+    supportingContent = { Text(if (chosen.isEmpty) "跟隨系統" else chosen[0].nativeName) },
+    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+  ) {
+    Text("語言")
   }
 }
 

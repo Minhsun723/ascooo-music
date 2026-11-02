@@ -1,5 +1,6 @@
 package com.ascooo.android.music.ui
 
+import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContentTransitionScope
@@ -56,6 +57,7 @@ import com.ascooo.android.music.ui.player.MiniPlayer
 import com.ascooo.android.music.ui.player.NowPlayingScreen
 import com.ascooo.android.music.ui.player.PlayerViewModel
 import com.ascooo.android.music.ui.search.SearchScreen
+import com.ascooo.android.music.ui.settings.LanguageScreen
 import com.ascooo.android.music.ui.settings.SettingsScreen
 import kotlinx.serialization.Serializable
 
@@ -76,6 +78,8 @@ import kotlinx.serialization.Serializable
 @Serializable data class PlaylistRoute(val id: Long) : NavKey
 
 @Serializable data object FavoritesRoute : NavKey
+
+@Serializable data object LanguageRoute : NavKey
 
 /** The same four destinations as the website's mobile tab bar. */
 private enum class Tab(val route: NavKey, val label: String, @DrawableRes val icon: Int, @DrawableRes val selectedIcon: Int) {
@@ -124,7 +128,9 @@ fun MainShell(user: User?, player: PlayerViewModel, onSignOut: () -> Unit) {
           currentId = currentId,
         )
       }
-      entry<SettingsRoute> { SettingsScreen(user, onSignOut) }
+      entry<SettingsRoute> { SettingsScreen(user, onOpenLanguage = { open(LanguageRoute) }, onSignOut = onSignOut) }
+      // Settings only links here on Android 13+, where per-app languages exist.
+      entry<LanguageRoute> { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) LanguageScreen(::back) }
       entry<AlbumRoute> { route -> AlbumScreen(route.id, ::back, openAlbum, openArtist, play, currentId) }
       entry<ArtistRoute> { route ->
         ArtistScreen(route.id, ::back, openAlbum, onOpenAllTracks = { open(ArtistTracksRoute(route.id)) }, onPlay = play, currentId = currentId)

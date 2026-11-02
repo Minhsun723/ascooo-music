@@ -41,6 +41,12 @@ android {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
   }
+  // Lists the app under Android's per-app language settings (13+). The locales come from the
+  // res/values-* folders, so adding a translation adds it to the system picker by itself;
+  // res/resources.properties says which language the unqualified res/values is.
+  androidResources {
+    generateLocaleConfig = true
+  }
   buildFeatures {
     compose = true
     buildConfig = true
