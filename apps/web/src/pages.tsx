@@ -133,7 +133,7 @@ export function HomePage() {
       {data.recentAlbums.length ? <section className="page-section"><SectionHeading title="新進唱片櫃" link="/library?tab=albums" /><AlbumGrid albums={data.recentAlbums.slice(0, 12)} shelf /></section> : null}
       {data.recentPlays.length ? <section className="page-section"><SectionHeading title="最近聽過" /><TrackList tracks={data.recentPlays.slice(0, 8)} compact numbered={false} /></section> : null}
       {data.randomAlbums.length ? <section className="page-section"><SectionHeading title="再翻一張唱片" /><AlbumGrid albums={data.randomAlbums.slice(0, 12)} shelf /></section> : null}
-      {!data.stats.tracks ? <EmptyState title="音樂庫暫無內容" /> : null}
+      {!data.quickPicks.length ? <EmptyState title="音樂庫暫無內容" /> : null}
     </>
   );
 }

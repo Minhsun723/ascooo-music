@@ -21,7 +21,8 @@ interface AscoooApi {
 
   @GET("auth/status") suspend fun status(): AuthStatus
 
-  @GET("home") suspend fun home(): HomeData
+  /** [seed] draws the random shelves; the server keeps the shelves of a seed it has seen recently. */
+  @GET("home") suspend fun home(@Query("seed") seed: Long): HomeData
 
   @GET("search") suspend fun search(@Query("q") query: String): SearchResults
 

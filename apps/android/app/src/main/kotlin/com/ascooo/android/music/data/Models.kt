@@ -59,15 +59,12 @@ data class Album(
 data class Artist(val id: Long, val name: String, val artworkId: String? = null, val trackCount: Int = 0)
 
 @Serializable
-data class LibraryStats(val tracks: Int = 0)
-
-@Serializable
 data class HomeData(
   val recentAlbums: List<Album> = emptyList(),
   val recentPlays: List<Track> = emptyList(),
   val randomAlbums: List<Album> = emptyList(),
+  /** Drawn from every visible song, so it is empty exactly when the library is. */
   val quickPicks: List<Track> = emptyList(),
-  val stats: LibraryStats = LibraryStats(),
 )
 
 @Serializable

@@ -15,7 +15,12 @@ import retrofit2.HttpException
  * website's likes store: a heart flips at once and flips back if the server refuses. Requests run
  * on the app's scope, so closing the screen that sent one doesn't cancel it.
  */
-class LikesRepository(private val api: AscoooApi, private val scope: CoroutineScope, private val notices: Notices) {
+class LikesRepository(
+  private val api: AscoooApi,
+  private val scope: CoroutineScope,
+  private val notices: Notices,
+  private val homeCache: HomeCache,
+) {
   private val changed = MutableStateFlow<Map<Long, Boolean>>(emptyMap())
   val overrides: StateFlow<Map<Long, Boolean>> = changed.asStateFlow()
 
@@ -28,12 +33,14 @@ class LikesRepository(private val api: AscoooApi, private val scope: CoroutineSc
     scope.launch {
       try {
         if (liked) api.unlike(trackId) else api.like(trackId)
-        confirmed.update { it + 1 }
       } catch (e: IOException) {
-        undo(trackId, liked, e)
+        return@launch undo(trackId, liked, e)
       } catch (e: HttpException) {
-        undo(trackId, liked, e)
+        return@launch undo(trackId, liked, e)
       }
+      confirmed.update { it + 1 }
+      // The saved home page still shows the old heart.
+      homeCache.markStale()
     }
   }
 

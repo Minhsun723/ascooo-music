@@ -3,7 +3,7 @@ import { HTTPException } from 'hono/http-exception';
 import type { Context } from 'hono';
 import type { AppEnv } from '../env';
 import { requireAdmin } from '../lib/auth';
-import { anonymousEdgeCache } from '../lib/edge-cache';
+import { anonymousEdgeCache, sharedValue } from '../lib/edge-cache';
 import { searchPatterns } from '../lib/search-query';
 import {
   ALBUM_FROM,
@@ -68,13 +68,17 @@ const ALBUM_SORTS: Record<string, string> = {
   year: 'al.year DESC',
 };
 
-catalog.get('/home', anonymousEdgeCache, async (c) => {
-  const uid = viewerId(c);
-  const db = c.env.DB;
-  // The web app keeps one seed for an hour so its random shelves survive a reload. The anonymous
-  // edge cache leaves seed out of its key: signed-out visitors share whichever picks the colo stored.
-  const seedParam = parseInt(c.req.query('seed') ?? '', 10);
-  const seed = Number.isFinite(seedParam) ? seedParam >>> 0 : Math.floor(Math.random() * 2 ** 32);
+interface HomeShelves {
+  recentAlbums: ReturnType<typeof toAlbum>[];
+  randomAlbums: ReturnType<typeof toAlbum>[];
+  quickPicks: ReturnType<typeof toTrack>[];
+}
+
+/**
+ * The home page's shelves that look the same to everyone: the newest albums, and random albums and
+ * songs drawn from `seed`. Read as nobody, so no song carries a like; the route adds the viewer's.
+ */
+async function homeShelves(db: D1Database, seed: number): Promise<HomeShelves> {
   const [trackBound, albumBound] = await db.batch([
     db.prepare("SELECT MAX(id) AS max_id FROM tracks WHERE status = 'ready' AND visible = 1"),
     db.prepare(
@@ -108,38 +112,14 @@ catalog.get('/home', anonymousEdgeCache, async (c) => {
     `SELECT ${TRACK_SELECT} FROM tracks t ${TRACK_JOINS}
      WHERE t.status = 'ready' AND t.visible = 1 AND t.id ${comparison} ?
      ORDER BY t.id LIMIT 100`,
-  ).bind(uid, trackStart);
+  ).bind(0, trackStart);
 
-  // Signed-out visitors have no play history; skip the query instead of reading zero rows.
-  const recentPlaysQuery = uid ? db.prepare(
-    `SELECT ${TRACK_SELECT} FROM play_stats h JOIN tracks t ON t.id = h.track_id ${TRACK_JOINS}
-     WHERE h.user_id = ? AND t.status = 'ready' AND t.visible = 1
-     ORDER BY h.last_played DESC LIMIT 16`,
-  ).bind(uid, uid) : null;
-
-  const [recentAlbums, randomAlbumsAfter, randomAlbumsBefore, randomTracksAfter, randomTracksBefore, stats, recentPlays] = await db.batch([
+  const [recentAlbums, randomAlbumsAfter, randomAlbumsBefore, randomTracksAfter, randomTracksBefore] = await db.batch([
     db.prepare(`SELECT ${ALBUM_SELECT} ${ALBUM_FROM} GROUP BY al.id ORDER BY added_at DESC LIMIT 12`),
     randomAlbumQuery('>='),
     randomAlbumQuery('<'),
     randomTrackQuery('>='),
     randomTrackQuery('<'),
-    db.prepare(
-      `WITH visible_tracks AS (
-         SELECT id, album_id, artist_id, size, duration, codec, has_lyrics
-         FROM tracks WHERE status = 'ready' AND visible = 1
-       ), library_artists AS (
-         SELECT ta.artist_id FROM visible_tracks vt JOIN track_artists ta ON ta.track_id = vt.id
-         UNION
-         SELECT ala.artist_id FROM visible_tracks vt JOIN album_artists ala ON ala.album_id = vt.album_id
-       )
-       SELECT COUNT(*) AS tracks, COALESCE(SUM(size),0) AS bytes, COALESCE(SUM(duration),0) AS seconds,
-        COALESCE(SUM(CASE WHEN codec IN ('flac','alac','wav') THEN 1 ELSE 0 END), 0) AS lossless,
-        COUNT(DISTINCT album_id) AS albums,
-        (SELECT COUNT(*) FROM library_artists) AS artists,
-        COALESCE(SUM(has_lyrics), 0) AS with_lyrics
-       FROM visible_tracks`,
-    ),
-    ...(recentPlaysQuery ? [recentPlaysQuery] : []),
   ]);
   const randomAlbums = seededTake([
     ...(randomAlbumsAfter.results as AlbumRow[]),
@@ -149,12 +129,42 @@ catalog.get('/home', anonymousEdgeCache, async (c) => {
     ...(randomTracksAfter.results as TrackRow[]),
     ...(randomTracksBefore.results as TrackRow[]),
   ], seed, 20);
-  return c.json({
+  return {
     recentAlbums: (recentAlbums.results as AlbumRow[]).map(toAlbum),
-    recentPlays: recentPlays ? (recentPlays.results as TrackRow[]).map(toTrack) : [],
     randomAlbums: randomAlbums.map(toAlbum),
+    // Drawn from every visible song, so it is empty exactly when the library is.
     quickPicks: randomTracks.map(toTrack),
-    stats: stats.results[0],
+  };
+}
+
+catalog.get('/home', anonymousEdgeCache, async (c) => {
+  const uid = viewerId(c);
+  const db = c.env.DB;
+  // The website and the app each keep one seed for an hour so their random shelves survive a reload.
+  // The anonymous edge cache leaves seed out of its key: signed-out visitors share whichever picks the
+  // colo stored.
+  const seedParam = parseInt(c.req.query('seed') ?? '', 10);
+  const seed = Number.isFinite(seedParam) ? seedParam >>> 0 : Math.floor(Math.random() * 2 ** 32);
+  // Only play history and likes differ between viewers, so the shelves are kept per seed and a reload
+  // within the hour reads next to nothing from D1.
+  const shelves = await sharedValue(c, `home?seed=${seed}`, () => homeShelves(db, seed));
+  // Signed-out visitors have neither; skip the queries instead of reading zero rows.
+  if (!uid) return c.json({ ...shelves, recentPlays: [] });
+
+  const [recentPlays, liked] = await db.batch([
+    db.prepare(
+      `SELECT ${TRACK_SELECT} FROM play_stats h JOIN tracks t ON t.id = h.track_id ${TRACK_JOINS}
+       WHERE h.user_id = ? AND t.status = 'ready' AND t.visible = 1
+       ORDER BY h.last_played DESC LIMIT 16`,
+    ).bind(uid, uid),
+    db.prepare('SELECT track_id FROM favorites WHERE user_id = ? AND track_id IN (SELECT value FROM json_each(?))')
+      .bind(uid, JSON.stringify(shelves.quickPicks.map((track) => track.id))),
+  ]);
+  const likedIds = new Set((liked.results as { track_id: number }[]).map((row) => row.track_id));
+  return c.json({
+    ...shelves,
+    quickPicks: shelves.quickPicks.map((track) => ({ ...track, liked: likedIds.has(track.id) })),
+    recentPlays: (recentPlays.results as TrackRow[]).map(toTrack),
   });
 });
 

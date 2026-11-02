@@ -25,6 +25,7 @@ import com.ascooo.android.music.R
 import com.ascooo.android.music.appContainer
 import com.ascooo.android.music.data.Album
 import com.ascooo.android.music.data.AscoooApi
+import com.ascooo.android.music.data.HomeCache
 import com.ascooo.android.music.data.HomeData
 import com.ascooo.android.music.data.Track
 import com.ascooo.android.music.playback.artworkUrl
@@ -38,19 +39,31 @@ import com.ascooo.android.music.ui.components.TrackRow
 import com.ascooo.android.music.ui.components.loadOf
 import kotlinx.coroutines.launch
 
-class HomeViewModel(private val api: AscoooApi) : ViewModel() {
+class HomeViewModel(private val api: AscoooApi, private val cache: HomeCache) : ViewModel() {
   var home by mutableStateOf<Load<HomeData>>(Load.Loading)
     private set
 
   init {
-    load()
+    // A start opens straight onto the saved page; only a stale one is fetched again, behind it.
+    viewModelScope.launch {
+      val saved = cache.read()
+      if (saved != null) home = Load.Ready(saved.home)
+      if (saved?.fresh != true) fetch()
+    }
   }
 
   fun load() {
     viewModelScope.launch {
       home = Load.Loading
-      home = loadOf { api.home() }
+      fetch()
     }
+  }
+
+  private suspend fun fetch() {
+    val fresh = loadOf { api.home(cache.seed()) }
+    if (fresh is Load.Ready) cache.write(fresh.data)
+    // A failed refresh leaves the saved page up rather than an error.
+    if (fresh is Load.Ready || home !is Load.Ready) home = fresh
   }
 }
 
@@ -62,7 +75,7 @@ fun HomeScreen(
   modifier: Modifier = Modifier,
 ) {
   val container = LocalContext.current.appContainer
-  val viewModel = viewModel { HomeViewModel(container.api) }
+  val viewModel = viewModel { HomeViewModel(container.api, container.homeCache) }
   when (val home = viewModel.home) {
     Load.Loading -> LoadingPane(modifier)
     is Load.Failed -> ErrorPane(home.message, viewModel::load, modifier)
@@ -93,7 +106,7 @@ private fun HomeContent(
       albumShelf("新進唱片櫃", data.recentAlbums.take(12), baseUrl, onOpenAlbum)
       trackShelf("最近聽過", data.recentPlays.take(8), baseUrl, onPlay, currentId)
       albumShelf("再翻一張唱片", data.randomAlbums.take(12), baseUrl, onOpenAlbum)
-      if (data.stats.tracks == 0) item { SectionHeader("音樂庫暫無內容") }
+      if (data.quickPicks.isEmpty()) item { SectionHeader("音樂庫暫無內容") }
     }
     StatusBarScrim()
   }

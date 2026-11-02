@@ -111,22 +111,12 @@ export interface Playlist {
   trackIds: number[];
 }
 
-export interface LibraryStats {
-  tracks: number;
-  bytes: number;
-  seconds: number;
-  lossless: number;
-  albums: number;
-  artists: number;
-  with_lyrics: number;
-}
-
 export interface HomeData {
   recentAlbums: Album[];
   recentPlays: Track[];
   randomAlbums: Album[];
+  /** Drawn from every visible song, so it is empty exactly when the library is. */
   quickPicks: Track[];
-  stats: LibraryStats;
 }
 
 export interface Lyrics {

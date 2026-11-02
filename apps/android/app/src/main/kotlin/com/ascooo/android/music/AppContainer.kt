@@ -4,6 +4,7 @@ import android.content.Context
 import com.ascooo.android.music.data.AscoooApi
 import com.ascooo.android.music.data.AuthInterceptor
 import com.ascooo.android.music.data.AuthRepository
+import com.ascooo.android.music.data.HomeCache
 import com.ascooo.android.music.data.LikesRepository
 import com.ascooo.android.music.data.PlaylistsRepository
 import com.ascooo.android.music.data.SessionStore
@@ -43,8 +44,9 @@ class AppContainer(context: Context) {
       .build()
       .create(AscoooApi::class.java)
 
-  val auth = AuthRepository(api, session)
+  val homeCache = HomeCache(context, json)
+  val auth = AuthRepository(api, session, homeCache)
   val notices = Notices()
-  val likes = LikesRepository(api, scope, notices)
+  val likes = LikesRepository(api, scope, notices, homeCache)
   val playlists = PlaylistsRepository(api, scope, notices)
 }

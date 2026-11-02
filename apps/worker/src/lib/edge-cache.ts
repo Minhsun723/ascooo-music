@@ -1,8 +1,8 @@
-import type { MiddlewareHandler } from 'hono';
+import type { Context, MiddlewareHandler } from 'hono';
 import type { AppEnv } from '../env';
 
-/** How long a colo keeps an anonymous catalog response before asking D1 again. */
-const ANONYMOUS_TTL_SECONDS = 600;
+/** How long a colo keeps a catalog response or shared value before asking D1 again. */
+const EDGE_TTL_SECONDS = 600;
 /** Only these query parameters change catalog output; anything else must not split the cache. */
 const KEY_PARAMS = ['q', 'sort', 'limit', 'offset'];
 
@@ -46,7 +46,26 @@ export const anonymousEdgeCache: MiddlewareHandler<AppEnv> = async (c, next) => 
   if (c.res.status !== 200) return;
   const copy = c.res.clone();
   const stored = new Response(copy.body, { status: 200, headers: copy.headers });
-  stored.headers.set('Cache-Control', `public, max-age=${ANONYMOUS_TTL_SECONDS}`);
+  stored.headers.set('Cache-Control', `public, max-age=${EDGE_TTL_SECONDS}`);
   c.executionCtx.waitUntil(cache.put(key, stored));
   c.res.headers.set('Cache-Control', 'no-store');
 };
+
+/**
+ * Data that is the same for every viewer, signed in or not, kept in the colo cache under `name`
+ * so only a miss runs `compute` against D1. The key lives outside any real route and is never
+ * served to a browser.
+ */
+export async function sharedValue<T>(c: Context<AppEnv>, name: string, compute: () => Promise<T>): Promise<T> {
+  const key = new Request(new URL(`/api/_shared/${name}`, c.req.url).toString(), { method: 'GET' });
+  const cache = caches.default;
+  const cached = await cache.match(key);
+  if (cached) return cached.json<T>();
+
+  const value = await compute();
+  const stored = new Response(JSON.stringify(value), {
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': `public, max-age=${EDGE_TTL_SECONDS}` },
+  });
+  c.executionCtx.waitUntil(cache.put(key, stored));
+  return value;
+}
