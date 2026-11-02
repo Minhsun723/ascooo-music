@@ -24,6 +24,9 @@ class MainActivity : ComponentActivity() {
       statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
       navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
     )
+    // LaunchIntro's first frame is the splash itself, so drop the splash the moment it is up
+    // instead of playing the system's exit animation over it.
+    if (savedInstanceState == null) splashScreen.setOnExitAnimationListener { it.remove() }
     setContent {
       val dynamicColor by appContainer.settings.dynamicColor.collectAsStateWithLifecycle(initialValue = false)
       AscoooTheme(dynamicColor) {
