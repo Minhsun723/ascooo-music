@@ -28,6 +28,7 @@ interface AscoooApi {
 
   // The library asks for the same amounts as the website's library page.
   @GET("tracks?sort=added&limit=500") suspend fun tracks(): TrackList
+  @GET("tracks/{id}/lyrics") suspend fun lyrics(@Path("id") trackId: Long): LyricsResponse
 
   @GET("albums?sort=added&limit=300") suspend fun albums(): AlbumList
 

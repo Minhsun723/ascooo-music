@@ -6,6 +6,7 @@ import com.ascooo.android.music.data.AuthInterceptor
 import com.ascooo.android.music.data.AuthRepository
 import com.ascooo.android.music.data.HomeCache
 import com.ascooo.android.music.data.LikesRepository
+import com.ascooo.android.music.data.LyricsRepository
 import com.ascooo.android.music.data.PlaylistsRepository
 import com.ascooo.android.music.data.SessionStore
 import com.ascooo.android.music.data.SettingsStore
@@ -49,4 +50,5 @@ class AppContainer(context: Context) {
   val notices = Notices()
   val likes = LikesRepository(api, scope, notices, homeCache)
   val playlists = PlaylistsRepository(api, scope, notices)
+  val lyrics = LyricsRepository(api)
 }

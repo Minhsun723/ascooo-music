@@ -146,3 +146,10 @@ data class TrackIdsRequest(val trackIds: List<Long>)
 
 @Serializable
 data class OkResponse(val ok: Boolean = true)
+
+/** A song's lyrics as stored: LRC or Apple's TTML ([format] `lrc` / `ttml`) when [synced], else plain text. */
+@Serializable
+data class Lyrics(val content: String, val synced: Boolean = false, val format: String = "lrc")
+
+@Serializable
+data class LyricsResponse(val lyrics: Lyrics? = null)

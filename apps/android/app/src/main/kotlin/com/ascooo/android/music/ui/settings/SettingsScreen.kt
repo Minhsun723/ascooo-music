@@ -4,6 +4,7 @@ import android.os.Build
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,37 +13,56 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ascooo.android.music.BuildConfig
 import com.ascooo.android.music.R
 import com.ascooo.android.music.appContainer
+import com.ascooo.android.music.data.LyricsFont
 import com.ascooo.android.music.data.User
 import com.ascooo.android.music.playback.canDecodeAtmos
 import com.ascooo.android.music.ui.components.StatusBarScrim
+import com.ascooo.android.music.ui.lyrics.LYRICS_FONT_SAMPLE
+import com.ascooo.android.music.ui.lyrics.fontFamily
+import com.ascooo.android.music.ui.lyrics.label
 import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(user: User?, onOpenLanguage: () -> Unit, onSignOut: () -> Unit, modifier: Modifier = Modifier) {
   val container = LocalContext.current.appContainer
   val dynamicColor by container.settings.dynamicColor.collectAsStateWithLifecycle(initialValue = false)
+  val lyricsFont by container.settings.lyricsFont.collectAsStateWithLifecycle(initialValue = LyricsFont.Sans)
   val scope = rememberCoroutineScope()
 
   Box(modifier.fillMaxSize()) {
@@ -71,6 +91,7 @@ fun SettingsScreen(user: User?, onOpenLanguage: () -> Unit, onSignOut: () -> Uni
           checked = dynamicColor,
           onCheckedChange = { scope.launch { container.settings.setDynamicColor(it) } },
         )
+        LyricsFontItem(lyricsFont, onPick = { scope.launch { container.settings.setLyricsFont(it) } })
       }
 
       Group("播放") {
@@ -149,6 +170,55 @@ private fun LanguageItem(onOpen: () -> Unit) {
   ) {
     Text("語言")
   }
+}
+
+/** The website's four lyrics typefaces, each choice shown in its own font. */
+@Composable
+private fun LyricsFontItem(font: LyricsFont, onPick: (LyricsFont) -> Unit) {
+  var picking by rememberSaveable { mutableStateOf(false) }
+  ListItem(
+    onClick = { picking = true },
+    supportingContent = { Text(font.label) },
+    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+  ) {
+    Text("歌詞字型")
+  }
+  if (!picking) return
+  AlertDialog(
+    onDismissRequest = { picking = false },
+    title = { Text("歌詞字型") },
+    text = {
+      Column(Modifier.selectableGroup()) {
+        for (option in LyricsFont.entries) {
+          Row(
+            Modifier.fillMaxWidth()
+              .clip(MaterialTheme.shapes.medium)
+              .selectable(
+                selected = option == font,
+                role = Role.RadioButton,
+                onClick = {
+                  onPick(option)
+                  picking = false
+                },
+              )
+              .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            RadioButton(selected = option == font, onClick = null)
+            Column(Modifier.padding(start = 16.dp)) {
+              Text(option.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+              Text(
+                LYRICS_FONT_SAMPLE,
+                style = TextStyle(fontFamily = option.fontFamily, fontWeight = FontWeight.Bold, fontSize = 22.sp),
+                maxLines = 1,
+              )
+            }
+          }
+        }
+      }
+    },
+    confirmButton = { TextButton(onClick = { picking = false }) { Text("關閉") } },
+  )
 }
 
 /** The whole row toggles, not just the switch. */

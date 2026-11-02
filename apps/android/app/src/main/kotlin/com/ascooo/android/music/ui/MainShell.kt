@@ -121,6 +121,8 @@ fun MainShell(user: User?, player: PlayerViewModel, onSignOut: () -> Unit) {
   // Each opening gets a fresh Now Playing, so reopening one that is still sliding away after a
   // swipe down doesn't bring back the page pulled off-screen.
   var nowPlayingOpenings by remember { mutableIntStateOf(0) }
+  // Out here, so Now Playing opens again on the lyrics if it was closed on them.
+  var lyricsShown by rememberSaveable { mutableStateOf(false) }
   // Works out each new cover's colours while Now Playing is closed, so it opens already in them.
   val context = LocalContext.current
   val artworkUrl = playerState.nowPlaying?.artworkUri?.toString()
@@ -267,6 +269,8 @@ fun MainShell(user: User?, player: PlayerViewModel, onSignOut: () -> Unit) {
             playerState,
             player,
             onCollapse = { nowPlayingOpen = false },
+            lyricsShown = lyricsShown,
+            onLyricsShownChange = { lyricsShown = it },
             // Closed, it takes no more touches while it slides away; the app under it already does.
             modifier = Modifier.passTouchesThrough(transition.targetState == EnterExitState.PostExit),
           )

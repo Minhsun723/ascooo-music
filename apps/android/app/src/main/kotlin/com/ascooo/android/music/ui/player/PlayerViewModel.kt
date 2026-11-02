@@ -14,6 +14,8 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.ascooo.android.music.appContainer
 import com.ascooo.android.music.data.Track
+import com.ascooo.android.music.playback.EXTRA_ATMOS
+import com.ascooo.android.music.playback.EXTRA_HAS_LYRICS
 import com.ascooo.android.music.playback.EXTRA_LIKED
 import com.ascooo.android.music.playback.EXTRA_THUMBNAIL
 import com.ascooo.android.music.playback.PlaybackService
@@ -34,6 +36,8 @@ data class NowPlaying(
   val artworkUri: Uri?,
   /** As queued; LikesRepository has any change since. */
   val liked: Boolean,
+  val hasLyrics: Boolean,
+  val atmos: Boolean,
 )
 
 /** A queued track. [index] is its place in the player's list, which shuffle doesn't change. */
@@ -47,6 +51,11 @@ data class PlayerUiState(
   val showPlayButton: Boolean = true,
   // Where playback stood at the last player event (a seek, a pause, a new track).
   val positionMs: Long = 0,
+  /**
+   * Counts the playhead's jumps (a seek, a new track, a repeat), for views that run a clock of
+   * their own between player events and must snap to the player's when it jumps.
+   */
+  val jumps: Int = 0,
   val isBuffering: Boolean = false,
   val durationMs: Long = 0,
   val error: String? = null,
@@ -67,7 +76,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
   private val listener =
     object : Player.Listener {
-      override fun onEvents(player: Player, events: Player.Events) = refresh(player)
+      override fun onEvents(player: Player, events: Player.Events) =
+        refresh(player, jumped = events.contains(Player.EVENT_POSITION_DISCONTINUITY))
     }
 
   init {
@@ -140,10 +150,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     viewModelScope.launch { action(controller.await()) }
   }
 
-  private fun refresh(player: Player) {
+  private fun refresh(player: Player, jumped: Boolean = false) {
     val meta = player.mediaMetadata
     _state.value =
       PlayerUiState(
+        jumps = _state.value.jumps + if (jumped) 1 else 0,
         nowPlaying =
           player.currentMediaItem?.let {
             NowPlaying(
@@ -153,6 +164,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
               album = meta.albumTitle?.toString().orEmpty(),
               artworkUri = meta.artworkUri,
               liked = meta.extras?.getBoolean(EXTRA_LIKED) ?: false,
+              hasLyrics = meta.extras?.getBoolean(EXTRA_HAS_LYRICS) ?: false,
+              atmos = meta.extras?.getBoolean(EXTRA_ATMOS) ?: false,
             )
           },
         isPlaying = player.isPlaying,

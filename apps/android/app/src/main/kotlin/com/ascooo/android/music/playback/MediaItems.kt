@@ -65,6 +65,14 @@ const val EXTRA_LIKED = "ascooo.liked"
 /** The 512 px cover, for lists such as the queue; the metadata's own artwork is the 2000 px one. */
 const val EXTRA_THUMBNAIL = "ascooo.thumbnail"
 
+const val EXTRA_HAS_LYRICS = "ascooo.hasLyrics"
+
+/**
+ * A Dolby Atmos track. Its lyrics are timed against the stereo master, and the Atmos mix (and the
+ * AAC 5.1 copy made from it) can start later, by an offset the TTML gives.
+ */
+const val EXTRA_ATMOS = "ascooo.atmos"
+
 /**
  * The stream goes in RequestMetadata because a controller's MediaItem reaches the session without
  * its local URI; [PlaybackService] turns it back into the item's URI.
@@ -89,6 +97,8 @@ fun Track.toMediaItem(baseUrl: String): MediaItem =
             putBoolean(EXTRA_HAS_AAC51, hasAac51)
             putBoolean(EXTRA_LIKED, liked)
             putString(EXTRA_THUMBNAIL, artworkUrl(baseUrl, artworkId))
+            putBoolean(EXTRA_HAS_LYRICS, hasLyrics)
+            putBoolean(EXTRA_ATMOS, isDolbyAtmos)
           }
         )
         .build()
