@@ -31,6 +31,8 @@ data class Track(
   /** An AAC 5.1 copy exists for devices that cannot decode Dolby Atmos. */
   val hasAac51: Boolean = false,
   val liked: Boolean = false,
+  /** Set on a playlist's tracks: which entry of the playlist this is, for removing it. */
+  val entryId: Long? = null,
 )
 
 @Serializable
@@ -104,6 +106,7 @@ data class Playlist(
   val artworkId: String? = null,
   /** Epoch milliseconds. */
   val updatedAt: Long = 0,
+  val trackIds: List<Long> = emptyList(),
 )
 
 @Serializable
@@ -128,3 +131,21 @@ data class AuthStatus(val needsSetup: Boolean = false, val user: User? = null)
 
 @Serializable
 data class HistoryRequest(val trackId: Long)
+
+@Serializable
+data class LikeResponse(val liked: Boolean)
+
+@Serializable
+data class CreatePlaylistRequest(val name: String, val trackIds: List<Long> = emptyList())
+
+@Serializable
+data class CreatedPlaylist(val id: Long, val name: String)
+
+@Serializable
+data class RenamePlaylistRequest(val name: String)
+
+@Serializable
+data class TrackIdsRequest(val trackIds: List<Long>)
+
+@Serializable
+data class OkResponse(val ok: Boolean = true)

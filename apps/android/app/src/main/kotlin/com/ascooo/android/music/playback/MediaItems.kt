@@ -59,6 +59,12 @@ fun artworkUrl(baseUrl: String, artworkId: String?, size: Int = 512): String? =
 
 const val EXTRA_HAS_AAC51 = "ascooo.hasAac51"
 
+/** Whether the track was liked when it was queued; hearts changed since live in LikesRepository. */
+const val EXTRA_LIKED = "ascooo.liked"
+
+/** The 512 px cover, for lists such as the queue; the metadata's own artwork is the 2000 px one. */
+const val EXTRA_THUMBNAIL = "ascooo.thumbnail"
+
 /**
  * The stream goes in RequestMetadata because a controller's MediaItem reaches the session without
  * its local URI; [PlaybackService] turns it back into the item's URI.
@@ -78,7 +84,13 @@ fun Track.toMediaItem(baseUrl: String): MediaItem =
         .setDurationMs((duration * 1000).toLong())
         .setIsPlayable(true)
         .setIsBrowsable(false)
-        .setExtras(Bundle().apply { putBoolean(EXTRA_HAS_AAC51, hasAac51) })
+        .setExtras(
+          Bundle().apply {
+            putBoolean(EXTRA_HAS_AAC51, hasAac51)
+            putBoolean(EXTRA_LIKED, liked)
+            putString(EXTRA_THUMBNAIL, artworkUrl(baseUrl, artworkId))
+          }
+        )
         .build()
     )
     .build()

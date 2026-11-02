@@ -53,6 +53,16 @@ class PlaybackService : MediaSessionService() {
         .setWakeMode(C.WAKE_MODE_NETWORK)
         .build()
     player.addListener(AudioFallback(player))
+    player.setShuffleOrder(QueueShuffleOrder(IntArray(0)))
+    player.addListener(
+      object : Player.Listener {
+        // Turning shuffle on keeps the track that is playing and shuffles the rest after it, so
+        // nothing is skipped just for having landed before it in the shuffle.
+        override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+          if (shuffleModeEnabled) player.setShuffleOrder(QueueShuffleOrder.startingWith(player.mediaItemCount, player.currentMediaItemIndex))
+        }
+      }
+    )
     // Debug builds log the chosen decoder and audio format under the EventLogger tag.
     if (BuildConfig.DEBUG) player.addAnalyticsListener(EventLogger())
 

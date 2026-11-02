@@ -43,7 +43,16 @@ fun AppRoot(player: PlayerViewModel) {
     when (val state = session) {
       SessionState.Loading -> {} // the launch intro stays up until this resolves
       SessionState.SignedOut -> LoginScreen()
-      is SessionState.SignedIn -> MainShell(state.user, player, onSignOut = { scope.launch { container.auth.signOut() } })
+      is SessionState.SignedIn ->
+        MainShell(
+          state.user,
+          player,
+          onSignOut = {
+            container.likes.reset()
+            container.playlists.reset()
+            scope.launch { container.auth.signOut() }
+          },
+        )
     }
     // On top, so the first screen is already loading underneath while the logo plays.
     AnimatedVisibility(!introPlayed || loading, exit = fadeOut(MaterialTheme.motionScheme.defaultEffectsSpec())) {

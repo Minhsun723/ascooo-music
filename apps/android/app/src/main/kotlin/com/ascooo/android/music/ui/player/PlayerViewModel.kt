@@ -8,11 +8,14 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.util.Util
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.ascooo.android.music.appContainer
 import com.ascooo.android.music.data.Track
+import com.ascooo.android.music.playback.EXTRA_LIKED
+import com.ascooo.android.music.playback.EXTRA_THUMBNAIL
 import com.ascooo.android.music.playback.PlaybackService
 import com.ascooo.android.music.playback.audioUnplayable
 import com.ascooo.android.music.playback.toMediaItem
@@ -23,7 +26,18 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.guava.await
 import kotlinx.coroutines.launch
 
-data class NowPlaying(val mediaId: String, val title: String, val artist: String, val album: String, val artworkUri: Uri?)
+data class NowPlaying(
+  val mediaId: String,
+  val title: String,
+  val artist: String,
+  val album: String,
+  val artworkUri: Uri?,
+  /** As queued; LikesRepository has any change since. */
+  val liked: Boolean,
+)
+
+/** A queued track. [index] is its place in the player's list, which shuffle doesn't change. */
+data class QueueEntry(val index: Int, val mediaId: String, val title: String, val artist: String, val thumbnail: String?)
 
 data class PlayerUiState(
   val nowPlaying: NowPlaying? = null,
@@ -36,6 +50,11 @@ data class PlayerUiState(
   val isBuffering: Boolean = false,
   val durationMs: Long = 0,
   val error: String? = null,
+  val shuffle: Boolean = false,
+  val repeatMode: Int = Player.REPEAT_MODE_OFF,
+  /** In the order it will play, so a shuffled queue reads as it sounds. */
+  val queue: List<QueueEntry> = emptyList(),
+  val currentIndex: Int = C.INDEX_UNSET,
 )
 
 /** The UI's handle on [PlaybackService]'s player, through a MediaController. One per activity. */
@@ -65,10 +84,22 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
   /** Read on demand by the progress bars rather than pushed, so idle screens cost nothing. */
   fun positionMs(): Long = connected?.currentPosition ?: 0
 
-  fun play(tracks: List<Track>, startIndex: Int = 0) = withController {
-    it.setMediaItems(tracks.map { track -> track.toMediaItem(baseUrl) }, startIndex, 0)
-    it.prepare()
-    it.play()
+  fun play(tracks: List<Track>, startIndex: Int = 0) = withController { start(it, tracks, startIndex) }
+
+  /** Right after the current track; with nothing queued, they just play. */
+  fun playNext(tracks: List<Track>) = withController {
+    if (it.mediaItemCount == 0) start(it, tracks) else it.addMediaItems(it.currentMediaItemIndex + 1, tracks.map { track -> track.toMediaItem(baseUrl) })
+  }
+
+  /** At the end of the queue; with nothing queued, they just play. */
+  fun addToQueue(tracks: List<Track>) = withController {
+    if (it.mediaItemCount == 0) start(it, tracks) else it.addMediaItems(tracks.map { track -> track.toMediaItem(baseUrl) })
+  }
+
+  private fun start(controller: MediaController, tracks: List<Track>, startIndex: Int = 0) {
+    controller.setMediaItems(tracks.map { track -> track.toMediaItem(baseUrl) }, startIndex, 0)
+    controller.prepare()
+    controller.play()
   }
 
   fun togglePlayPause() = withController { Util.handlePlayPauseButtonAction(it) }
@@ -78,6 +109,26 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
   fun previous() = withController { it.seekToPrevious() }
 
   fun seekTo(positionMs: Long) = withController { it.seekTo(positionMs) }
+
+  fun toggleShuffle() = withController { it.shuffleModeEnabled = !it.shuffleModeEnabled }
+
+  /** Off, then the whole queue, then the one track, as on the website. */
+  fun cycleRepeat() = withController {
+    it.repeatMode =
+      when (it.repeatMode) {
+        Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+        Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+        else -> Player.REPEAT_MODE_OFF
+      }
+  }
+
+  /** Plays the queued track at [index] (a [QueueEntry.index]) from its start. */
+  fun jumpTo(index: Int) = withController {
+    it.seekToDefaultPosition(index)
+    it.play()
+  }
+
+  fun removeFromQueue(index: Int) = withController { it.removeMediaItem(index) }
 
   /** After signing out nothing may keep streaming with the old session. */
   fun stop() = withController {
@@ -101,6 +152,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
               artist = meta.artist?.toString().orEmpty(),
               album = meta.albumTitle?.toString().orEmpty(),
               artworkUri = meta.artworkUri,
+              liked = meta.extras?.getBoolean(EXTRA_LIKED) ?: false,
             )
           },
         isPlaying = player.isPlaying,
@@ -109,7 +161,35 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         isBuffering = player.playbackState == Player.STATE_BUFFERING,
         durationMs = player.duration.takeIf { it != C.TIME_UNSET } ?: meta.durationMs ?: 0,
         error = player.playerError?.let(::describe) ?: UNPLAYABLE.takeIf { player.currentTracks.audioUnplayable },
+        shuffle = player.shuffleModeEnabled,
+        repeatMode = player.repeatMode,
+        queue = queueOf(player),
+        currentIndex = player.currentMediaItemIndex,
       )
+  }
+
+  private val window = Timeline.Window()
+
+  private fun queueOf(player: Player): List<QueueEntry> {
+    val timeline = player.currentTimeline
+    val shuffle = player.shuffleModeEnabled
+    return buildList {
+      var index = timeline.getFirstWindowIndex(shuffle)
+      while (index != C.INDEX_UNSET) {
+        val item = timeline.getWindow(index, window).mediaItem
+        val meta = item.mediaMetadata
+        add(
+          QueueEntry(
+            index = index,
+            mediaId = item.mediaId,
+            title = meta.title?.toString().orEmpty(),
+            artist = meta.artist?.toString().orEmpty(),
+            thumbnail = meta.extras?.getString(EXTRA_THUMBNAIL),
+          )
+        )
+        index = timeline.getNextWindowIndex(index, Player.REPEAT_MODE_OFF, shuffle)
+      }
+    }
   }
 
   private fun describe(error: PlaybackException): String =

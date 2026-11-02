@@ -99,6 +99,7 @@ dependencies {
   implementation(libs.retrofit.converter.kotlinx.serialization)
   implementation(libs.coil.compose)
   implementation(libs.coil.network.okhttp)
+  implementation(libs.material.color.utilities)
 
   testImplementation(libs.junit)
 }

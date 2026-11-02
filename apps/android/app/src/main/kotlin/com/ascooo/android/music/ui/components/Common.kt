@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
@@ -195,7 +196,13 @@ fun ArtistShelf(artists: List<Artist>, baseUrl: String, onOpenArtist: (Long) -> 
  * it fills in and shows [title], which also keeps the content off the status bar.
  */
 @Composable
-fun DetailTopBar(title: String?, onBack: () -> Unit, scrollBehavior: TopAppBarScrollBehavior, modifier: Modifier = Modifier) {
+fun DetailTopBar(
+  title: String?,
+  onBack: () -> Unit,
+  scrollBehavior: TopAppBarScrollBehavior,
+  modifier: Modifier = Modifier,
+  actions: @Composable RowScope.() -> Unit = {},
+) {
   val scrolled = scrollBehavior.state.overlappedFraction > 0.01f
   val titleAlpha by animateFloatAsState(if (scrolled) 1f else 0f, MaterialTheme.motionScheme.fastEffectsSpec(), label = "title")
   TopAppBar(
@@ -210,6 +217,7 @@ fun DetailTopBar(title: String?, onBack: () -> Unit, scrollBehavior: TopAppBarSc
         Icon(painterResource(R.drawable.ic_back), contentDescription = "返回")
       }
     },
+    actions = actions,
     colors =
       TopAppBarDefaults.topAppBarColors(
         containerColor = Color.Transparent,
@@ -225,7 +233,10 @@ fun StatusBarScrim(modifier: Modifier = Modifier) {
   Box(modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars).background(MaterialTheme.colorScheme.background))
 }
 
-/** A track in a list, led by its [number] on album pages and by its cover elsewhere. */
+/**
+ * A track in a list, led by its [number] on album pages and by its cover elsewhere, and ending in
+ * its menu. [onRemove] is for a playlist's own tracks.
+ */
 @Composable
 fun TrackRow(
   track: Track,
@@ -234,9 +245,10 @@ fun TrackRow(
   modifier: Modifier = Modifier,
   number: Int? = null,
   current: Boolean = false,
+  onRemove: (() -> Unit)? = null,
 ) {
   Row(
-    modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 8.dp),
+    modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     if (number != null) {
@@ -269,6 +281,7 @@ fun TrackRow(
     }
     Spacer(Modifier.width(12.dp))
     Text(formatTime(track.duration), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    TrackMenuButton(track, onRemove)
   }
 }
 

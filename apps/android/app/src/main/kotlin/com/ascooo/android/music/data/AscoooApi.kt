@@ -7,8 +7,11 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import retrofit2.HttpException
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.PATCH
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Path
 import retrofit2.http.Query
 
@@ -37,9 +40,24 @@ interface AscoooApi {
 
   @GET("me/favorites") suspend fun favorites(): TrackList
 
+  @PUT("me/favorites/{id}") suspend fun like(@Path("id") trackId: Long): LikeResponse
+
+  @DELETE("me/favorites/{id}") suspend fun unlike(@Path("id") trackId: Long): LikeResponse
+
   @GET("me/playlists") suspend fun playlists(): PlaylistList
 
   @GET("me/playlists/{id}") suspend fun playlist(@Path("id") id: Long): PlaylistDetail
+
+  @POST("me/playlists") suspend fun createPlaylist(@Body body: CreatePlaylistRequest): CreatedPlaylist
+
+  @PATCH("me/playlists/{id}") suspend fun renamePlaylist(@Path("id") id: Long, @Body body: RenamePlaylistRequest): OkResponse
+
+  @DELETE("me/playlists/{id}") suspend fun deletePlaylist(@Path("id") id: Long): OkResponse
+
+  @POST("me/playlists/{id}/tracks") suspend fun addToPlaylist(@Path("id") id: Long, @Body body: TrackIdsRequest): OkResponse
+
+  @DELETE("me/playlists/{id}/tracks/{entryId}")
+  suspend fun removeFromPlaylist(@Path("id") id: Long, @Path("entryId") entryId: Long): OkResponse
 
   @POST("me/history") suspend fun history(@Body body: HistoryRequest)
 }

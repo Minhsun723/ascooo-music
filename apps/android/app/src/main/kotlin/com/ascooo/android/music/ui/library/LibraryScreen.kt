@@ -39,6 +39,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +52,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ascooo.android.music.R
@@ -59,6 +61,7 @@ import com.ascooo.android.music.data.Album
 import com.ascooo.android.music.data.Artist
 import com.ascooo.android.music.data.AscoooApi
 import com.ascooo.android.music.data.Playlist
+import com.ascooo.android.music.data.PlaylistsRepository
 import com.ascooo.android.music.data.Track
 import com.ascooo.android.music.playback.artworkUrl
 import com.ascooo.android.music.ui.components.AlbumCard
@@ -67,20 +70,21 @@ import com.ascooo.android.music.ui.components.EmptyPane
 import com.ascooo.android.music.ui.components.ErrorPane
 import com.ascooo.android.music.ui.components.Load
 import com.ascooo.android.music.ui.components.LoadingPane
+import com.ascooo.android.music.ui.components.PlaylistNameDialog
 import com.ascooo.android.music.ui.components.TrackRow
 import com.ascooo.android.music.ui.components.loadOf
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
+/** The playlists live in [PlaylistsRepository], which the track menus share. */
 data class LibraryData(
   val albums: List<Album>,
   val tracks: List<Track>,
   val artists: List<Artist>,
-  val playlists: List<Playlist>,
 )
 
-class LibraryViewModel(private val api: AscoooApi) : ViewModel() {
+class LibraryViewModel(private val api: AscoooApi, private val playlists: PlaylistsRepository) : ViewModel() {
   var library by mutableStateOf<Load<LibraryData>>(Load.Loading)
     private set
 
@@ -114,8 +118,9 @@ class LibraryViewModel(private val api: AscoooApi) : ViewModel() {
       val albums = async { api.albums().albums }
       val tracks = async { api.tracks().tracks }
       val artists = async { api.artists().artists }
-      val playlists = async { api.playlists().playlists }
-      LibraryData(albums.await(), tracks.await(), artists.await(), playlists.await())
+      val playlistsLoaded = async { playlists.refresh() }
+      playlistsLoaded.await()
+      LibraryData(albums.await(), tracks.await(), artists.await())
     }
   }
 }
@@ -139,7 +144,8 @@ fun LibraryScreen(
   modifier: Modifier = Modifier,
 ) {
   val container = LocalContext.current.appContainer
-  val viewModel = viewModel { LibraryViewModel(container.api) }
+  val viewModel = viewModel { LibraryViewModel(container.api, container.playlists) }
+  val playlists by container.playlists.playlists.collectAsStateWithLifecycle()
   val pager = rememberPagerState { Section.entries.size }
   val scope = rememberCoroutineScope()
   // A tapped section lights up at once and stays lit while the pager travels to it. A swipe moves
@@ -204,7 +210,7 @@ fun LibraryScreen(
               Section.Albums -> AlbumsPage(data.albums, baseUrl, onOpenAlbum)
               Section.Tracks -> TracksPage(data.tracks, baseUrl, onPlay, currentId)
               Section.Artists -> ArtistsPage(data.artists, baseUrl, onOpenArtist)
-              Section.Playlists -> PlaylistsPage(data.playlists, baseUrl, onOpenPlaylist, onOpenFavorites)
+              Section.Playlists -> PlaylistsPage(playlists.orEmpty(), baseUrl, onOpenPlaylist, onOpenFavorites)
             }
           }
         }
@@ -274,6 +280,21 @@ private fun ArtistsPage(artists: List<Artist>, baseUrl: String, onOpenArtist: (L
 
 @Composable
 private fun PlaylistsPage(playlists: List<Playlist>, baseUrl: String, onOpenPlaylist: (Long) -> Unit, onOpenFavorites: () -> Unit) {
+  val container = LocalContext.current.appContainer
+  val scope = rememberCoroutineScope()
+  var naming by rememberSaveable { mutableStateOf(false) }
+  if (naming) {
+    PlaylistNameDialog(
+      title = "新增播放清單",
+      confirmLabel = "建立",
+      onDismiss = { naming = false },
+      onConfirm = { name ->
+        naming = false
+        // Opens the new playlist, as the website does.
+        scope.launch { container.playlists.create(name)?.let(onOpenPlaylist) }
+      },
+    )
+  }
   LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp)) {
     // The website keeps favorites in its sidebar; here they lead the playlists.
     item(key = "favorites") {
@@ -290,6 +311,18 @@ private fun PlaylistsPage(playlists: List<Playlist>, baseUrl: String, onOpenPlay
         },
       )
     }
+    item(key = "new") {
+      LibraryRow(
+        title = "新增播放清單",
+        supporting = null,
+        onClick = { naming = true },
+        leading = {
+          Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.size(56.dp)) {
+            Box(contentAlignment = Alignment.Center) { Icon(painterResource(R.drawable.ic_add), contentDescription = null) }
+          }
+        },
+      )
+    }
     items(playlists, key = { it.id }) { playlist ->
       LibraryRow(
         title = playlist.name,
@@ -301,7 +334,7 @@ private fun PlaylistsPage(playlists: List<Playlist>, baseUrl: String, onOpenPlay
     if (playlists.isEmpty()) {
       item(key = "empty") {
         Text(
-          "還沒有播放清單，目前請在網頁版建立。",
+          "還沒有播放清單。",
           style = MaterialTheme.typography.bodyMedium,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
           modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
@@ -312,11 +345,11 @@ private fun PlaylistsPage(playlists: List<Playlist>, baseUrl: String, onOpenPlay
 }
 
 @Composable
-private fun LibraryRow(title: String, supporting: String, onClick: () -> Unit, leading: @Composable () -> Unit) {
+private fun LibraryRow(title: String, supporting: String?, onClick: () -> Unit, leading: @Composable () -> Unit) {
   ListItem(
     onClick = onClick,
     leadingContent = leading,
-    supportingContent = { Text(supporting) },
+    supportingContent = supporting?.let { { Text(it) } },
     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
     // Lines the artwork up with the page title and the other lists' 20 dp edge.
     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
