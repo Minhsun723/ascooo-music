@@ -86,8 +86,8 @@ fun MiniPlayer(state: PlayerUiState, player: PlayerViewModel, onOpen: () -> Unit
         }
         IconButton(onClick = player::togglePlayPause, shapes = IconButtonDefaults.shapes()) {
           Icon(
-            painterResource(if (state.isPlaying) R.drawable.ic_pause else R.drawable.ic_play),
-            contentDescription = if (state.isPlaying) "暫停" else "播放",
+            painterResource(if (state.showPlayButton) R.drawable.ic_play else R.drawable.ic_pause),
+            contentDescription = if (state.showPlayButton) "播放" else "暫停",
           )
         }
         IconButton(onClick = player::next, shapes = IconButtonDefaults.shapes()) {
@@ -163,7 +163,7 @@ fun NowPlayingScreen(state: PlayerUiState, player: PlayerViewModel, onCollapse: 
         // Expressive toggle: round while paused, morphing to a rounded square while playing. Both states
         // keep the website's white play button, so paused never reads as disabled.
         FilledIconToggleButton(
-          checked = state.isPlaying,
+          checked = !state.showPlayButton,
           onCheckedChange = { player.togglePlayPause() },
           shapes = IconButtonDefaults.toggleableShapes(),
           colors =
@@ -176,8 +176,8 @@ fun NowPlayingScreen(state: PlayerUiState, player: PlayerViewModel, onCollapse: 
           modifier = Modifier.size(IconButtonDefaults.extraLargeContainerSize()),
         ) {
           Icon(
-            painterResource(if (state.isPlaying) R.drawable.ic_pause else R.drawable.ic_play),
-            contentDescription = if (state.isPlaying) "暫停" else "播放",
+            painterResource(if (state.showPlayButton) R.drawable.ic_play else R.drawable.ic_pause),
+            contentDescription = if (state.showPlayButton) "播放" else "暫停",
             modifier = Modifier.size(IconButtonDefaults.extraLargeIconSize),
           )
         }
