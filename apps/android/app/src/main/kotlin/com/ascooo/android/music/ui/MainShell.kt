@@ -27,7 +27,10 @@ import androidx.compose.material3.ShortNavigationBarItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -98,6 +101,9 @@ fun MainShell(user: User?, player: PlayerViewModel, onSignOut: () -> Unit) {
   var tab by rememberSaveable { mutableStateOf(Tab.Home) }
   val playerState by player.state.collectAsStateWithLifecycle()
   var nowPlayingOpen by rememberSaveable { mutableStateOf(false) }
+  // Each opening gets a fresh Now Playing, so reopening one that is still sliding away after a
+  // swipe down doesn't bring back the page pulled off-screen.
+  var nowPlayingOpenings by remember { mutableIntStateOf(0) }
   val currentId = playerState.nowPlaying?.mediaId
   val play: (List<Track>, Int) -> Unit = { tracks, index -> player.play(tracks, index) }
 
@@ -174,7 +180,14 @@ fun MainShell(user: User?, player: PlayerViewModel, onSignOut: () -> Unit) {
       contentWindowInsets = WindowInsets(0),
       bottomBar = {
         Column {
-          MiniPlayer(playerState, player, onOpen = { nowPlayingOpen = true })
+          MiniPlayer(
+            playerState,
+            player,
+            onOpen = {
+              nowPlayingOpen = true
+              nowPlayingOpenings++
+            },
+          )
           ShortNavigationBar {
             Tab.entries.forEach { item ->
               val selected = item == tab
@@ -208,7 +221,7 @@ fun MainShell(user: User?, player: PlayerViewModel, onSignOut: () -> Unit) {
       enter = slideInVertically(MaterialTheme.motionScheme.defaultSpatialSpec()) { it },
       exit = slideOutVertically(MaterialTheme.motionScheme.fastSpatialSpec()) { it },
     ) {
-      NowPlayingScreen(playerState, player, onCollapse = { nowPlayingOpen = false })
+      key(nowPlayingOpenings) { NowPlayingScreen(playerState, player, onCollapse = { nowPlayingOpen = false }) }
     }
   }
   // Back from the top of another tab returns to Home before leaving the app.

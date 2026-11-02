@@ -1,8 +1,12 @@
 package com.ascooo.android.music.ui.player
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.FilledIconToggleButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -30,14 +35,19 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -45,13 +55,17 @@ import com.ascooo.android.music.R
 import com.ascooo.android.music.ui.components.Artwork
 import com.ascooo.android.music.ui.components.formatTime
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
-/** The playhead, polled while playing. ExoPlayer's position is already smooth, so 5 Hz is plenty. */
+/**
+ * The playhead. Every player event (a seek, a pause, a new track) re-reads it in the same frame, so a
+ * seek while paused shows up; while playing it is also polled. ExoPlayer's position is already
+ * smooth, so 5 Hz is plenty.
+ */
 @Composable
 private fun rememberPosition(player: PlayerViewModel, state: PlayerUiState): State<Long> {
-  val position = remember { mutableLongStateOf(player.positionMs()) }
-  LaunchedEffect(state.isPlaying, state.nowPlaying?.mediaId) {
-    position.longValue = player.positionMs()
+  val position = remember(state.positionMs, state.nowPlaying?.mediaId) { mutableLongStateOf(player.positionMs()) }
+  LaunchedEffect(position, state.isPlaying) {
     while (state.isPlaying) {
       delay(200)
       position.longValue = player.positionMs()
@@ -110,7 +124,44 @@ fun NowPlayingScreen(state: PlayerUiState, player: PlayerViewModel, onCollapse: 
   val duration = state.durationMs.coerceAtLeast(1)
   val fraction = scrubbing ?: (position.toFloat() / duration).coerceIn(0f, 1f)
 
-  Surface(modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+  // Pulled down, the page lifts off as a card over the app. A flick down or a drag past a quarter of
+  // the screen closes it; anything less springs back.
+  val drag = remember { Animatable(0f) }
+  var height by remember { mutableIntStateOf(0) }
+  val scope = rememberCoroutineScope()
+  val density = LocalDensity.current
+  val dismissVelocity = with(density) { DismissVelocity.toPx() }
+  val maxCorner = with(density) { 28.dp.toPx() }
+  val closeSpec = MaterialTheme.motionScheme.fastSpatialSpec<Float>()
+  val settleSpec = MaterialTheme.motionScheme.defaultSpatialSpec<Float>()
+
+  Surface(
+    modifier
+      .fillMaxSize()
+      .onSizeChanged { height = it.height }
+      // Ahead of the layer, so the finger is measured against the screen rather than the moving page.
+      .draggable(
+        state = rememberDraggableState { delta -> scope.launch { drag.snapTo((drag.value + delta).coerceAtLeast(0f)) } },
+        orientation = Orientation.Vertical,
+        startDragImmediately = drag.isRunning,
+        onDragStopped = { velocity ->
+          if (velocity > dismissVelocity || (velocity > -dismissVelocity && drag.value > height / 4f)) {
+            drag.animateTo(height.toFloat(), closeSpec, velocity)
+            onCollapse()
+          } else {
+            drag.animateTo(0f, settleSpec, velocity)
+          }
+        },
+      )
+      .graphicsLayer {
+        // The spring back overshoots a hair past the top; the page and its corners stop there.
+        val offset = drag.value.coerceAtLeast(0f)
+        translationY = offset
+        shape = RoundedCornerShape((offset / 4).coerceAtMost(maxCorner))
+        clip = true
+      },
+    color = MaterialTheme.colorScheme.surface,
+  ) {
     Column(Modifier.fillMaxSize().systemBarsPadding().padding(horizontal = 24.dp)) {
       IconButton(
         onClick = onCollapse,
@@ -193,6 +244,9 @@ fun NowPlayingScreen(state: PlayerUiState, player: PlayerViewModel, onCollapse: 
     }
   }
 }
+
+/** Material's bottom sheets take a flick this fast as a request to close. */
+private val DismissVelocity = 125.dp
 
 /** The wave rides the playhead while music plays and flattens on pause, like Android's media controls. */
 @Composable

@@ -31,6 +31,8 @@ data class PlayerUiState(
   // What the play/pause button offers. It follows what was asked for rather than what is audible,
   // so a track that is still buffering already shows pause.
   val showPlayButton: Boolean = true,
+  // Where playback stood at the last player event (a seek, a pause, a new track).
+  val positionMs: Long = 0,
   val isBuffering: Boolean = false,
   val durationMs: Long = 0,
   val error: String? = null,
@@ -103,6 +105,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
           },
         isPlaying = player.isPlaying,
         showPlayButton = Util.shouldShowPlayButton(player),
+        positionMs = player.currentPosition,
         isBuffering = player.playbackState == Player.STATE_BUFFERING,
         durationMs = player.duration.takeIf { it != C.TIME_UNSET } ?: meta.durationMs ?: 0,
         error = player.playerError?.let(::describe) ?: UNPLAYABLE.takeIf { player.currentTracks.audioUnplayable },

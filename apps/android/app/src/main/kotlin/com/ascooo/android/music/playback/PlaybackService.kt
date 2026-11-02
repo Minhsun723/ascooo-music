@@ -14,10 +14,12 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.util.EventLogger
+import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.ascooo.android.music.BuildConfig
 import com.ascooo.android.music.MainActivity
+import com.ascooo.android.music.R
 import com.ascooo.android.music.appContainer
 import com.ascooo.android.music.data.HistoryRequest
 import com.google.common.util.concurrent.Futures
@@ -77,6 +79,9 @@ class PlaybackService : MediaSessionService() {
           }
         )
         .build()
+    // The small icon is what Android 13+ shows at the top of the media controls; Media3's default is
+    // a generic play symbol.
+    setMediaNotificationProvider(DefaultMediaNotificationProvider.Builder(this).build().apply { setSmallIcon(R.drawable.ic_notification) })
 
     scope.launch { reportPlays(player) }
   }
