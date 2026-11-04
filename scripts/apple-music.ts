@@ -272,8 +272,24 @@ export function localizedValue(original: string, localized: string, japanese: bo
 
 function responseMessage(payload: AppleResponse, status: number): string {
   const error = payload.errors?.[0];
-  return error?.detail || error?.title || error?.code || `HTTP ${status}`;
+  // The status leads: Apple's detail alone misleads, as a 429 reads "Request is forbidden".
+  const detail = [...new Set([error?.title, error?.detail].filter((text): text is string => !!text))].join('：');
+  return detail ? `HTTP ${status}（${detail}）` : `HTTP ${status}`;
 }
+
+/**
+ * Apple answered 429 even after backing off. It keeps refusing the address for
+ * tens of minutes, so the client sends nothing more for the rest of the run.
+ */
+export class AppleRateLimitError extends Error {
+  constructor() {
+    super('Apple Music 請求過多（HTTP 429），本次同步不再向 Apple Music 查詢');
+    this.name = 'AppleRateLimitError';
+  }
+}
+
+/** Catalog requests in flight at once. Matching runs several tracks in parallel, which trips the rate limit sooner. */
+const MAX_CONCURRENT_REQUESTS = 2;
 
 async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -290,6 +306,14 @@ export class AppleMusicClient {
   private bearerIndex = 0;
   private initialized = false;
   private albumLocales = new Map<string, Promise<string | null>>();
+  private inFlight = 0;
+  private waiting: Array<() => void> = [];
+  private throttled = false;
+
+  /** Apple refused with 429 during this run; every later request fails at once with AppleRateLimitError. */
+  get rateLimited(): boolean {
+    return this.throttled;
+  }
 
   constructor(options: AppleMusicOptions = {}) {
     this.providedDeveloperToken = stripBearer(options.developerToken);
@@ -334,9 +358,25 @@ export class AppleMusicClient {
   private async get(path: string, params: Record<string, string>, needsUser = false): Promise<AppleResponse> {
     await this.initialize();
     if (needsUser && !this.mediaUserToken) throw new Error('缺少 APPLE_MUSIC_USER_TOKEN');
+    if (this.throttled) throw new AppleRateLimitError();
+    if (this.inFlight < MAX_CONCURRENT_REQUESTS) this.inFlight++;
+    // The slot is handed straight to the next waiter on release, so inFlight stays put.
+    else await new Promise<void>((resolve) => this.waiting.push(resolve));
+    try {
+      return await this.request(path, params, needsUser);
+    } finally {
+      const next = this.waiting.shift();
+      if (next) next();
+      else this.inFlight--;
+    }
+  }
 
+  private async request(path: string, params: Record<string, string>, needsUser: boolean): Promise<AppleResponse> {
     let lastError = 'Apple Music 請求失敗';
+    let lastStatus = 0;
     for (let attempt = 0; attempt < Math.max(4, this.bearerTokens.length); attempt++) {
+      // Another request may have been refused while this one waited or backed off.
+      if (this.throttled) throw new AppleRateLimitError();
       const token = this.bearerTokens[this.bearerIndex % this.bearerTokens.length];
       const url = new URL(`${AMP_API}/${path.replace(/^\//, '')}`);
       for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
@@ -354,6 +394,7 @@ export class AppleMusicClient {
       const payload = await response.json().catch(() => ({})) as AppleResponse;
       if (response.ok) return payload;
       lastError = responseMessage(payload, response.status);
+      lastStatus = response.status;
       if (response.status === 401 && this.bearerTokens.length > 1) {
         this.bearerIndex = (this.bearerIndex + 1) % this.bearerTokens.length;
         continue;
@@ -366,6 +407,10 @@ export class AppleMusicClient {
         throw new Error(`Apple Music 歌詞無法存取：${lastError}`);
       }
       throw new Error(`Apple Music API：${lastError}`);
+    }
+    if (lastStatus === 429) {
+      this.throttled = true;
+      throw new AppleRateLimitError();
     }
     throw new Error(`Apple Music API：${lastError}`);
   }
@@ -425,10 +470,14 @@ export class AppleMusicClient {
     // ("Camila Cabello" -> "カミラ・カベロ"). Only Japanese songs should carry
     // localized names, so re-read everything else in English.
     if (!japanese && language.toLowerCase().startsWith('ja')) {
+      // A refused re-read fails the match, so the katakana names are not kept as if final.
       const original = await this.get(`catalog/${storefront}/songs/${song.id}`, {
         l: 'en-US',
         include: 'artists',
-      }).catch(() => null);
+      }).catch((error) => {
+        if (error instanceof AppleRateLimitError) throw error;
+        return null;
+      });
       const originalSong = (original?.data as unknown as AppleSong[] | undefined)?.[0];
       if (originalSong?.attributes) song = originalSong;
     }

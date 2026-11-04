@@ -8,6 +8,7 @@ import { AUDIO_EXTENSIONS, type AudioMetadata, METADATA_VERSION, extOf, extractM
 import { type DavEntry, WebDAV, normalizePath, parentDir } from '../apps/worker/src/lib/webdav';
 import {
   AppleMusicClient,
+  AppleRateLimitError,
   appleArtworkUrl,
   localizedValue,
   type AppleArtwork,
@@ -795,7 +796,8 @@ function connectWebDAV(): WebDAV {
   } as never);
 }
 
-async function prepare(): Promise<SyncManifest> {
+/** appleRateLimited: Apple refused with 429, so some tracks kept what the cache had instead of a fresh lookup. */
+async function prepare(): Promise<{ manifest: SyncManifest; appleRateLimited: boolean }> {
   const dav = connectWebDAV();
   const root = normalizePath(process.env.MUSIC_ROOT?.trim() || '/');
   const appleLyricsRoot = normalizePath(process.env.APPLE_MUSIC_LYRICS_PATH?.trim() || '/ascooo-music/lyrics');
@@ -831,6 +833,8 @@ async function prepare(): Promise<SyncManifest> {
     warnOnce('lyrics-root', `  無法讀取 ${appleLyricsRoot}：${error instanceof Error ? error.message : String(error)}`);
   }
 
+  // Tracks whose Apple match or lyrics lookup Apple refused with 429 this run.
+  const appleRefused = new Set<string>();
   const appleLyricsJobs = new Map<string, Promise<{
     content: string;
     path: string;
@@ -1112,6 +1116,7 @@ async function prepare(): Promise<SyncManifest> {
           appleMatchVersion = APPLE_MATCH_VERSION;
           if (cached?.appleMusic?.songId !== appleMusic?.songId) appleLyricsCheckedAt = null;
         } catch (error) {
+          if (error instanceof AppleRateLimitError) appleRefused.add(file.path);
           warnOnce('apple-match', `  Apple Music 配對暫停，本次保留既有結果：${error instanceof Error ? error.message : String(error)}`);
         }
       }
@@ -1203,7 +1208,12 @@ async function prepare(): Promise<SyncManifest> {
             lrcSignature = resolved.signature;
           }
         } catch (error) {
-          console.warn(`  Apple Music 歌詞略過 ${file.name}：${error instanceof Error ? error.message : String(error)}`);
+          if (error instanceof AppleRateLimitError) {
+            appleRefused.add(file.path);
+            warnOnce('apple-lyrics-rate-limit', `  Apple Music 歌詞暫停，下次同步再補：${error.message}`);
+          } else {
+            console.warn(`  Apple Music 歌詞略過 ${file.name}：${error instanceof Error ? error.message : String(error)}`);
+          }
         }
       } else if (apple?.hasMediaUserToken && appleMusic && (isInstrumental || !appleMusic.hasTimeSyncedLyrics)) {
         appleLyricsCheckedAt = Date.now();
@@ -1260,15 +1270,22 @@ async function prepare(): Promise<SyncManifest> {
     ...[...track.artists ?? [], ...track.albumArtists ?? []].flatMap((artist) => [artist.logoId, artist.video?.previewId, artist.squareVideo?.previewId, artist.bannerId]),
   ]).filter((id): id is string => !!id));
   console.log(`本機解析完成：${audioCount} 首；沿用 ${reused} 首，重新解析 ${audioCount - reused} 首`);
+  const appleRateLimited = !!apple?.rateLimited;
+  if (appleRateLimited) {
+    console.warn(`  Apple Music 請求過多（HTTP 429），途中已停止查詢${appleRefused.size ? `：${appleRefused.size} 首的配對或歌詞沿用舊資料` : ''}，下次同步會再查`);
+  }
 
   return {
-    version: 5,
-    createdAt: new Date().toISOString(),
-    root,
-    scanId,
-    artworks: [...artworks.values()].filter((artwork) => referencedArtwork.has(artwork.id)),
-    tracks,
-    artistPages,
+    manifest: {
+      version: 5,
+      createdAt: new Date().toISOString(),
+      root,
+      scanId,
+      artworks: [...artworks.values()].filter((artwork) => referencedArtwork.has(artwork.id)),
+      tracks,
+      artistPages,
+    },
+    appleRateLimited,
   };
 }
 
@@ -1393,12 +1410,32 @@ function canonicalJson(value: unknown): string {
 }
 
 /**
- * Hash of what the Worker would write for a track. Fields that only steer the
- * local cache (scan id, Apple re-check times) are left out, so a refresh that
- * finds the same match does not upload the track again.
+ * Fields of a track /sync/import/track never reads. They only steer the local
+ * cache, which each computer keeps on its own, so hashing them uploads tracks
+ * the Worker would write unchanged: lrcSignature is a PikPak etag on most
+ * computers but a content hash on the one that saved the TTML. Credits and the
+ * genre reach the Worker as artists, albumArtists and displayGenre. Everything
+ * else is hashed, so a field the Worker starts reading is never skipped; take
+ * a field out of these lists if the Worker comes to read it.
  */
+const UNHASHED_TRACK_FIELDS = [
+  'scanId', 'appleCheckedAt', 'appleLyricsCheckedAt', 'lrcSignature', 'metadataVersion', 'appleMatchVersion',
+] as const satisfies readonly (keyof PreparedTrack)[];
+const UNHASHED_APPLE_FIELDS = [
+  'title', 'audioLocale', 'hasLyrics', 'hasTimeSyncedLyrics', 'lyricsSongId', 'lyricsAudioLocale',
+  'lyricsHasTimeSyncedLyrics', 'genre', 'genreVersion', 'credits', 'creditsVersion',
+] as const satisfies readonly (keyof NonNullable<PreparedTrack['appleMusic']>)[];
+
+function omit<T extends object>(value: T, keys: readonly (keyof T)[]): Partial<T> {
+  const copy: Partial<T> = { ...value };
+  for (const key of keys) delete copy[key];
+  return copy;
+}
+
+/** Hash of what the Worker would write for a track, so a track it would write unchanged is not uploaded again. */
 function trackSyncHash(track: PreparedTrack): string {
-  const { scanId: _scanId, appleCheckedAt: _appleCheckedAt, appleLyricsCheckedAt: _appleLyricsCheckedAt, ...payload } = track;
+  const payload = omit(track, UNHASHED_TRACK_FIELDS);
+  if (track.appleMusic) payload.appleMusic = omit(track.appleMusic, UNHASHED_APPLE_FIELDS) as PreparedTrack['appleMusic'];
   return createHash('sha256')
     .update(canonicalJson({ importVersion: TRACK_IMPORT_VERSION, metadataVersion: METADATA_VERSION, payload }))
     .digest('hex');
@@ -1428,7 +1465,8 @@ async function missingArtwork(baseUrl: string, cookie: string, artworks: Prepare
   }
 }
 
-async function upload(manifest: SyncManifest) {
+/** dryRun: only report what would be uploaded; nothing is written to the site. */
+async function upload(manifest: SyncManifest, dryRun = false) {
   if (!manifest.tracks.length) {
     throw new Error('本機掃描沒有找到任何音訊；為避免誤刪線上音樂庫，已停止上傳');
   }
@@ -1445,6 +1483,15 @@ async function upload(manifest: SyncManifest) {
   const baseUrl = targetUrl();
   console.log(`登入 ${baseUrl}`);
   const cookie = await login(baseUrl);
+  if (dryRun) {
+    const missing = await missingArtwork(baseUrl, cookie, manifest.artworks);
+    const synced = await syncedTrackHashes(baseUrl, cookie);
+    const pending = manifest.tracks.filter((track) => synced?.get(track.path) !== trackSyncHash(track));
+    console.log(`試算完成（--dry-run，沒有上傳）：封面需上傳 ${missing.size}/${manifest.artworks.length} 張；歌曲 ${manifest.tracks.length - pending.length} 首未變更，需上傳 ${pending.length} 首`);
+    for (const track of pending.slice(0, 50)) console.log(`  ${track.path}`);
+    if (pending.length > 50) console.log(`  …另有 ${pending.length - 50} 首`);
+    return;
+  }
   const state = await loadUploadState(manifest.scanId);
   if (state.artworkIndex) console.log(`續傳進度：封面 ${state.artworkIndex}/${manifest.artworks.length}`);
 
@@ -1493,21 +1540,32 @@ async function main() {
   if (process.argv.includes('--aac51-only')) return syncAac51Only();
   const prepareOnly = process.argv.includes('--prepare-only');
   const uploadOnly = process.argv.includes('--upload-only');
+  const dryRun = process.argv.includes('--dry-run');
   if (prepareOnly && uploadOnly) throw new Error('--prepare-only 與 --upload-only 不能同時使用');
+  if (prepareOnly && dryRun) throw new Error('--prepare-only 與 --dry-run 不能同時使用');
 
   let manifest: SyncManifest;
+  let appleRateLimited = false;
   if (uploadOnly) {
     const cached = JSON.parse(await readFile(cacheFile, 'utf8')) as SyncManifest & { version: number };
     if (cached.version !== 5) throw new Error('本機同步快取版本不支援，請重新執行準備');
     manifest = cached;
     console.log(`載入本機快取：${manifest.tracks.length} 首歌曲`);
   } else {
-    manifest = await prepare();
+    ({ manifest, appleRateLimited } = await prepare());
     await persistManifest(manifest);
     console.log(`本機同步完成，快取已寫入 ${cacheFile}`);
   }
 
-  if (!prepareOnly) await upload(manifest);
+  if (prepareOnly) return;
+  // Uploading now would overwrite fresher data on the site with the cache's, and
+  // send those tracks again once Apple answers.
+  if (appleRateLimited && !dryRun) {
+    console.warn('\nApple Music 限流中，部分歌曲沒有查到最新資料，這次先不上傳。');
+    console.warn('已查好的部分存在快取，等一段時間重跑會直接沿用；若要先上傳目前的結果，請加上 --upload-only 重跑。');
+    return;
+  }
+  await upload(manifest, dryRun);
 }
 
 await main().catch((error) => {
