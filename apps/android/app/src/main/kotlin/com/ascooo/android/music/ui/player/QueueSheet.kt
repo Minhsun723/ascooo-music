@@ -1,8 +1,13 @@
 package com.ascooo.android.music.ui.player
 
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -18,6 +23,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -32,11 +38,29 @@ import com.ascooo.android.music.ui.components.Artwork
 fun QueueSheet(state: PlayerUiState, onJump: (Int) -> Unit, onRemove: (Int) -> Unit, onDismiss: () -> Unit) {
   val current = state.queue.indexOfFirst { it.index == state.currentIndex }.coerceAtLeast(0)
   val listState = rememberLazyListState(initialFirstVisibleItemIndex = current)
+  // Material pads a sheet's content for the status bar by however far the sheet has climbed under it.
+  // A sheet as tall as the screen then changes height as it moves, and every change snaps it back to
+  // the top: pulled down from the list, it hardly moved until let go. So the content keeps clear of
+  // the status bar itself, a long queue's sheet stopping just below it, and needs no padding for it.
+  val statusBars = WindowInsets.statusBars
   // Open at full height: the list can't scroll the current track further up than the end of the
   // queue allows, so half a sheet could leave it just below the fold.
-  ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+  ModalBottomSheet(
+    onDismissRequest = onDismiss,
+    sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    contentWindowInsets = { WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom) },
+  ) {
     Text("播放佇列", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
-    LazyColumn(state = listState, contentPadding = PaddingValues(bottom = 24.dp)) {
+    LazyColumn(
+      state = listState,
+      modifier =
+        Modifier.layout { measurable, constraints ->
+          val maxHeight = (constraints.maxHeight - statusBars.getTop(this)).coerceAtLeast(constraints.minHeight)
+          val placeable = measurable.measure(constraints.copy(maxHeight = maxHeight))
+          layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+        },
+      contentPadding = PaddingValues(bottom = 24.dp),
+    ) {
       items(state.queue, key = { it.index }) { entry ->
         val playing = entry.index == state.currentIndex
         ListItem(
