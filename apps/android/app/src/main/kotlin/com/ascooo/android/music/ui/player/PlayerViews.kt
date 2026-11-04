@@ -4,7 +4,6 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.SizeTransform
-import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateDp
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
@@ -14,13 +13,10 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -56,7 +52,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -71,12 +66,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -114,18 +106,24 @@ private fun rememberPosition(player: PlayerViewModel, state: PlayerUiState): Sta
 }
 
 @Composable
-fun MiniPlayer(state: PlayerUiState, player: PlayerViewModel, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+fun MiniPlayer(
+  state: PlayerUiState,
+  player: PlayerViewModel,
+  onOpen: () -> Unit,
+  modifier: Modifier = Modifier,
+  artModifier: Modifier = Modifier,
+) {
   val now = state.nowPlaying ?: return
   val position by rememberPosition(player, state)
   Surface(
     onClick = onOpen,
     shape = MaterialTheme.shapes.largeIncreased,
     color = MaterialTheme.colorScheme.surfaceContainerHigh,
-    modifier = modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+    modifier = modifier.fillMaxWidth(),
   ) {
     Column {
       Row(Modifier.padding(start = 8.dp, end = 4.dp, top = 8.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Artwork(now.artworkUri?.toString(), Modifier.size(44.dp), MaterialTheme.shapes.medium)
+        Artwork(now.artworkUri?.toString(), Modifier.size(44.dp).then(artModifier), MaterialTheme.shapes.medium)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
           Text(now.title, style = MaterialTheme.typography.bodyLargeEmphasized, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -163,6 +161,7 @@ fun NowPlayingScreen(
   lyricsShown: Boolean,
   onLyricsShownChange: (Boolean) -> Unit,
   modifier: Modifier = Modifier,
+  coverModifier: (corner: Dp) -> Modifier = { Modifier },
 ) {
   val now = state.nowPlaying ?: return
   val position by rememberPosition(player, state)
@@ -210,20 +209,6 @@ fun NowPlayingScreen(
       }
     }
 
-  // Pulled down, the page lifts off as a card over the app. A flick down or a drag past a quarter of
-  // the screen closes it; anything less springs back. The finger moves the page directly, and the
-  // spring after it runs inside the drag state too, so a finger landing mid-spring takes over
-  // instead of the two cancelling each other.
-  var offset by remember { mutableFloatStateOf(0f) }
-  var settling by remember { mutableStateOf(false) }
-  val dragState = rememberDraggableState { delta -> offset = (offset + delta).coerceAtLeast(0f) }
-  var height by remember { mutableIntStateOf(0) }
-  val density = LocalDensity.current
-  val dismissVelocity = with(density) { DismissVelocity.toPx() }
-  val maxCorner = with(density) { 28.dp.toPx() }
-  val closeSpec = MaterialTheme.motionScheme.fastSpatialSpec<Float>()
-  val settleSpec = MaterialTheme.motionScheme.defaultSpatialSpec<Float>()
-
   // Coloured after the cover. Until a cover's colours are worked out the previous ones stay, and a
   // cover with none keeps the app's palette on a plain backdrop.
   val context = LocalContext.current
@@ -233,39 +218,7 @@ fun NowPlayingScreen(
   val colors = animateCoverColors(cover ?: appColors)
 
   MaterialTheme(colorScheme = colors.scheme) {
-    Surface(
-      modifier
-        .fillMaxSize()
-        .onSizeChanged { height = it.height }
-        // Ahead of the layer, so the finger is measured against the screen rather than the moving page.
-        .draggable(
-          state = dragState,
-          orientation = Orientation.Vertical,
-          startDragImmediately = settling,
-          onDragStopped = { velocity ->
-            val close = velocity > dismissVelocity || (velocity > -dismissVelocity && offset > height / 4f)
-            // Closed as the finger lets go, so the page stops taking touches while it carries on down.
-            if (close) onCollapse()
-            settling = true
-            try {
-              // A new drag on a page springing back cancels this and takes over from where it is.
-              dragState.drag {
-                val target = if (close) height.toFloat() else 0f
-                animate(offset, target, velocity, if (close) closeSpec else settleSpec) { value, _ -> dragBy(value - offset) }
-              }
-            } finally {
-              settling = false
-            }
-          },
-        )
-        .graphicsLayer {
-          // The spring back would overshoot a hair past the top; the drag state stops it there.
-          translationY = offset
-          shape = RoundedCornerShape((offset / 4).coerceAtMost(maxCorner))
-          clip = true
-        },
-      color = MaterialTheme.colorScheme.surface,
-    ) {
+    Surface(modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
       Column(
         Modifier.fillMaxSize()
           .background(Brush.verticalGradient(0f to colors.backdrop, 0.7f to MaterialTheme.colorScheme.surface))
@@ -309,7 +262,7 @@ fun NowPlayingScreen(
             }
             if (showLyrics) {
               Column(Modifier.fillMaxSize()) {
-                LyricsHeader(now, sharedCover, RoundedCornerShape(corner), onClose = { onLyricsShownChange(false) })
+                LyricsHeader(now, sharedCover.then(coverModifier(corner)), RoundedCornerShape(corner), onClose = { onLyricsShownChange(false) })
                 LyricsPanel(
                   // A song without lyrics is known to have none; there's nothing to ask for.
                   trackId = now.mediaId.toLongOrNull()?.takeIf { now.hasLyrics },
@@ -327,7 +280,12 @@ fun NowPlayingScreen(
                 // the controls need, staying square.
                 Artwork(
                   now.artworkUri?.toString(),
-                  Modifier.align(Alignment.CenterHorizontally).weight(1f, fill = false).fillMaxWidth().aspectRatio(1f).then(sharedCover),
+                  Modifier.align(Alignment.CenterHorizontally)
+                    .weight(1f, fill = false)
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .then(sharedCover)
+                    .then(coverModifier(corner)),
                   RoundedCornerShape(corner),
                 )
                 Spacer(Modifier.height(32.dp))
@@ -572,9 +530,6 @@ private fun LyricsHeader(now: NowPlaying, cover: Modifier, coverShape: Shape, on
 
 /** How long the controls stay under the lyrics without a touch. */
 private const val CONTROLS_IDLE_MS = 4000L
-
-/** Material's bottom sheets take a flick this fast as a request to close. */
-private val DismissVelocity = 125.dp
 
 /** The wave rides the playhead while music plays and flattens on pause, like Android's media controls. */
 @Composable

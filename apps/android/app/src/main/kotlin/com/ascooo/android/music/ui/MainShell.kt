@@ -4,15 +4,12 @@ import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContentTransitionScope
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,8 +29,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,11 +38,15 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
 import androidx.navigation3.runtime.NavEntry
@@ -74,7 +75,10 @@ import com.ascooo.android.music.ui.home.HomeScreen
 import com.ascooo.android.music.ui.library.LibraryScreen
 import com.ascooo.android.music.ui.player.MiniPlayer
 import com.ascooo.android.music.ui.player.NowPlayingScreen
+import com.ascooo.android.music.ui.player.NowPlayingSheet
+import com.ascooo.android.music.ui.player.NowPlayingSheetState
 import com.ascooo.android.music.ui.player.PlayerViewModel
+import com.ascooo.android.music.ui.player.rememberPullUpToOpen
 import com.ascooo.android.music.ui.search.SearchScreen
 import com.ascooo.android.music.ui.settings.LanguageScreen
 import com.ascooo.android.music.ui.settings.SettingsScreen
@@ -117,10 +121,8 @@ fun MainShell(user: User?, player: PlayerViewModel, onSignOut: () -> Unit) {
   val stacks = Tab.entries.associateWith { rememberNavBackStack(it.route) }
   var tab by rememberSaveable { mutableStateOf(Tab.Home) }
   val playerState by player.state.collectAsStateWithLifecycle()
-  var nowPlayingOpen by rememberSaveable { mutableStateOf(false) }
-  // Each opening gets a fresh Now Playing, so reopening one that is still sliding away after a
-  // swipe down doesn't bring back the page pulled off-screen.
-  var nowPlayingOpenings by remember { mutableIntStateOf(0) }
+  val nowPlaying = rememberSaveable(saver = NowPlayingSheetState.Saver) { NowPlayingSheetState(open = false) }
+  val nowPlayingShown by remember { derivedStateOf { nowPlaying.isShown } }
   // Out here, so Now Playing opens again on the lyrics if it was closed on them.
   var lyricsShown by rememberSaveable { mutableStateOf(false) }
   // Works out each new cover's colours while Now Playing is closed, so it opens already in them.
@@ -226,10 +228,14 @@ fun MainShell(user: User?, player: PlayerViewModel, onSignOut: () -> Unit) {
             MiniPlayer(
               playerState,
               player,
-              onOpen = {
-                nowPlayingOpen = true
-                nowPlayingOpenings++
-              },
+              onOpen = nowPlaying::open,
+              // Now Playing grows out of this spot, tapped or pulled up, and draws the mini player itself
+              // while it's up. The sheet fills the screen from its corner, so a place on screen is a place
+              // in the sheet.
+              Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                .onGloballyPositioned { nowPlaying.miniBounds = it.boundsInRoot() }
+                .graphicsLayer { alpha = if (nowPlayingShown) 0f else 1f }
+                .then(rememberPullUpToOpen(nowPlaying)),
             )
             ShortNavigationBar {
               Tab.entries.forEach { item ->
@@ -259,20 +265,19 @@ fun MainShell(user: User?, player: PlayerViewModel, onSignOut: () -> Unit) {
         )
       }
 
-      AnimatedVisibility(
-        visible = nowPlayingOpen && playerState.nowPlaying != null,
-        enter = slideInVertically(MaterialTheme.motionScheme.defaultSpatialSpec()) { it },
-        exit = slideOutVertically(MaterialTheme.motionScheme.fastSpatialSpec()) { it },
-      ) {
-        key(nowPlayingOpenings) {
+      if (nowPlayingShown && playerState.nowPlaying != null) {
+        NowPlayingSheet(
+          nowPlaying,
+          artworkUrl = playerState.nowPlaying?.artworkUri?.toString(),
+          mini = { modifier, art -> MiniPlayer(playerState, player, onOpen = nowPlaying::open, modifier, art) },
+        ) { cover ->
           NowPlayingScreen(
             playerState,
             player,
-            onCollapse = { nowPlayingOpen = false },
+            onCollapse = { nowPlaying.close() },
             lyricsShown = lyricsShown,
             onLyricsShownChange = { lyricsShown = it },
-            // Closed, it takes no more touches while it slides away; the app under it already does.
-            modifier = Modifier.passTouchesThrough(transition.targetState == EnterExitState.PostExit),
+            coverModifier = cover,
           )
         }
       }
@@ -283,7 +288,7 @@ fun MainShell(user: User?, player: PlayerViewModel, onSignOut: () -> Unit) {
         snackbars,
         Modifier.align(Alignment.BottomCenter)
           .then(
-            if (nowPlayingOpen) Modifier.navigationBarsPadding()
+            if (nowPlaying.isOpen) Modifier.navigationBarsPadding()
             else Modifier.padding(bottom = with(LocalDensity.current) { bottomBarHeight.toDp() })
           ),
       )
@@ -291,5 +296,5 @@ fun MainShell(user: User?, player: PlayerViewModel, onSignOut: () -> Unit) {
   }
   // Back from the top of another tab returns to Home before leaving the app.
   BackHandler(enabled = tab != Tab.Home && stacks.getValue(tab).size == 1) { tab = Tab.Home }
-  BackHandler(enabled = nowPlayingOpen) { nowPlayingOpen = false }
+  BackHandler(enabled = nowPlaying.isOpen) { nowPlaying.close() }
 }
