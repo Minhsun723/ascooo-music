@@ -1,6 +1,7 @@
 package com.ascooo.android.music.ui.player
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.SizeTransform
@@ -36,6 +37,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonGroup
 import androidx.compose.material3.ButtonGroupDefaults
 import androidx.compose.material3.ButtonGroupScope
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconToggleButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
@@ -44,6 +46,7 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LinearWavyProgressIndicator
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -72,6 +75,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -149,10 +154,7 @@ fun MiniPlayer(
           }
         }
         IconButton(onClick = player::togglePlayPause, shapes = IconButtonDefaults.shapes()) {
-          Icon(
-            painterResource(if (state.showPlayButton) R.drawable.ic_play else R.drawable.ic_pause),
-            contentDescription = if (state.showPlayButton) "播放" else "暫停",
-          )
+          PlayPauseIcon(state, IconButtonDefaults.mediumIconSize)
         }
         IconButton(onClick = player::next, shapes = IconButtonDefaults.shapes()) {
           Icon(painterResource(R.drawable.ic_skip_next), contentDescription = "下一首")
@@ -457,11 +459,37 @@ private fun PlayPauseButton(
     modifier = modifier,
     interactionSource = interactionSource,
   ) {
-    Icon(
-      painterResource(if (state.showPlayButton) R.drawable.ic_play else R.drawable.ic_pause),
-      contentDescription = if (state.showPlayButton) "播放" else "暫停",
-      modifier = Modifier.size(iconSize),
-    )
+    PlayPauseIcon(state, iconSize)
+  }
+}
+
+/**
+ * Play or pause, or while the track loads to play, a spinner in the icon's place. Paused, loading
+ * ahead keeps the play icon, as Media3's own player view does. Loads shorter than
+ * [LOADING_SHOWN_AFTER_MS], such as a seek within what's already buffered, keep the icon rather than
+ * flash the spinner. The button still plays and pauses either way, and says which it will.
+ */
+@Composable
+private fun PlayPauseIcon(state: PlayerUiState, size: Dp) {
+  val waiting = state.isBuffering && !state.showPlayButton
+  val loading by produceState(false, waiting) {
+    if (waiting) delay(LOADING_SHOWN_AFTER_MS)
+    value = waiting
+  }
+  val label = if (state.showPlayButton) "播放" else "暫停"
+  Crossfade(loading, animationSpec = MaterialTheme.motionScheme.fastEffectsSpec(), label = "play icon or spinner") { spinning ->
+    Box(Modifier.size(size), contentAlignment = Alignment.Center) {
+      if (spinning) {
+        // A little inside the icon's box, as the glyphs are, so it sits the same size.
+        CircularProgressIndicator(
+          modifier = Modifier.size(size * 0.8f).semantics { contentDescription = label },
+          color = LocalContentColor.current,
+          strokeWidth = size / 10,
+        )
+      } else {
+        Icon(painterResource(if (state.showPlayButton) R.drawable.ic_play else R.drawable.ic_pause), contentDescription = label, modifier = Modifier.fillMaxSize())
+      }
+    }
   }
 }
 
@@ -547,6 +575,9 @@ private fun LyricsHeader(now: NowPlaying, cover: Modifier, coverShape: Shape, on
 
 /** How long the controls stay under the lyrics without a touch. */
 private const val CONTROLS_IDLE_MS = 4000L
+
+/** How long the player has to be loading before the play button shows it. */
+private const val LOADING_SHOWN_AFTER_MS = 250L
 
 /** The wave rides the playhead while music plays and flattens on pause, like Android's media controls. */
 @Composable
