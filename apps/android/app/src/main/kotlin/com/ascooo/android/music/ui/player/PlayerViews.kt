@@ -12,7 +12,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.MarqueeSpacing
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -55,6 +57,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -141,7 +144,12 @@ fun MiniPlayer(
             )
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-              Text(entry?.title ?: now.title, style = MaterialTheme.typography.bodyLargeEmphasized, maxLines = 1, overflow = TextOverflow.Ellipsis)
+              // The playing track's title scrolls when too long; those beside it, out of sight, needn't.
+              if (entry == null) {
+                Text(now.title, style = MaterialTheme.typography.bodyLargeEmphasized, maxLines = 1, modifier = Modifier.overflowMarquee())
+              } else {
+                Text(entry.title, style = MaterialTheme.typography.bodyLargeEmphasized, maxLines = 1, overflow = TextOverflow.Ellipsis)
+              }
               val error = state.error.takeIf { entry == null }
               Text(
                 error ?: entry?.artist ?: now.artist,
@@ -309,15 +317,18 @@ fun NowPlayingScreen(
                 }
                 Spacer(Modifier.height(32.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                  Column(Modifier.weight(1f)) {
-                    Text(now.title, style = MaterialTheme.typography.headlineSmallEmphasized, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(
-                      now.artist,
-                      style = MaterialTheme.typography.titleMedium,
-                      color = MaterialTheme.colorScheme.onSurfaceVariant,
-                      maxLines = 1,
-                      overflow = TextOverflow.Ellipsis,
-                    )
+                  // Keyed by track, so each starts from rest on the start of its lines.
+                  key(now.mediaId) {
+                    Column(Modifier.weight(1f)) {
+                      Text(now.title, style = MaterialTheme.typography.headlineSmallEmphasized, maxLines = 1, modifier = Modifier.overflowMarquee())
+                      Text(
+                        now.artist,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        modifier = Modifier.overflowMarquee(),
+                      )
+                    }
                   }
                   now.mediaId.toLongOrNull()?.let { LikeButton(it, now.liked, Modifier.offset(x = 12.dp)) }
                 }
@@ -575,6 +586,13 @@ private fun LyricsHeader(now: NowPlaying, cover: Modifier, coverShape: Shape, on
 
 /** How long the controls stay under the lyrics without a touch. */
 private const val CONTROLS_IDLE_MS = 4000L
+
+/**
+ * A line too long to fit scrolls round as the website's player does it: a second's rest on its start,
+ * then 28 dp a second without pausing, each round 32 dp behind the last. A line that fits stays still.
+ */
+private fun Modifier.overflowMarquee() =
+  basicMarquee(iterations = Int.MAX_VALUE, repeatDelayMillis = 0, initialDelayMillis = 1000, spacing = MarqueeSpacing(32.dp), velocity = 28.dp)
 
 /** How long the player has to be loading before the play button shows it. */
 private const val LOADING_SHOWN_AFTER_MS = 250L
