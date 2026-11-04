@@ -112,6 +112,9 @@ dependencies {
   implementation(libs.androidx.media3.exoplayer)
   implementation(libs.androidx.media3.session)
   implementation(libs.androidx.media3.datasource.okhttp)
+  // Apple's motion artwork on artist pages: HLS, drawn by Compose.
+  implementation(libs.androidx.media3.exoplayer.hls)
+  implementation(libs.androidx.media3.ui.compose)
   implementation(libs.kotlinx.coroutines.guava)
 
   implementation(libs.kotlinx.serialization.json)

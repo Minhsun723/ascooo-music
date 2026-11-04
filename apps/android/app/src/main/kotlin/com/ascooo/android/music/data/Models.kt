@@ -56,7 +56,20 @@ data class Album(
 
 /** An artist in lists and search results; [trackCount] is only on the library list. */
 @Serializable
-data class Artist(val id: Long, val name: String, val artworkId: String? = null, val trackCount: Int = 0)
+data class Artist(
+  val id: Long,
+  val name: String,
+  val artworkId: String? = null,
+  val trackCount: Int = 0,
+  /** Apple Music's 16:9 motion artwork for the artist. Only on the artist detail response. */
+  val video: ArtistVideo? = null,
+  /** Apple Music's square cut of the same, for phones. Only on the artist detail response. */
+  val squareVideo: ArtistVideo? = null,
+)
+
+/** A silent loop of about half a minute on Apple's CDN, and a still of it in our artwork store. */
+@Serializable
+data class ArtistVideo(val url: String, val previewId: String)
 
 @Serializable
 data class HomeData(

@@ -82,17 +82,23 @@ fun CollectionHeader(
       Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { badges.forEach { Badge(it) } }
     }
     Spacer(Modifier.height(20.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-      Button(onClick = { onPlay(tracks, 0) }, shapes = ButtonDefaults.shapes(), enabled = tracks.isNotEmpty()) {
-        Icon(painterResource(R.drawable.ic_play), contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
-        Spacer(Modifier.width(ButtonDefaults.IconSpacing))
-        Text("播放")
-      }
-      FilledTonalButton(onClick = { onPlay(tracks.shuffled(), 0) }, shapes = ButtonDefaults.shapes(), enabled = tracks.isNotEmpty()) {
-        Icon(painterResource(R.drawable.ic_shuffle), contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
-        Spacer(Modifier.width(ButtonDefaults.IconSpacing))
-        Text("隨機播放")
-      }
+    PlayButtons(tracks, onPlay)
+  }
+}
+
+/** Play [tracks] in order, or shuffled. */
+@Composable
+fun PlayButtons(tracks: List<Track>, onPlay: (List<Track>, Int) -> Unit, modifier: Modifier = Modifier) {
+  Row(modifier, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Button(onClick = { onPlay(tracks, 0) }, shapes = ButtonDefaults.shapes(), enabled = tracks.isNotEmpty()) {
+      Icon(painterResource(R.drawable.ic_play), contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+      Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+      Text("播放")
+    }
+    FilledTonalButton(onClick = { onPlay(tracks.shuffled(), 0) }, shapes = ButtonDefaults.shapes(), enabled = tracks.isNotEmpty()) {
+      Icon(painterResource(R.drawable.ic_shuffle), contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+      Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+      Text("隨機播放")
     }
   }
 }

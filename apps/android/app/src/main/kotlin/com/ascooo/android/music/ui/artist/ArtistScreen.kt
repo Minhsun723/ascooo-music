@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -27,14 +26,12 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.ascooo.android.music.R
 import com.ascooo.android.music.appContainer
 import com.ascooo.android.music.data.ArtistDetail
 import com.ascooo.android.music.data.AscoooApi
 import com.ascooo.android.music.data.Track
 import com.ascooo.android.music.playback.artworkUrl
 import com.ascooo.android.music.ui.components.AlbumCard
-import com.ascooo.android.music.ui.components.CollectionHeader
 import com.ascooo.android.music.ui.components.DetailTopBar
 import com.ascooo.android.music.ui.components.ErrorPane
 import com.ascooo.android.music.ui.components.Load
@@ -96,17 +93,7 @@ private fun ArtistContent(
 ) {
   val (artist, albums, tracks) = detail
   LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-    item(key = "header") {
-      CollectionHeader(
-        artworkUrl = artworkUrl(baseUrl, artist.artworkId, 2000),
-        title = artist.name,
-        meta = "${albums.size} 張專輯 · ${tracks.size} 首熱門歌曲",
-        tracks = tracks,
-        onPlay = onPlay,
-        artworkShape = CircleShape,
-        placeholder = R.drawable.ic_person,
-      )
-    }
+    item(key = "header") { ArtistHero(artist, baseUrl, "${albums.size} 張專輯 · ${tracks.size} 首熱門歌曲", tracks, onPlay) }
     if (tracks.isNotEmpty()) {
       item(key = "top-title") {
         SectionHeader("熱門歌曲") {

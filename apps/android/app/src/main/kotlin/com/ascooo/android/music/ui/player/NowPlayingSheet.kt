@@ -14,8 +14,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.State
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -69,6 +71,10 @@ class NowPlayingSheetState(open: Boolean) {
   /** Open, or still on its way into the mini player. */
   val isShown: Boolean
     get() = isOpen || fraction > 0f
+
+  /** Fully open, hiding the page under it; not while it's opening, nor pulled down at all. */
+  val coversPage: Boolean
+    get() = fraction >= 1f
 
   /** Where the mini player's card is on screen, for the page to grow out of and fold back into. */
   var miniBounds by mutableStateOf(Rect.Zero)
@@ -256,6 +262,9 @@ fun rememberPullUpToOpen(state: NowPlayingSheetState): Modifier {
     )
   }
 }
+
+/** Whether Now Playing covers the page, for what plays on a page (an artist's motion artwork) to rest meanwhile. */
+val LocalNowPlayingCovers = compositionLocalOf<State<Boolean>> { mutableStateOf(false) }
 
 /** Where a cover sits inside its card and how round it is, for the cover in flight to leave or land there. */
 private class CoverSpot {

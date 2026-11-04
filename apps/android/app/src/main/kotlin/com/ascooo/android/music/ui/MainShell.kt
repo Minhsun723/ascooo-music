@@ -73,6 +73,7 @@ import com.ascooo.android.music.ui.components.TrackActionsHere
 import com.ascooo.android.music.ui.components.passTouchesThrough
 import com.ascooo.android.music.ui.home.HomeScreen
 import com.ascooo.android.music.ui.library.LibraryScreen
+import com.ascooo.android.music.ui.player.LocalNowPlayingCovers
 import com.ascooo.android.music.ui.player.MiniPlayer
 import com.ascooo.android.music.ui.player.NowPlayingScreen
 import com.ascooo.android.music.ui.player.NowPlayingSheet
@@ -123,6 +124,7 @@ fun MainShell(user: User?, player: PlayerViewModel, onSignOut: () -> Unit) {
   val playerState by player.state.collectAsStateWithLifecycle()
   val nowPlaying = rememberSaveable(saver = NowPlayingSheetState.Saver) { NowPlayingSheetState(open = false) }
   val nowPlayingShown by remember { derivedStateOf { nowPlaying.isShown } }
+  val nowPlayingCovers = remember { derivedStateOf { nowPlaying.coversPage } }
   // Out here, so Now Playing opens again on the lyrics if it was closed on them.
   var lyricsShown by rememberSaveable { mutableStateOf(false) }
   // Works out each new cover's colours while Now Playing is closed, so it opens already in them.
@@ -217,7 +219,7 @@ fun MainShell(user: User?, player: PlayerViewModel, onSignOut: () -> Unit) {
     )
   }
 
-  CompositionLocalProvider(LocalTrackActions provides trackActions) {
+  CompositionLocalProvider(LocalTrackActions provides trackActions, LocalNowPlayingCovers provides nowPlayingCovers) {
     Box(Modifier.fillMaxSize()) {
       Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
