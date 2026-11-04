@@ -40,8 +40,18 @@ data class NowPlaying(
   val atmos: Boolean,
 )
 
-/** A queued track. [index] is its place in the player's list, which shuffle doesn't change. */
-data class QueueEntry(val index: Int, val mediaId: String, val title: String, val artist: String, val thumbnail: String?)
+/**
+ * A queued track. [index] is its place in the player's list, which shuffle doesn't change. [artworkUri]
+ * is the full-size cover, the one [NowPlaying] shows once it plays; [thumbnail] the small one.
+ */
+data class QueueEntry(
+  val index: Int,
+  val mediaId: String,
+  val title: String,
+  val artist: String,
+  val thumbnail: String?,
+  val artworkUri: Uri?,
+)
 
 data class PlayerUiState(
   val nowPlaying: NowPlaying? = null,
@@ -132,6 +142,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
       }
   }
 
+  /**
+   * Moves to the queued track at [index] (a [QueueEntry.index]), playing or paused as before like the
+   * skip buttons, but always to that track: [previous] would restart one already a few seconds in.
+   */
+  fun skipTo(index: Int) = withController { it.seekToDefaultPosition(index) }
+
   /** Plays the queued track at [index] (a [QueueEntry.index]) from its start. */
   fun jumpTo(index: Int) = withController {
     it.seekToDefaultPosition(index)
@@ -198,6 +214,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             title = meta.title?.toString().orEmpty(),
             artist = meta.artist?.toString().orEmpty(),
             thumbnail = meta.extras?.getString(EXTRA_THUMBNAIL),
+            artworkUri = meta.artworkUri,
           )
         )
         index = timeline.getNextWindowIndex(index, Player.REPEAT_MODE_OFF, shuffle)

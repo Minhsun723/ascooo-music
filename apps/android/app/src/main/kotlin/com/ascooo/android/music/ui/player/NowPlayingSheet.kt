@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -88,6 +89,11 @@ class NowPlayingSheetState(open: Boolean) {
   internal val dragState = DraggableState { delta -> fraction = (fraction - delta / travel).coerceIn(0f, 1f) }
   internal var settling by mutableStateOf(false)
     private set
+
+  // Moving far enough to see, the page is caught by a touch. Not in the last hair of a spring's
+  // settling, which lasts the best part of a second after the page looks still: a touch then belongs
+  // to whatever's on the page, a swipe across the cover included.
+  internal val catchable by derivedStateOf { settling && fraction > 0.001f && fraction < 0.999f }
 
   // The finger's speed when it lets go and sends the page on to the other end, for the spring there
   // to carry on from. Taken once, so a spring started for any other reason starts still.
@@ -187,7 +193,7 @@ fun NowPlayingSheet(
       .draggable(
         state = state.dragState,
         orientation = Orientation.Vertical,
-        startDragImmediately = state.settling,
+        startDragImmediately = state.catchable,
         onDragStopped = { velocity -> state.release(velocity, dismissVelocity, spatial) },
       )
   ) {
@@ -241,11 +247,11 @@ fun NowPlayingSheet(
 fun rememberPullUpToOpen(state: NowPlayingSheetState): Modifier {
   val flick = with(LocalDensity.current) { DismissVelocity.toPx() }
   val spatial = MaterialTheme.motionScheme.defaultSpatialSpec<Float>()
-  return remember(state, flick, spatial, state.settling) {
+  return remember(state, flick, spatial, state.catchable) {
     Modifier.draggable(
       state = state.dragState,
       orientation = Orientation.Vertical,
-      startDragImmediately = state.settling,
+      startDragImmediately = state.catchable,
       onDragStopped = { velocity -> state.release(velocity, flick, spatial) },
     )
   }

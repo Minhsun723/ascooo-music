@@ -269,7 +269,7 @@ fun MainShell(user: User?, player: PlayerViewModel, onSignOut: () -> Unit) {
         NowPlayingSheet(
           nowPlaying,
           artworkUrl = playerState.nowPlaying?.artworkUri?.toString(),
-          mini = { modifier, art -> MiniPlayer(playerState, player, onOpen = nowPlaying::open, modifier, art) },
+          mini = { modifier, art -> MiniPlayer(playerState, player, onOpen = nowPlaying::open, modifier, art, swipe = false) },
         ) { cover ->
           NowPlayingScreen(
             playerState,

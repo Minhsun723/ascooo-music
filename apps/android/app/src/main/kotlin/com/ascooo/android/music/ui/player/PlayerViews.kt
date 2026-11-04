@@ -63,6 +63,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Shape
@@ -112,6 +113,7 @@ fun MiniPlayer(
   onOpen: () -> Unit,
   modifier: Modifier = Modifier,
   artModifier: Modifier = Modifier,
+  swipe: Boolean = true,
 ) {
   val now = state.nowPlaying ?: return
   val position by rememberPosition(player, state)
@@ -122,18 +124,29 @@ fun MiniPlayer(
     modifier = modifier.fillMaxWidth(),
   ) {
     Column {
-      Row(Modifier.padding(start = 8.dp, end = 4.dp, top = 8.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Artwork(now.artworkUri?.toString(), Modifier.size(44.dp).then(artModifier), MaterialTheme.shapes.medium)
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-          Text(now.title, style = MaterialTheme.typography.bodyLargeEmphasized, maxLines = 1, overflow = TextOverflow.Ellipsis)
-          Text(
-            state.error ?: now.artist,
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (state.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-          )
+      Row(Modifier.padding(end = 4.dp, top = 8.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        // Swiped sideways, the track slides away under the buttons, which stay put, and the next or
+        // previous slides in; cut off at the card's edge and short of the buttons.
+        TrackSwipe(state, player::skipTo, Modifier.weight(1f).clipToBounds(), gap = 16.dp, enabled = swipe) { entry ->
+          Row(Modifier.fillMaxWidth().padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Artwork(
+              (entry?.artworkUri ?: now.artworkUri)?.toString(),
+              Modifier.size(44.dp).then(if (entry == null) artModifier else Modifier),
+              MaterialTheme.shapes.medium,
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+              Text(entry?.title ?: now.title, style = MaterialTheme.typography.bodyLargeEmphasized, maxLines = 1, overflow = TextOverflow.Ellipsis)
+              val error = state.error.takeIf { entry == null }
+              Text(
+                error ?: entry?.artist ?: now.artist,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
+          }
         }
         IconButton(onClick = player::togglePlayPause, shapes = IconButtonDefaults.shapes()) {
           Icon(
@@ -277,17 +290,21 @@ fun NowPlayingScreen(
             } else {
               Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
                 // Full width where the screen is tall enough; on a short one the cover gives up the height
-                // the controls need, staying square.
-                Artwork(
-                  now.artworkUri?.toString(),
+                // the controls need, staying square. Swiped sideways, it goes off screen and the next or
+                // previous track's cover comes in from the other side.
+                TrackSwipe(
+                  state,
+                  player::skipTo,
                   Modifier.align(Alignment.CenterHorizontally)
                     .weight(1f, fill = false)
                     .fillMaxWidth()
                     .aspectRatio(1f)
                     .then(sharedCover)
                     .then(coverModifier(corner)),
-                  RoundedCornerShape(corner),
-                )
+                  pastScreenEdges = true,
+                ) { entry ->
+                  Artwork((entry?.artworkUri ?: now.artworkUri)?.toString(), Modifier.fillMaxSize(), RoundedCornerShape(corner))
+                }
                 Spacer(Modifier.height(32.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                   Column(Modifier.weight(1f)) {
