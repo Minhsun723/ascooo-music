@@ -80,6 +80,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -352,9 +353,30 @@ fun NowPlayingScreen(
               scrubbing = null
             },
           )
-          Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(formatTime(fraction * duration / 1000.0), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(formatTime(duration / 1000.0), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+          // The times at either end and, for an Atmos track, the mark of the file playing between them,
+          // standing on the times' baseline. The times share what's left equally, so the mark stays in
+          // the middle of the page however wide they grow.
+          Row(Modifier.fillMaxWidth()) {
+            val timeStyle = MaterialTheme.typography.labelMedium
+            val timeColor = MaterialTheme.colorScheme.onSurfaceVariant
+            Text(formatTime(fraction * duration / 1000.0), Modifier.weight(1f).alignByBaseline(), style = timeStyle, color = timeColor)
+            AnimatedContent(
+              now.surround,
+              Modifier.alignByBaseline(),
+              // Unclipped, so the glow isn't cut off as the mark comes or goes.
+              transitionSpec = { (fadeIn(fadeInSpec) togetherWith fadeOut(fadeOutSpec)).using(SizeTransform(clip = false)) },
+              contentAlignment = Alignment.Center,
+              label = "surround mark",
+            ) { surround ->
+              if (surround != null) SurroundMark(surround)
+            }
+            Text(
+              formatTime(duration / 1000.0),
+              Modifier.weight(1f).alignByBaseline(),
+              style = timeStyle,
+              color = timeColor,
+              textAlign = TextAlign.End,
+            )
           }
         }
         // Under it, the controls or the button group they shrink to: either one sinks out of sight

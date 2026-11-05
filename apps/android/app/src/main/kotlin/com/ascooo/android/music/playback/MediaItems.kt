@@ -53,6 +53,13 @@ val Tracks.audioUnplayable: Boolean
 fun streamUrl(baseUrl: String, trackId: Long, source: AudioSource): String =
   "$baseUrl/api/stream/$trackId" + if (source == AudioSource.Aac51) "?v=aac51" else ""
 
+/**
+ * Which file the item streams. Read from its request metadata, which a controller sees too; the URI
+ * the service plays it from stays in the service.
+ */
+val MediaItem.audioSource: AudioSource
+  get() = if (requestMetadata.mediaUri?.getQueryParameter("v") == "aac51") AudioSource.Aac51 else AudioSource.Original
+
 /** Covers come in 512 px (lists) and 2000 px (album hero, Now Playing, lock screen). */
 fun artworkUrl(baseUrl: String, artworkId: String?, size: Int = 512): String? =
   artworkId?.let { "$baseUrl/api/art/$it/$size?v=1" }

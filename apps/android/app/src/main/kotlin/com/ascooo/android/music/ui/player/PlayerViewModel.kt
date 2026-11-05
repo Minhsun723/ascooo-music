@@ -19,6 +19,8 @@ import com.ascooo.android.music.playback.EXTRA_HAS_LYRICS
 import com.ascooo.android.music.playback.EXTRA_LIKED
 import com.ascooo.android.music.playback.EXTRA_THUMBNAIL
 import com.ascooo.android.music.playback.PlaybackService
+import com.ascooo.android.music.playback.AudioSource
+import com.ascooo.android.music.playback.audioSource
 import com.ascooo.android.music.playback.audioUnplayable
 import com.ascooo.android.music.playback.toMediaItem
 import kotlinx.coroutines.CompletableDeferred
@@ -37,7 +39,10 @@ data class NowPlaying(
   /** As queued; LikesRepository has any change since. */
   val liked: Boolean,
   val hasLyrics: Boolean,
+  /** A Dolby Atmos track, whichever file of it plays. */
   val atmos: Boolean,
+  /** Which file of it plays: for an Atmos track, the mix itself or the AAC 5.1 copy made from it. */
+  val source: AudioSource,
 )
 
 /**
@@ -182,6 +187,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
               liked = meta.extras?.getBoolean(EXTRA_LIKED) ?: false,
               hasLyrics = meta.extras?.getBoolean(EXTRA_HAS_LYRICS) ?: false,
               atmos = meta.extras?.getBoolean(EXTRA_ATMOS) ?: false,
+              source = it.audioSource,
             )
           },
         isPlaying = player.isPlaying,

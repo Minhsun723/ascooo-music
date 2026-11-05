@@ -157,7 +157,9 @@ private class AudioFallback(private val player: ExoPlayer) : Player.Listener {
 
     val position = player.currentPosition
     val aac51 = uri.buildUpon().appendQueryParameter("v", "aac51").build()
-    player.replaceMediaItem(index, item.buildUpon().setUri(aac51).build())
+    // The request metadata too, so Now Playing swaps the Dolby Atmos mark for AAC 5.1's (MediaItem.audioSource).
+    val requestMetadata = item.requestMetadata.buildUpon().setMediaUri(aac51).build()
+    player.replaceMediaItem(index, item.buildUpon().setUri(aac51).setRequestMetadata(requestMetadata).build())
     player.seekTo(index, position)
     player.prepare()
     player.play()

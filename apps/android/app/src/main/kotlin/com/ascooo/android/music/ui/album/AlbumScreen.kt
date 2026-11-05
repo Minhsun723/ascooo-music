@@ -98,7 +98,9 @@ private fun AlbumContent(
         subtitle = album.artist,
         onSubtitleClick = (leadArtist?.id ?: album.artistId)?.let { id -> { onOpenArtist(id) } },
         meta = listOfNotNull(album.year?.toString(), "${tracks.size} 首歌", "${(album.duration / 60).roundToInt()} 分鐘").joinToString(" · "),
-        badges = listOfNotNull("Dolby Atmos".takeIf { album.atmos }, "無損".takeIf { album.lossless }),
+        dolbyAtmos = album.atmos,
+        aac51 = album.aac51,
+        badges = listOfNotNull("無損".takeIf { album.lossless }),
         tracks = tracks,
         onPlay = onPlay,
       )

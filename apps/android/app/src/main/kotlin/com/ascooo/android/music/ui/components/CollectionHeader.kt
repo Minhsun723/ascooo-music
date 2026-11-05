@@ -17,6 +17,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -26,6 +27,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.ascooo.android.music.R
@@ -33,7 +38,9 @@ import com.ascooo.android.music.data.Track
 
 /**
  * The top of an album, artist or playlist page: the cover, the title, an optional [subtitle] that
- * can link elsewhere, a [meta] line, [badges] and the play and shuffle buttons for [tracks].
+ * can link elsewhere, a [meta] line, the Dolby Atmos logo where [dolbyAtmos] and the AAC 5.1 one
+ * where [aac51], [badges] and the play and shuffle buttons for [tracks]. Both marks show for what the
+ * album has, whichever of them this device plays; Now Playing shows only the one for the file playing.
  */
 @Composable
 fun CollectionHeader(
@@ -47,6 +54,8 @@ fun CollectionHeader(
   @DrawableRes placeholder: Int = R.drawable.ic_music_note,
   subtitle: String? = null,
   onSubtitleClick: (() -> Unit)? = null,
+  dolbyAtmos: Boolean = false,
+  aac51: Boolean = false,
   badges: List<String> = emptyList(),
 ) {
   Column(
@@ -78,8 +87,12 @@ fun CollectionHeader(
       textAlign = TextAlign.Center,
       modifier = Modifier.padding(top = 4.dp),
     )
-    if (badges.isNotEmpty()) {
-      Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) { badges.forEach { Badge(it) } }
+    if (dolbyAtmos || aac51 || badges.isNotEmpty()) {
+      Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (dolbyAtmos) DolbyAtmosBadge()
+        if (aac51) Aac51Badge()
+        badges.forEach { Badge(it) }
+      }
     }
     Spacer(Modifier.height(20.dp))
     PlayButtons(tracks, onPlay)
@@ -100,6 +113,43 @@ fun PlayButtons(tracks: List<Track>, onPlay: (List<Track>, Int) -> Unit, modifie
       Spacer(Modifier.width(ButtonDefaults.IconSpacing))
       Text("隨機播放")
     }
+  }
+}
+
+/** The wordmark's width to its height, from its viewport in R.drawable.dolby_atmos. */
+private const val DOLBY_ATMOS_ASPECT = 110.76f / 15.643f
+
+/**
+ * The Dolby Atmos wordmark in the same frame as [Badge]'s labels, and as tall. The y of Dolby hangs
+ * below everything else, so the wordmark is centred on the rest of it, a little lower than its box
+ * would be: the letters and the mark reach 12.03 of its 15.64 units' height.
+ */
+@Composable
+private fun DolbyAtmosBadge() {
+  Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainerHighest) {
+    Icon(
+      painterResource(R.drawable.dolby_atmos),
+      contentDescription = "Dolby Atmos",
+      modifier =
+        Modifier.padding(start = 10.dp, end = 10.dp, top = 7.4.dp, bottom = 4.6.dp).height(12.dp).aspectRatio(DOLBY_ATMOS_ASPECT),
+    )
+  }
+}
+
+/**
+ * The AAC 5.1 mark in the same frame as [Badge]'s labels, its numerals as tall as the Dolby Atmos
+ * wordmark's letters and cut through to the frame. They sit in the middle of the mark, so it does too.
+ */
+@Composable
+private fun Aac51Badge() {
+  Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainerHighest) {
+    Aac51Logo(
+      LocalContentColor.current,
+      Modifier.padding(horizontal = 10.dp, vertical = 5.5.dp).height(13.dp).aspectRatio(AAC51_ASPECT).semantics {
+        contentDescription = "AAC 5.1"
+        role = Role.Image
+      },
+    )
   }
 }
 

@@ -50,6 +50,8 @@ data class Album(
   val genre: String? = null,
   val lossless: Boolean = false,
   val atmos: Boolean = false,
+  /** Some of its Atmos tracks have an AAC 5.1 copy, for devices that cannot decode Dolby Atmos. */
+  val aac51: Boolean = false,
   /** Release day as YYYY-MM-DD. Only on the album detail response. */
   val releaseDate: String? = null,
 )
