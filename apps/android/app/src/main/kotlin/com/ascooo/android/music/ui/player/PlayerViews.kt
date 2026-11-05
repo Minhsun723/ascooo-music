@@ -39,7 +39,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonGroup
 import androidx.compose.material3.ButtonGroupDefaults
 import androidx.compose.material3.ButtonGroupScope
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.FilledIconToggleButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
@@ -52,6 +52,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -73,9 +74,12 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
@@ -513,11 +517,22 @@ private fun PlayPauseIcon(state: PlayerUiState, size: Dp) {
   Crossfade(loading, animationSpec = MaterialTheme.motionScheme.fastEffectsSpec(), label = "play icon or spinner") { spinning ->
     Box(Modifier.size(size), contentAlignment = Alignment.Center) {
       if (spinning) {
-        // A little inside the icon's box, as the glyphs are, so it sits the same size.
-        CircularProgressIndicator(
-          modifier = Modifier.size(size * 0.8f).semantics { contentDescription = label },
-          color = LocalContentColor.current,
-          strokeWidth = size / 10,
+        // M3E's wavy spinner, a little inside the icon's box as the glyphs are, so it sits the same
+        // size. Its 48dp default shrinks whole so the waves keep their count, but the lines stay as
+        // heavy as the glyphs' (2dp in a 24dp icon). The track is the content colour faded, not the
+        // default secondary container, which would vanish on the filled play button.
+        val diameter = size * 0.8f
+        val line = size / 12
+        val stroke = Stroke(width = with(LocalDensity.current) { line.toPx() }, cap = StrokeCap.Round)
+        val color = LocalContentColor.current
+        CircularWavyProgressIndicator(
+          modifier = Modifier.size(diameter).semantics { contentDescription = label },
+          color = color,
+          trackColor = color.copy(alpha = 0.3f),
+          stroke = stroke,
+          trackStroke = stroke,
+          gapSize = line,
+          wavelength = WavyProgressIndicatorDefaults.CircularWavelength * (diameter / WavyProgressIndicatorDefaults.CircularContainerSize),
         )
       } else {
         Icon(painterResource(if (state.showPlayButton) R.drawable.ic_play else R.drawable.ic_pause), contentDescription = label, modifier = Modifier.fillMaxSize())
