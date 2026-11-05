@@ -18,8 +18,8 @@ export function DolbyLogo({ variant = 'compact', className = '' }: DolbyLogoProp
       title="Dolby Atmos"
     >
       <picture>
-        {atmos ? <source media="(max-width: 1220px)" srcSet="/dolby-logo.png" /> : null}
-        <img src={atmos ? '/dolby-atmos-logo.png' : '/dolby-logo.png'} alt="" aria-hidden="true" draggable={false} />
+        {atmos ? <source media="(max-width: 1220px)" srcSet="/dolby-logo.svg" /> : null}
+        <img src={atmos ? '/dolby-atmos-logo.svg' : '/dolby-logo.svg'} alt="" aria-hidden="true" draggable={false} />
       </picture>
     </span>
   );
