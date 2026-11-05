@@ -60,6 +60,7 @@ import com.ascooo.android.music.data.Artist
 import com.ascooo.android.music.data.Track
 import com.ascooo.android.music.data.userMessage
 import com.ascooo.android.music.playback.artworkUrl
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 
 /** Same rules as the website's formatTime: m:ss, or h:mm:ss past an hour. */
@@ -70,6 +71,21 @@ fun formatTime(seconds: Double): String {
   val m = s % 3600 / 60
   val r = (s % 60).toString().padStart(2, '0')
   return if (h > 0) "$h:${m.toString().padStart(2, '0')}:$r" else "$m:$r"
+}
+
+/** Same as the website's formatLongDuration: "42 分鐘", or "1 小時 5 分鐘" past an hour. */
+fun formatLongDuration(seconds: Double): String {
+  val h = (seconds / 3600).toInt()
+  val m = (seconds % 3600 / 60).roundToInt()
+  return if (h > 0) "$h 小時 $m 分鐘" else "$m 分鐘"
+}
+
+/** Same as the website's formatReleaseDate: "2026-07-16" → "2026 年 7 月 16 日". Anything else stays as it is. */
+fun formatReleaseDate(date: String): String {
+  val parts = date.split('-').mapNotNull { it.toIntOrNull() }
+  if (parts.size != 3) return date
+  val (y, m, d) = parts
+  return "$y 年 $m 月 $d 日"
 }
 
 /** A cover, or [placeholder] on a plain tile when there is none. */

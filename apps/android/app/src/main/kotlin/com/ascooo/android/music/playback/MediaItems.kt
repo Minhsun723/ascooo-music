@@ -25,6 +25,16 @@ private val DOLBY_ATMOS = setOf("ec-3", "eac3", "e-ac-3")
 val Track.isDolbyAtmos: Boolean
   get() = codec?.lowercase() in DOLBY_ATMOS
 
+/** The codecs the server counts as lossless, matched as exactly as it does. */
+private val LOSSLESS = setOf("flac", "alac", "wav")
+
+val Track.isLossless: Boolean
+  get() = codec in LOSSLESS
+
+/** Lossless past CD quality, as the website draws the line: more than 16 bits or 48 kHz. */
+val Track.isHiRes: Boolean
+  get() = isLossless && ((bitDepth ?: 16) > 16 || (sampleRate ?: 44100) > 48000)
+
 /**
  * Whether ExoPlayer will find a decoder for the library's Atmos files (E-AC-3 JOC). Media3 is asked
  * directly so the answer matches what the player will do: it falls back to a plain E-AC-3 decoder

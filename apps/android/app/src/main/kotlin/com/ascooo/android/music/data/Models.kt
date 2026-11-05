@@ -26,6 +26,9 @@ data class Track(
   /** Seconds. */
   val duration: Double = 0.0,
   val codec: String? = null,
+  /** Hz. */
+  val sampleRate: Int? = null,
+  val bitDepth: Int? = null,
   val artworkId: String? = null,
   val hasLyrics: Boolean = false,
   /** An AAC 5.1 copy exists for devices that cannot decode Dolby Atmos. */
@@ -52,6 +55,9 @@ data class Album(
   val atmos: Boolean = false,
   /** Some of its Atmos tracks have an AAC 5.1 copy, for devices that cannot decode Dolby Atmos. */
   val aac51: Boolean = false,
+  val recordLabel: String? = null,
+  /** The album's copyright line exactly as tagged. Only on the album detail response. */
+  val copyright: String? = null,
   /** Release day as YYYY-MM-DD. Only on the album detail response. */
   val releaseDate: String? = null,
 )

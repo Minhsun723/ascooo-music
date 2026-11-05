@@ -31,14 +31,21 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import com.ascooo.android.music.R
+import com.ascooo.android.music.data.ArtistCredit
 import com.ascooo.android.music.data.Track
 
 /**
  * The top of an album, artist or playlist page: the cover, the title, an optional [subtitle] that
- * can link elsewhere, a [meta] line, the Dolby Atmos logo where [dolbyAtmos] and the AAC 5.1 one
+ * can link elsewhere (or, for more than one of [artists], each name linking to its own page, as on
+ * the website), a [meta] line, the Dolby Atmos logo where [dolbyAtmos] and the AAC 5.1 one
  * where [aac51], [badges] and the play and shuffle buttons for [tracks]. Both marks show for what the
  * album has, whichever of them this device plays; Now Playing shows only the one for the file playing.
  */
@@ -54,6 +61,8 @@ fun CollectionHeader(
   @DrawableRes placeholder: Int = R.drawable.ic_music_note,
   subtitle: String? = null,
   onSubtitleClick: (() -> Unit)? = null,
+  artists: List<ArtistCredit> = emptyList(),
+  onOpenArtist: ((Long) -> Unit)? = null,
   dolbyAtmos: Boolean = false,
   aac51: Boolean = false,
   badges: List<String> = emptyList(),
@@ -66,7 +75,9 @@ fun CollectionHeader(
     Artwork(artworkUrl, Modifier.fillMaxWidth(0.72f).aspectRatio(1f), artworkShape, placeholder)
     Spacer(Modifier.height(24.dp))
     Text(title, style = MaterialTheme.typography.headlineSmallEmphasized, textAlign = TextAlign.Center)
-    if (subtitle != null) {
+    if (artists.size > 1 && onOpenArtist != null) {
+      CreditLinks(artists, onOpenArtist)
+    } else if (subtitle != null) {
       Text(
         subtitle,
         style = MaterialTheme.typography.titleMedium,
@@ -80,13 +91,15 @@ fun CollectionHeader(
             .padding(horizontal = 8.dp, vertical = 2.dp),
       )
     }
-    Text(
-      meta,
-      style = MaterialTheme.typography.bodyMedium,
-      color = MaterialTheme.colorScheme.onSurfaceVariant,
-      textAlign = TextAlign.Center,
-      modifier = Modifier.padding(top = 4.dp),
-    )
+    if (meta.isNotEmpty()) {
+      Text(
+        meta,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.padding(top = 4.dp),
+      )
+    }
     if (dolbyAtmos || aac51 || badges.isNotEmpty()) {
       Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         if (dolbyAtmos) DolbyAtmosBadge()
@@ -97,6 +110,29 @@ fun CollectionHeader(
     Spacer(Modifier.height(20.dp))
     PlayButtons(tracks, onPlay)
   }
+}
+
+/**
+ * The credit line "A, B & C" with each name a link to that artist, laid out as the one-link subtitle
+ * is. A pressed name is tinted, since a link inside text has no ripple of its own.
+ */
+@Composable
+private fun CreditLinks(artists: List<ArtistCredit>, onOpenArtist: (Long) -> Unit) {
+  val tertiary = MaterialTheme.colorScheme.tertiary
+  val styles = TextLinkStyles(style = SpanStyle(color = tertiary), pressedStyle = SpanStyle(color = tertiary, background = tertiary.copy(alpha = 0.16f)))
+  val text = buildAnnotatedString {
+    artists.forEachIndexed { index, artist ->
+      if (index > 0) append(if (index == artists.lastIndex) " & " else ", ")
+      withLink(LinkAnnotation.Clickable("artist:${artist.id}", styles) { onOpenArtist(artist.id) }) { append(artist.name) }
+    }
+  }
+  Text(
+    text,
+    style = MaterialTheme.typography.titleMedium,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    textAlign = TextAlign.Center,
+    modifier = Modifier.padding(top = 2.dp).padding(horizontal = 8.dp, vertical = 2.dp),
+  )
 }
 
 /** Play [tracks] in order, or shuffled. */
