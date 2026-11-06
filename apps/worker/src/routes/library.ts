@@ -68,17 +68,42 @@ const ALBUM_SORTS: Record<string, string> = {
   year: 'al.year DESC',
 };
 
-interface HomeShelves {
-  recentAlbums: ReturnType<typeof toAlbum>[];
+interface RandomShelves {
   randomAlbums: ReturnType<typeof toAlbum>[];
   quickPicks: ReturnType<typeof toTrack>[];
 }
 
+/** How many of the newest songs 新進唱片櫃 looks through for its albums. */
+const RECENT_TRACK_WINDOW = 500;
+
 /**
- * The home page's shelves that look the same to everyone: the newest albums, and random albums and
- * songs drawn from `seed`. Read as nobody, so no song carries a like; the route adds the viewer's.
+ * 新進唱片櫃: the 12 albums whose newest song arrived last, read on every request so a sync shows
+ * up at once. Walking songs newest first meets albums in exactly that order, so only the newest
+ * songs are read, through the added_at index, instead of the whole library. The shelf could come
+ * up short only if those songs spanned fewer than 12 albums.
  */
-async function homeShelves(db: D1Database, seed: number): Promise<HomeShelves> {
+const recentAlbumsQuery = (db: D1Database) => db.prepare(
+  `WITH newest AS (
+     SELECT album_id, added_at FROM tracks
+     WHERE status = 'ready' AND visible = 1
+     ORDER BY added_at DESC, id DESC LIMIT ${RECENT_TRACK_WINDOW}
+   ), picked AS (
+     SELECT album_id FROM newest WHERE album_id IS NOT NULL
+     GROUP BY album_id ORDER BY MAX(added_at) DESC, album_id DESC LIMIT 12
+   )
+   SELECT ${ALBUM_SELECT}
+   FROM picked p
+   JOIN albums al ON al.id = p.album_id
+   JOIN artists ar ON ar.id = al.artist_id
+   JOIN tracks t ON t.album_id = al.id AND t.status = 'ready' AND t.visible = 1
+   GROUP BY al.id ORDER BY added_at DESC, al.id DESC`,
+);
+
+/**
+ * The home page's random albums and songs drawn from `seed`, the same for everyone. Read as nobody,
+ * so no song carries a like; the route adds the viewer's.
+ */
+async function randomShelves(db: D1Database, seed: number): Promise<RandomShelves> {
   const [trackBound, albumBound] = await db.batch([
     db.prepare("SELECT MAX(id) AS max_id FROM tracks WHERE status = 'ready' AND visible = 1"),
     db.prepare(
@@ -114,8 +139,7 @@ async function homeShelves(db: D1Database, seed: number): Promise<HomeShelves> {
      ORDER BY t.id LIMIT 100`,
   ).bind(0, trackStart);
 
-  const [recentAlbums, randomAlbumsAfter, randomAlbumsBefore, randomTracksAfter, randomTracksBefore] = await db.batch([
-    db.prepare(`SELECT ${ALBUM_SELECT} ${ALBUM_FROM} GROUP BY al.id ORDER BY added_at DESC LIMIT 12`),
+  const [randomAlbumsAfter, randomAlbumsBefore, randomTracksAfter, randomTracksBefore] = await db.batch([
     randomAlbumQuery('>='),
     randomAlbumQuery('<'),
     randomTrackQuery('>='),
@@ -130,7 +154,6 @@ async function homeShelves(db: D1Database, seed: number): Promise<HomeShelves> {
     ...(randomTracksBefore.results as TrackRow[]),
   ], seed, 20);
   return {
-    recentAlbums: (recentAlbums.results as AlbumRow[]).map(toAlbum),
     randomAlbums: randomAlbums.map(toAlbum),
     // Drawn from every visible song, so it is empty exactly when the library is.
     quickPicks: randomTracks.map(toTrack),
@@ -145,13 +168,17 @@ catalog.get('/home', anonymousEdgeCache, async (c) => {
   // colo stored.
   const seedParam = parseInt(c.req.query('seed') ?? '', 10);
   const seed = Number.isFinite(seedParam) ? seedParam >>> 0 : Math.floor(Math.random() * 2 ** 32);
-  // Only play history and likes differ between viewers, so the shelves are kept per seed and a reload
-  // within the hour reads next to nothing from D1.
-  const shelves = await sharedValue(c, `home?seed=${seed}`, () => homeShelves(db, seed));
-  // Signed-out visitors have neither; skip the queries instead of reading zero rows.
-  if (!uid) return c.json({ ...shelves, recentPlays: [] });
+  // The random shelves look the same to every viewer, so they are kept per seed and a reload within
+  // the hour reads next to nothing for them. 新進唱片櫃 is read fresh on every request instead.
+  const shelves = await sharedValue(c, `home-random?seed=${seed}`, () => randomShelves(db, seed));
+  // Signed-out visitors have no plays or likes; skip those queries instead of reading zero rows.
+  if (!uid) {
+    const recentAlbums = await recentAlbumsQuery(db).all<AlbumRow>();
+    return c.json({ ...shelves, recentAlbums: recentAlbums.results.map(toAlbum), recentPlays: [] });
+  }
 
-  const [recentPlays, liked] = await db.batch([
+  const [recentAlbums, recentPlays, liked] = await db.batch([
+    recentAlbumsQuery(db),
     db.prepare(
       `SELECT ${TRACK_SELECT} FROM play_stats h JOIN tracks t ON t.id = h.track_id ${TRACK_JOINS}
        WHERE h.user_id = ? AND t.status = 'ready' AND t.visible = 1
@@ -164,6 +191,7 @@ catalog.get('/home', anonymousEdgeCache, async (c) => {
   return c.json({
     ...shelves,
     quickPicks: shelves.quickPicks.map((track) => ({ ...track, liked: likedIds.has(track.id) })),
+    recentAlbums: (recentAlbums.results as AlbumRow[]).map(toAlbum),
     recentPlays: (recentPlays.results as TrackRow[]).map(toTrack),
   });
 });

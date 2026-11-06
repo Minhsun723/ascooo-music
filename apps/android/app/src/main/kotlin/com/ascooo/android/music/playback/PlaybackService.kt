@@ -126,8 +126,6 @@ class PlaybackService : MediaSessionService() {
       if (player.currentPosition / 1000.0 > minOf(30.0, seconds / 2)) {
         reportedFor = id
         runCatching { appContainer.api.history(HistoryRequest(id.toLong())) }
-          // The saved home page's 最近聽過 is missing this one now.
-          .onSuccess { appContainer.homeCache.markStale() }
       }
     }
   }

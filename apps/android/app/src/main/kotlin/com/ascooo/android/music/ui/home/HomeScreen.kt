@@ -1,5 +1,6 @@
 package com.ascooo.android.music.ui.home
 
+import android.os.SystemClock
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -19,6 +20,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ascooo.android.music.R
@@ -37,23 +39,37 @@ import com.ascooo.android.music.ui.components.SectionHeader
 import com.ascooo.android.music.ui.components.StatusBarScrim
 import com.ascooo.android.music.ui.components.TrackRow
 import com.ascooo.android.music.ui.components.loadOf
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+
+/** Same as the website's home cache: coming back to the page sooner than this doesn't fetch it again. */
+private const val REFRESH_MS = 30_000L
 
 class HomeViewModel(private val api: AscoooApi, private val cache: HomeCache) : ViewModel() {
   var home by mutableStateOf<Load<HomeData>>(Load.Loading)
     private set
 
+  private var fetching: Job? = null
+  private var fetchedAt = 0L
+
   init {
-    // A start opens straight onto the saved page; only a stale one is fetched again, behind it.
-    viewModelScope.launch {
-      val saved = cache.read()
-      if (saved != null) home = Load.Ready(saved.home)
-      if (saved?.fresh != true) fetch()
+    // A start opens straight onto the saved page and fetches it again behind it: 新進唱片櫃 follows
+    // the library, while the random shelves keep their picks through the seed.
+    fetching = viewModelScope.launch {
+      cache.read()?.let { home = Load.Ready(it) }
+      fetch()
     }
   }
 
+  /** The page came back on screen; fetch it again behind what it shows, unless it just was. */
+  fun refresh() {
+    if (fetching?.isActive == true || SystemClock.elapsedRealtime() - fetchedAt < REFRESH_MS) return
+    fetching = viewModelScope.launch { fetch() }
+  }
+
   fun load() {
-    viewModelScope.launch {
+    fetching?.cancel()
+    fetching = viewModelScope.launch {
       home = Load.Loading
       fetch()
     }
@@ -61,7 +77,10 @@ class HomeViewModel(private val api: AscoooApi, private val cache: HomeCache) : 
 
   private suspend fun fetch() {
     val fresh = loadOf { api.home(cache.seed()) }
-    if (fresh is Load.Ready) cache.write(fresh.data)
+    if (fresh is Load.Ready) {
+      cache.write(fresh.data)
+      fetchedAt = SystemClock.elapsedRealtime()
+    }
     // A failed refresh leaves the saved page up rather than an error.
     if (fresh is Load.Ready || home !is Load.Ready) home = fresh
   }
@@ -76,6 +95,11 @@ fun HomeScreen(
 ) {
   val container = LocalContext.current.appContainer
   val viewModel = viewModel { HomeViewModel(container.api, container.homeCache) }
+  // Back from another tab or page, or the app back in front: 新進唱片櫃 may have grown meanwhile.
+  LifecycleStartEffect(viewModel) {
+    viewModel.refresh()
+    onStopOrDispose {}
+  }
   when (val home = viewModel.home) {
     Load.Loading -> LoadingPane(modifier)
     is Load.Failed -> ErrorPane(home.message, viewModel::load, modifier)

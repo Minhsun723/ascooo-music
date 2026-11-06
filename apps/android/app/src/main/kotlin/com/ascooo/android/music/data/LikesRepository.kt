@@ -19,7 +19,6 @@ class LikesRepository(
   private val api: AscoooApi,
   private val scope: CoroutineScope,
   private val notices: Notices,
-  private val homeCache: HomeCache,
 ) {
   private val changed = MutableStateFlow<Map<Long, Boolean>>(emptyMap())
   val overrides: StateFlow<Map<Long, Boolean>> = changed.asStateFlow()
@@ -39,8 +38,6 @@ class LikesRepository(
         return@launch undo(trackId, liked, e)
       }
       confirmed.update { it + 1 }
-      // The saved home page still shows the old heart.
-      homeCache.markStale()
     }
   }
 

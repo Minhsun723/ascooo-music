@@ -48,7 +48,7 @@ class AppContainer(context: Context) {
   val homeCache = HomeCache(context, json)
   val auth = AuthRepository(api, session, homeCache)
   val notices = Notices()
-  val likes = LikesRepository(api, scope, notices, homeCache)
+  val likes = LikesRepository(api, scope, notices)
   val playlists = PlaylistsRepository(api, scope, notices)
   val lyrics = LyricsRepository(api)
 }
